@@ -1,2 +1,20 @@
-__pycache__/
-__pycache__/
+# Binaries
+pulsenode
+kuma-sync
+*.exe
+*.test
+*.out
+
+# Environment files
+.env
+.env-kuma-sync
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

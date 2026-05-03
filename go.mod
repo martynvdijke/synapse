@@ -1,4 +1,4 @@
-module kuma-sync
+module pulsenode
 
 go 1.26.2
 

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -20,17 +20,17 @@ type LoginResponse struct {
 }
 
 type Monitor struct {
-	ID               int      `json:"id"`
-	Name             string   `json:"name"`
-	Type             string   `json:"type"`
-	URL              string   `json:"url,omitempty"`
-	DockerContainer string   `json:"docker_container,omitempty"`
-	DockerHost      int      `json:"docker_host,omitempty"`
-	Interval        int      `json:"interval"`
-	RetryInterval   int      `json:"retryInterval"`
-	MaxRetries      int      `json:"maxretries"`
-	Conditions      []any    `json:"conditions"`
-	Method          string   `json:"method,omitempty"`
+	ID                 int      `json:"id"`
+	Name               string   `json:"name"`
+	Type               string   `json:"type"`
+	URL                string   `json:"url,omitempty"`
+	DockerContainer   string   `json:"docker_container,omitempty"`
+	DockerHost        int      `json:"docker_host,omitempty"`
+	Interval          int      `json:"interval"`
+	RetryInterval     int      `json:"retryInterval"`
+	MaxRetries        int      `json:"maxretries"`
+	Conditions        []any    `json:"conditions"`
+	Method            string   `json:"method,omitempty"`
 	AcceptedStatusCodes []int  `json:"accepted_statuscodes,omitempty"`
 }
 
@@ -234,7 +234,7 @@ func (g *GotifyClient) SendAlert(title, message string, priority int) bool {
 		bytes.NewBuffer(jsonData),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[!] Failed to send Gotify alert: %v\n", err)
+		slog.Error("Failed to send Gotify alert", "error", err)
 		return false
 	}
 	req.Header.Set("X-Token", g.token)
@@ -243,7 +243,7 @@ func (g *GotifyClient) SendAlert(title, message string, priority int) bool {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[!] Failed to send Gotify alert: %v\n", err)
+		slog.Error("Failed to send Gotify alert", "error", err)
 		return false
 	}
 	defer resp.Body.Close()

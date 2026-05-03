@@ -3,14 +3,15 @@ package npm
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
-	"kuma-sync/kumasync"
+	"pulsenode/kumasync"
 )
 
 type ProxyHost struct {
-	ID            int               `json:"id"`
+	ID           int              `json:"id"`
 	DomainNames  []string         `json:"domain_names"`
 	Forwarding   ForwardingConfig `json:"forwarding"`
 }
@@ -78,22 +79,22 @@ func SyncNPM(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string,
 
 	proxies, err := GetCNameToContainerMapping(npmHost, npmUser, npmPass)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		slog.Error("Failed to get NPM proxy hosts", "host", npmHost, "error", err)
 		return kumasync.SyncResult{}
 	}
 
 	if len(proxies) == 0 {
-		fmt.Println("No proxy hosts found in NPM")
+		slog.Warn("No proxy hosts found in NPM", "host", npmHost)
 		return kumasync.SyncResult{}
 	}
 
-	fmt.Printf("Found %d proxy hosts in NPM\n", len(proxies))
+	slog.Debug("Discovered proxy hosts", "count", len(proxies))
 
 	if dryRun {
 		added := 0
 		for _, proxy := range proxies {
 			cname := proxy["cname"]
-			fmt.Printf("[+] %s: would add HTTP monitor -> http://%s\n", cname, cname)
+			slog.Info("Would add HTTP monitor", "name", cname, "url", fmt.Sprintf("http://%s", cname))
 			added++
 		}
 		return kumasync.SyncResult{Added: added}
@@ -101,13 +102,13 @@ func SyncNPM(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string,
 
 	api := kumasync.NewKumaAPI(kumaURL)
 	if err := api.Login(kumaUser, kumaPass); err != nil {
-		fmt.Printf("Login failed: %v\n", err)
+		slog.Error("Uptime Kuma login failed", "url", kumaURL, "error", err)
 		return kumasync.SyncResult{}
 	}
 
 	existingMonitors, err := api.GetMonitors()
 	if err != nil {
-		fmt.Printf("Failed to get monitors: %v\n", err)
+		slog.Error("Failed to get existing monitors", "error", err)
 		return kumasync.SyncResult{}
 	}
 
@@ -115,7 +116,7 @@ func SyncNPM(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string,
 	for _, m := range existingMonitors {
 		existing[m.Name] = true
 	}
-	fmt.Printf("Existing monitors: %d\n", len(existing))
+	slog.Debug("Existing monitors", "count", len(existing))
 
 	added := 0
 	skipped := 0
@@ -133,12 +134,12 @@ func SyncNPM(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string,
 		}
 
 		if existing[monitorName] {
-			fmt.Printf("[-] %s: already exists, skipping\n", monitorName)
+			slog.Debug("Already exists, skipping", "name", monitorName)
 			skipped++
 			continue
 		}
 
-		fmt.Printf("[+] %s: adding HTTP monitor -> http://%s\n", monitorName, cname)
+		slog.Info("Adding HTTP monitor", "name", monitorName, "url", fmt.Sprintf("http://%s", cname))
 		api.AddMonitor("http", monitorName, fmt.Sprintf("http://%s", cname), "", 0, 60, 60, 3)
 		newMonitors = append(newMonitors, monitorName)
 		added++

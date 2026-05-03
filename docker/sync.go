@@ -2,18 +2,19 @@ package docker
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 
 	"gopkg.in/yaml.v3"
 
-	"kuma-sync/kumasync"
+	"pulsenode/kumasync"
 )
 
 type ServiceData struct {
-	ContainerName string       `yaml:"container_name"`
-	HealthCheck  HealthCheck  `yaml:"healthcheck"`
-	NetworkMode string        `yaml:"network_mode"`
+	ContainerName string      `yaml:"container_name"`
+	HealthCheck   HealthCheck `yaml:"healthcheck"`
+	NetworkMode   string      `yaml:"network_mode"`
 }
 
 type HealthCheck struct {
@@ -95,16 +96,16 @@ func SyncContainers(composePath, kumaURL, kumaUser, kumaPass, dockerHostName str
 
 	services, err := GetServices(composePath)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		slog.Error("Failed to read compose file", "path", composePath, "error", err)
 		return kumasync.SyncResult{}
 	}
 
 	if len(services) == 0 {
-		fmt.Println("No services found in docker-compose.yml")
+		slog.Warn("No services found", "compose", composePath)
 		return kumasync.SyncResult{}
 	}
 
-	fmt.Printf("Found %d services in %s\n", len(services), composePath)
+	slog.Debug("Discovered services", "count", len(services), "compose", composePath)
 
 	if dryRun || kumaURL == "" {
 		added := 0
@@ -115,9 +116,9 @@ func SyncContainers(composePath, kumaURL, kumaUser, kumaPass, dockerHostName str
 			}
 			url := ParseHealthcheck(serviceName, serviceData)
 			if url != "" {
-				fmt.Printf("[+] %s: would add HTTP monitor -> %s\n", displayName, url)
+				slog.Info("Would add HTTP monitor", "service", displayName, "url", url)
 			} else {
-				fmt.Printf("[+] %s: would add Docker monitor\n", displayName)
+				slog.Info("Would add Docker monitor", "service", displayName)
 			}
 			added++
 		}
@@ -126,13 +127,13 @@ func SyncContainers(composePath, kumaURL, kumaUser, kumaPass, dockerHostName str
 
 	api := kumasync.NewKumaAPI(kumaURL)
 	if err := api.Login(kumaUser, kumaPass); err != nil {
-		fmt.Printf("Login failed: %v\n", err)
+		slog.Error("Uptime Kuma login failed", "url", kumaURL, "error", err)
 		return kumasync.SyncResult{}
 	}
 
 	dockerHosts, err := api.GetDockerHosts()
 	if err != nil {
-		fmt.Printf("Failed to get docker hosts: %v\n", err)
+		slog.Error("Failed to get Docker hosts from Kuma", "error", err)
 		return kumasync.SyncResult{}
 	}
 
@@ -144,20 +145,22 @@ func SyncContainers(composePath, kumaURL, kumaUser, kumaPass, dockerHostName str
 				break
 			}
 		}
+		if dockerHostID == 0 {
+			slog.Warn("Docker host not found in Kuma", "name", dockerHostName)
+		}
 	}
 
 	if dockerHostID == 0 && len(dockerHosts) > 0 {
 		dockerHostID = dockerHosts[0].ID
-		fmt.Printf("Using Docker host: %s (ID: %d)\n", dockerHosts[0].Name, dockerHostID)
+		slog.Debug("Using Docker host", "name", dockerHosts[0].Name, "id", dockerHostID)
 	} else if dockerHostID == 0 {
-		fmt.Println("No Docker host found in Uptime Kuma")
-		fmt.Println("Please add a Docker host first via the Uptime Kuma UI")
+		slog.Error("No Docker host available in Uptime Kuma. Add one via the Kuma UI first.")
 		return kumasync.SyncResult{}
 	}
 
 	existingMonitors, err := api.GetMonitors()
 	if err != nil {
-		fmt.Printf("Failed to get monitors: %v\n", err)
+		slog.Error("Failed to get existing monitors", "error", err)
 		return kumasync.SyncResult{}
 	}
 
@@ -165,7 +168,7 @@ func SyncContainers(composePath, kumaURL, kumaUser, kumaPass, dockerHostName str
 	for _, m := range existingMonitors {
 		existing[m.Name] = true
 	}
-	fmt.Printf("Existing monitors: %d\n", len(existing))
+	slog.Debug("Existing monitors", "count", len(existing))
 
 	added := 0
 	skipped := 0
@@ -178,39 +181,28 @@ func SyncContainers(composePath, kumaURL, kumaUser, kumaPass, dockerHostName str
 		}
 
 		if existing[displayName] {
-			fmt.Printf("[-] %s: already exists, skipping\n", displayName)
+			slog.Debug("Already exists, skipping", "service", displayName)
 			skipped++
 			continue
 		}
 
 		url := ParseHealthcheck(serviceName, serviceData)
 
-		tryAdd := true
-		if dryRun {
-			tryAdd = false
-		}
-
-		if tryAdd {
-			if url != "" {
-				fmt.Printf("[+] %s: adding HTTP monitor -> %s\n", displayName, url)
+		if url != "" {
+			slog.Info("Adding HTTP monitor", "service", displayName, "url", url)
+			if !dryRun {
 				api.AddMonitor("http", displayName, url, "", dockerHostID, 60, 60, 3)
-				newMonitors = append(newMonitors, displayName)
-				added++
-			} else {
-				containerID := serviceData.ContainerName
-				if containerID == "" {
-					containerID = serviceName
-				}
-				fmt.Printf("[+] %s: adding Docker monitor (container: %s)\n", displayName, containerID)
-				api.AddMonitor("docker", displayName, "", containerID, dockerHostID, 60, 60, 3)
-				newMonitors = append(newMonitors, displayName)
-				added++
 			}
+			newMonitors = append(newMonitors, displayName)
+			added++
 		} else {
-			if url != "" {
-				fmt.Printf("[+] %s: would add HTTP monitor -> %s\n", displayName, url)
-			} else {
-				fmt.Printf("[+] %s: would add Docker monitor\n", displayName)
+			containerID := serviceData.ContainerName
+			if containerID == "" {
+				containerID = serviceName
+			}
+			slog.Info("Adding Docker monitor", "service", displayName, "container", containerID)
+			if !dryRun {
+				api.AddMonitor("docker", displayName, "", containerID, dockerHostID, 60, 60, 3)
 			}
 			newMonitors = append(newMonitors, displayName)
 			added++
