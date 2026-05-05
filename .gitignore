@@ -1,9 +1,13 @@
 # Binaries
+synapse-server
 pulsenode
 kuma-sync
 *.exe
 *.test
 *.out
+
+# Database
+synapse.db
 
 # Environment files
 .env
@@ -18,3 +22,14 @@ kuma-sync
 # OS
 .DS_Store
 Thumbs.db
+
+# Air hot reload tmp
+tmp/
+
+# Python venv (legacy)
+.venv/
+
+tmp/*
+synapse.db
+synapse.db-journal
+synapse-server

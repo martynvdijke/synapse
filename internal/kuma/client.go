@@ -15,15 +15,12 @@ type Client struct {
 }
 
 type Monitor struct {
-	ID              int      `json:"id"`
-	Name            string   `json:"name"`
-	Type            string   `json:"type"`
-	URL             string   `json:"url,omitempty"`
-	DockerContainer string   `json:"docker_container,omitempty"`
-	DockerHost      int      `json:"docker_host,omitempty"`
-	Interval        int      `json:"interval"`
-	RetryInterval   int      `json:"retryInterval"`
-	MaxRetries      int      `json:"maxretries"`
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	URL             string `json:"url,omitempty"`
+	DockerContainer string `json:"docker_container,omitempty"`
+	DockerHost      int    `json:"docker_host,omitempty"`
 }
 
 type DockerHost struct {
@@ -71,11 +68,20 @@ func (c *Client) Login(username, password string) error {
 	return nil
 }
 
-func (c *Client) GetDockerHosts() ([]DockerHost, error) {
-	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/docker-hosts", c.url), nil)
+func (c *Client) doRequest(method, path string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(method, fmt.Sprintf("%s%s", c.url, path), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return c.client.Do(req)
+}
 
-	resp, err := c.client.Do(req)
+func (c *Client) GetDockerHosts() ([]DockerHost, error) {
+	resp, err := c.doRequest("GET", "/api/docker-hosts", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -93,10 +99,7 @@ func (c *Client) GetDockerHosts() ([]DockerHost, error) {
 }
 
 func (c *Client) GetMonitors() ([]Monitor, error) {
-	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/monitors", c.url), nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err := c.client.Do(req)
+	resp, err := c.doRequest("GET", "/api/monitors", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -115,14 +118,14 @@ func (c *Client) GetMonitors() ([]Monitor, error) {
 	return result.Monitors, nil
 }
 
-func (c *Client) AddMonitor(monitorType, name, url, dockerContainer string, dockerHostID int) error {
+func (c *Client) AddMonitor(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
 	payload := map[string]any{
 		"name":          name,
 		"type":          monitorType,
-		"interval":     60,
+		"interval":      60,
 		"retryInterval": 60,
-		"maxretries":   3,
-		"conditions":   []any{},
+		"maxretries":    3,
+		"conditions":    []any{},
 	}
 
 	switch monitorType {
@@ -136,18 +139,19 @@ func (c *Client) AddMonitor(monitorType, name, url, dockerContainer string, dock
 	}
 
 	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/monitors", c.url), bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
+	resp, err := c.doRequest("POST", "/api/monitors", body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("add monitor: status %d", resp.StatusCode)
+		return 0, fmt.Errorf("add monitor: status %d", resp.StatusCode)
 	}
-	return nil
+
+	var m Monitor
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return 0, err
+	}
+	return m.ID, nil
 }

@@ -1,0 +1,71 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run the server with hot reload
+    deps: [install-air]
+    cmds:
+      - air
+
+  build:
+    desc: Build the server binary
+    cmds:
+      - go build -o synapse-server .
+
+  run:
+    desc: Build and run the server
+    cmds:
+      - task: build
+      - ./synapse-server
+
+  dev:
+    desc: Run with hot reload
+    deps: [install-air]
+    cmds:
+      - air
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  lint:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  tidy:
+    desc: Tidy module and format code
+    cmds:
+      - go mod tidy
+      - go fmt ./...
+
+  docker-build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t synapse .
+
+  docker-run:
+    desc: Run Docker container
+    cmds:
+      - docker run -p 6270:6270 -e KUMA_PASS=yourpass synapse
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f synapse-server synapse.db
+
+  prepush:
+    desc: Run all checks before push
+    cmds:
+      - task: tidy
+      - task: lint
+      - task: build
+      - task: test
+
+  install-air:
+    desc: Install air for hot reload
+    cmds:
+      - command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest
+    status:
+      - command -v air >/dev/null 2>&1

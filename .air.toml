@@ -1,0 +1,15 @@
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/synapse ."
+  bin = "./tmp/synapse"
+  full_bin = ""
+  include_ext = ["go", "html"]
+  exclude_dir = ["tmp", "vendor", "testdata", "node_modules"]
+  delay = 500
+  stop_on_error = true
+
+[misc]
+  clean_on_exit = false
