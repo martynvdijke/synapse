@@ -1,0 +1,122 @@
+{{define "content"}}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Total Monitors</div>
+        <div class="text-3xl font-bold text-blue-600" id="monitor-count">{{.MonitorCount}}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Last Sync</div>
+        <div class="text-lg font-semibold text-gray-700" id="last-sync">
+            {{if .LatestRun}}
+                {{.LatestRun.StartedAt.Format "Jan 02 15:04"}}
+            {{else}}
+                Never
+            {{end}}
+        </div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Status</div>
+        <div class="text-lg font-semibold" id="sync-status">
+            {{if .Running}}
+                <span class="text-blue-600">Running...</span>
+            {{else}}
+                <span class="text-green-600">Idle</span>
+            {{end}}
+        </div>
+    </div>
+</div>
+
+<div class="bg-white rounded-lg shadow mb-6">
+    <div class="p-4 border-b flex items-center justify-between">
+        <h2 class="text-lg font-semibold">Sync Controls</h2>
+        <button id="sync-btn" onclick="startSync()"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            {{if .Running}}disabled{{end}}>
+            {{if .Running}}Syncing...{{else}}Sync Now{{end}}
+        </button>
+    </div>
+    <div id="progress" class="p-4 {{if not .Running}}hidden{{end}}">
+        <div class="flex items-center gap-4 mb-2">
+            <div class="flex-1 bg-gray-200 rounded-full h-2.5">
+                <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <span id="progress-text" class="text-sm text-gray-600 whitespace-nowrap">0%</span>
+        </div>
+        <div id="progress-message" class="text-sm text-gray-500"></div>
+        <div id="progress-counts" class="flex gap-4 mt-2 text-sm">
+            <span>Added: <strong id="count-added" class="text-green-600">0</strong></span>
+            <span>Skipped: <strong id="count-skipped" class="text-gray-500">0</strong></span>
+            <span>Failed: <strong id="count-failed" class="text-red-600">0</strong></span>
+        </div>
+    </div>
+</div>
+
+<div class="bg-white rounded-lg shadow">
+    <div class="p-4 border-b">
+        <h2 class="text-lg font-semibold">Sync History</h2>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead>
+                <tr class="bg-gray-50 text-left text-xs text-gray-500 uppercase">
+                    <th class="p-2">ID</th>
+                    <th class="p-2">Status</th>
+                    <th class="p-2">Started</th>
+                    <th class="p-2">Finished</th>
+                    <th class="p-2">Total</th>
+                    <th class="p-2">Added</th>
+                    <th class="p-2">Skipped</th>
+                    <th class="p-2">Failed</th>
+                    <th class="p-2">Error</th>
+                </tr>
+            </thead>
+            <tbody id="history-body">
+                <tr><td colspan="9" class="p-4 text-center text-gray-400">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+const evtSource = new EventSource("/api/sync/progress");
+evtSource.onmessage = function(e) {
+    const p = JSON.parse(e.data);
+    document.getElementById("progress").classList.remove("hidden");
+    const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+    document.getElementById("progress-bar").style.width = pct + "%";
+    document.getElementById("progress-text").textContent = pct + "%";
+    document.getElementById("progress-message").textContent = p.Message;
+    document.getElementById("count-added").textContent = p.Added;
+    document.getElementById("count-skipped").textContent = p.Skipped;
+    document.getElementById("count-failed").textContent = p.Failed;
+
+    if (p.Status === "completed" || p.Status === "completed_with_errors" || p.Status === "error") {
+        document.getElementById("sync-btn").disabled = false;
+        document.getElementById("sync-btn").textContent = "Sync Now";
+        document.getElementById("sync-status").innerHTML = '<span class="text-green-600">Idle</span>';
+        evtSource.close();
+        loadHistory();
+    }
+};
+
+function startSync() {
+    const btn = document.getElementById("sync-btn");
+    btn.disabled = true;
+    btn.textContent = "Syncing...";
+    document.getElementById("sync-status").innerHTML = '<span class="text-blue-600">Running...</span>';
+
+    fetch("/api/sync", { method: "POST" })
+        .then(r => r.json())
+        .then(d => console.log("sync started", d));
+}
+
+function loadHistory() {
+    fetch("/api/sync/history")
+        .then(r => r.text())
+        .then(html => {
+            document.getElementById("history-body").innerHTML = html;
+        });
+}
+loadHistory();
+</script>
+{{end}}
