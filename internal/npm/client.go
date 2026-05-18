@@ -1,10 +1,16 @@
 package npm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type ProxyHost struct {
@@ -28,7 +34,16 @@ type ProxyEntry struct {
 	Protocol   string `json:"protocol"`
 }
 
+var npmTracer = otel.Tracer("npm")
+
 func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
+	_, span := npmTracer.Start(context.Background(), "GetProxyHosts",
+		trace.WithAttributes(
+			attribute.String("npm_host", npmHost),
+		),
+	)
+	defer span.End()
+
 	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", npmHost)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -36,7 +51,10 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	}
 	req.SetBasicAuth(npmUser, npmPass)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   30 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

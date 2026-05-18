@@ -1,17 +1,23 @@
 package sync
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	"synapse/internal/npm"
 )
+
+var tracer = otel.Tracer("sync")
 
 type ServiceDef struct {
 	ContainerName string     `yaml:"container_name"`
@@ -116,6 +122,11 @@ func LoadServices(path string) (map[string]ServiceDef, error) {
 }
 
 func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string) ([]ServiceInfo, error) {
+	_, span := tracer.Start(context.Background(), "GetDockerServicesWithStatus",
+		trace.WithAttributes(attribute.String("compose_path", composePath)),
+	)
+	defer span.End()
+
 	services, err := LoadServices(composePath)
 	if err != nil {
 		return nil, err
@@ -167,6 +178,11 @@ func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string
 }
 
 func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string) ([]ProxyInfo, error) {
+	_, span := tracer.Start(context.Background(), "GetNPMProxiesWithStatus",
+		trace.WithAttributes(attribute.String("npm_host", npmHost)),
+	)
+	defer span.End()
+
 	entries, err := npm.GetProxyHosts(npmHost, npmUser, npmPass)
 	if err != nil {
 		return nil, err
@@ -205,6 +221,11 @@ func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaP
 }
 
 func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db.DB, onProgress ProgressFn) db.SyncRun {
+	_, span := tracer.Start(context.Background(), "RunDockerSync",
+		trace.WithAttributes(attribute.String("compose_path", composePath)),
+	)
+	defer span.End()
+
 	run := db.SyncRun{
 		Source:    "docker",
 		Status:    "running",
@@ -362,6 +383,11 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 }
 
 func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, database *db.DB, onProgress ProgressFn) db.SyncRun {
+	_, span := tracer.Start(context.Background(), "RunNPMSync",
+		trace.WithAttributes(attribute.String("npm_host", npmHost)),
+	)
+	defer span.End()
+
 	run := db.SyncRun{
 		Source:    "npm",
 		Status:    "running",

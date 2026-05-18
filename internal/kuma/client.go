@@ -2,16 +2,23 @@ package kuma
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Client struct {
 	url    string
 	token  string
 	client *http.Client
+	tracer trace.Tracer
 }
 
 type Monitor struct {
@@ -36,12 +43,19 @@ func NewClient(url string) *Client {
 	return &Client{
 		url: url,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   30 * time.Second,
 		},
+		tracer: otel.Tracer("kuma"),
 	}
 }
 
 func (c *Client) Login(username, password string) error {
+	_, span := c.tracer.Start(context.Background(), "Login",
+		trace.WithAttributes(attribute.String("kuma_url", c.url)),
+	)
+	defer span.End()
+
 	body, _ := json.Marshal(map[string]string{
 		"username": username,
 		"password": password,
@@ -81,6 +95,9 @@ func (c *Client) doRequest(method, path string, body []byte) (*http.Response, er
 }
 
 func (c *Client) GetDockerHosts() ([]DockerHost, error) {
+	_, span := c.tracer.Start(context.Background(), "GetDockerHosts")
+	defer span.End()
+
 	resp, err := c.doRequest("GET", "/api/docker-hosts", nil)
 	if err != nil {
 		return nil, err
@@ -99,6 +116,9 @@ func (c *Client) GetDockerHosts() ([]DockerHost, error) {
 }
 
 func (c *Client) GetMonitors() ([]Monitor, error) {
+	_, span := c.tracer.Start(context.Background(), "GetMonitors")
+	defer span.End()
+
 	resp, err := c.doRequest("GET", "/api/monitors", nil)
 	if err != nil {
 		return nil, err
@@ -119,6 +139,14 @@ func (c *Client) GetMonitors() ([]Monitor, error) {
 }
 
 func (c *Client) AddMonitor(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
+	_, span := c.tracer.Start(context.Background(), "AddMonitor",
+		trace.WithAttributes(
+			attribute.String("monitor_type", monitorType),
+			attribute.String("name", name),
+		),
+	)
+	defer span.End()
+
 	payload := map[string]any{
 		"name":          name,
 		"type":          monitorType,

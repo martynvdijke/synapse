@@ -1,20 +1,25 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	synclib "synapse/internal/sync"
+	"synapse/internal/telemetry"
 )
 
 var version = "dev"
@@ -71,9 +76,20 @@ func main() {
 		defaultSettings: defaults,
 	}
 
+	tp, err := telemetry.InitTracerProvider()
+	if err != nil {
+		log.Fatalf("failed to init telemetry: %v", err)
+	}
+	defer telemetry.Shutdown(tp)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.SetTrustedProxies(nil)
+
+	r.Use(otelgin.Middleware("synapse"))
 
 	r.LoadHTMLGlob("static/*.html")
 
@@ -99,8 +115,20 @@ func main() {
 	}
 
 	fmt.Printf("synapse v%s listening on %s\n", version, addr)
-	if err := r.Run(addr); err != nil {
-		log.Fatalf("server error: %v", err)
+
+	srv := &http.Server{Addr: addr, Handler: r}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("shutting down server...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server shutdown error: %v", err)
 	}
 }
 
