@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":separateMajorReleases",
+    ":combinePatchMinorReleases",
+    "group:allNonMajor"
+  ],
+  "automergeType": "pr",
+  "dependencyDashboard": true,
+  "ignorePaths": ["**/node_modules/**", "**/__fixtures__/**", "test/**"],
+  "ignorePresets": [":ignoreModulesAndTests"],
+  "platform": "github",
+  "platformAutomerge": true,
+  "prCreation": "immediate",
+  "prHourlyLimit": 10,
+  "rebaseWhen": "conflicted",
+  "configMigration": true,
+  "repositories": ["martynvdijke/synapse"],
+  "timezone": "UTC+1",
+  "lockFileMaintenance": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchCategories": [
+        "docker"
+      ],
+      "enabled": true
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchCurrentVersion": "!/^0/",
+      "automerge": true
+    }
+  ],
+  "github-actions": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,62 @@
+version: '3'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  install:
+    desc: Install all dependencies
+    cmds:
+      - go mod download
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  test:
+    desc: Run Go unit tests
+    cmds:
+      - go test -v ./...
+
+  build:
+    desc: Build Go binary
+    cmds:
+      - go build -o synapse-server .
+
+  run:
+    desc: Run the application
+    cmds:
+      - go run main.go
+
+  dev:
+    desc: Run with hot-reload
+    cmds:
+      - air
+
+  docker:build:
+    desc: Build Docker image
+    cmds:
+      - docker build . -t synapse:local
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f synapse-server
+      - rm -f synapse.db*
+
+  pre-push:
+    desc: Run all checks before pushing
+    cmds:
+      - task: fmt
+      - task: test
+      - task: build
+
+  all:
+    desc: Run format, test, and build
+    cmds:
+      - task: fmt
+      - task: test
+      - task: build

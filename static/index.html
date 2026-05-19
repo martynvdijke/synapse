@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synapse — Uptime Kuma Sync</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8f9fa; }
+        .navbar { margin-bottom: 1.5rem; }
+        .stat-card { transition: transform .15s; cursor: pointer; }
+        .stat-card:hover { transform: translateY(-2px); }
+        .progress { height: 0.5rem; }
+        .sync-section, .settings-section { background: #fff; border-radius: .5rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+        .table { font-size: .875rem; margin-bottom: 0; }
+        .sync-btn-group .btn { min-width: 120px; }
+        #progress-area { display: none; }
+        #progress-area.active { display: block; }
+        .settings-section .form-label { font-size: .75rem; margin-bottom: .25rem; text-transform: uppercase; color: #6c757d; }
+        .settings-section .form-control, .settings-section .form-select { font-size: .875rem; }
+        .test-result { font-size: .8rem; margin-top: .25rem; }
+        .nav-tabs .nav-link { font-size: .9rem; }
+        .settings-toggle { cursor: pointer; }
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-dark bg-dark px-4">
+    <span class="navbar-brand mb-0 h1">Synapse</span>
+    <span class="text-light opacity-75 small">v{{ .Version }}</span>
+</nav>
+
+<div class="container-fluid px-4">
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card border-0 shadow-sm">
+                <div class="card-body text-center py-3">
+                    <div class="text-muted small text-uppercase">Docker Services</div>
+                    <div class="fs-2 fw-bold text-primary" id="stat-docker">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-0 shadow-sm">
+                <div class="card-body text-center py-3">
+                    <div class="text-muted small text-uppercase">NPM Hosts</div>
+                    <div class="fs-2 fw-bold text-success" id="stat-npm">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-0 shadow-sm">
+                <div class="card-body text-center py-3">
+                    <div class="text-muted small text-uppercase">Kuma Monitors</div>
+                    <div class="fs-2 fw-bold text-info" id="stat-monitors">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-0 shadow-sm">
+                <div class="card-body text-center py-3">
+                    <div class="text-muted small text-uppercase">Status</div>
+                    <div class="fs-6 fw-semibold mt-2" id="stat-status">
+                        <span class="badge bg-secondary">Idle</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sync-section p-4 mb-3">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <h5 class="mb-0 fw-semibold">Sync Controls</h5>
+            <div class="sync-btn-group d-flex gap-2">
+                <button class="btn btn-primary btn-sm" id="btn-docker" onclick="startSync('docker')">
+                    Sync Docker Compose
+                </button>
+                <button class="btn btn-success btn-sm" id="btn-npm" onclick="startSync('npm')">
+                    Sync NPM Hosts
+                </button>
+            </div>
+        </div>
+
+        <div id="progress-area">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <div class="flex-grow-1">
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                             id="progress-bar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <span class="small text-muted" id="progress-pct">0%</span>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span class="small text-muted" id="progress-msg">Ready</span>
+                <span class="small">
+                    Added: <strong class="text-success" id="count-added">0</strong>
+                    &nbsp; Skipped: <strong class="text-warning" id="count-skipped">0</strong>
+                    &nbsp; Failed: <strong class="text-danger" id="count-failed">0</strong>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-section mb-3">
+        <div class="p-3 d-flex align-items-center justify-content-between settings-toggle" onclick="toggleSettings()">
+            <h6 class="mb-0 fw-semibold">Settings</h6>
+            <span class="text-muted small" id="settings-chevron">Show</span>
+        </div>
+        <div id="settings-body" style="display:none">
+            <hr class="my-0">
+            <div class="p-3">
+            <form id="settings-form" onsubmit="saveSettings(event)">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <h6 class="mb-3 text-primary">Uptime Kuma</h6>
+                        <div class="mb-2">
+                            <label class="form-label">URL</label>
+                            <input class="form-control form-control-sm" id="s-kuma-url" placeholder="http://uptime-kuma:3001">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Username</label>
+                            <input class="form-control form-control-sm" id="s-kuma-user" placeholder="admin">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Password</label>
+                            <input class="form-control form-control-sm" type="password" id="s-kuma-pass" placeholder="Leave blank to keep current">
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testConnection('kuma')">Test Kuma</button>
+                            <span class="test-result" id="test-kuma-result"></span>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3 text-success">Nginx Proxy Manager</h6>
+                        <div class="mb-2">
+                            <label class="form-label">URL</label>
+                            <input class="form-control form-control-sm" id="s-npm-host" placeholder="http://nginx:81">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Username</label>
+                            <input class="form-control form-control-sm" id="s-npm-user" placeholder="admin">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Password</label>
+                            <input class="form-control form-control-sm" type="password" id="s-npm-pass" placeholder="Leave blank to keep current">
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testConnection('npm')">Test NPM</button>
+                            <span class="test-result" id="test-npm-result"></span>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <h6 class="mb-3">Docker Compose</h6>
+                        <div class="mb-2">
+                            <label class="form-label">Compose File Path</label>
+                            <input class="form-control form-control-sm" id="s-compose-path" placeholder="docker-compose.yml" style="max-width:400px">
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
+                    <span class="text-success small ms-2 d-none" id="settings-saved">Settings saved</span>
+                </div>
+            </form>
+            </div>
+        </div>
+    </div>
+
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-docker" type="button">
+                Docker Compose
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-kuma" type="button">
+                Uptime Kuma
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-npm" type="button">
+                NPM Hosts
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">
+                Sync History
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="tab-docker">
+            <div class="table-responsive bg-white rounded shadow-sm">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Service</th>
+                            <th>Container</th>
+                            <th>Type</th>
+                            <th>URL</th>
+                            <th>In Kuma</th>
+                        </tr>
+                    </thead>
+                    <tbody id="docker-tbody">
+                        <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-kuma">
+            <div class="table-responsive bg-white rounded shadow-sm">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>URL / Container</th>
+                        </tr>
+                    </thead>
+                    <tbody id="kuma-tbody">
+                        <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-npm">
+            <div class="table-responsive bg-white rounded shadow-sm">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Domain</th>
+                            <th>Container</th>
+                            <th>In Kuma</th>
+                        </tr>
+                    </thead>
+                    <tbody id="npm-tbody">
+                        <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-history">
+            <div class="table-responsive bg-white rounded shadow-sm">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>Source</th>
+                            <th>Status</th>
+                            <th>Started</th>
+                            <th>Added</th>
+                            <th>Skipped</th>
+                            <th>Failed</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-tbody">
+                        <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+const evtSource = new EventSource('/api/sync/progress');
+evtSource.onmessage = function(e) {
+    const p = JSON.parse(e.data);
+    const area = document.getElementById('progress-area');
+    area.classList.add('active');
+    const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('progress-pct').textContent = pct + '%';
+    document.getElementById('progress-msg').textContent = p.message;
+    document.getElementById('count-added').textContent = p.added;
+    document.getElementById('count-skipped').textContent = p.skipped;
+    document.getElementById('count-failed').textContent = p.failed;
+    if (p.status === 'completed' || p.status === 'completed_with_errors' || p.status === 'error') {
+        document.getElementById('btn-docker').disabled = false;
+        document.getElementById('btn-npm').disabled = false;
+        document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
+        setTimeout(refreshAll, 500);
+    }
+};
+
+function startSync(source) {
+    document.getElementById('btn-docker').disabled = true;
+    document.getElementById('btn-npm').disabled = true;
+    document.getElementById('stat-status').innerHTML = '<span class="badge bg-primary">Running...</span>';
+    fetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(d => console.log(source + ' sync started', d))
+        .catch(function() {
+            document.getElementById('btn-docker').disabled = false;
+            document.getElementById('btn-npm').disabled = false;
+            document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
+        });
+}
+
+function loadStatus() {
+    fetch('/api/status').then(r => r.json()).then(function(d) {
+        document.getElementById('stat-docker').textContent = d.docker_count;
+        document.getElementById('stat-npm').textContent = d.npm_error ? '⚠' : d.npm_count;
+        document.getElementById('stat-monitors').textContent = d.monitor_count;
+        if (!d.running) {
+            document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
+        }
+        document.getElementById('btn-docker').disabled = d.running;
+        document.getElementById('btn-npm').disabled = d.running;
+    });
+}
+
+function loadDockerServices() {
+    fetch('/api/services').then(r => r.json()).then(function(services) {
+        const tbody = document.getElementById('docker-tbody');
+        if (services.error) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">'+esc(services.error)+'</td></tr>';
+            return;
+        }
+        if (!services.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No services found</td></tr>';
+            return;
+        }
+        tbody.innerHTML = services.map(function(s) {
+            return '<tr>'
+                + '<td><code>'+esc(s.name)+'</code></td>'
+                + '<td>'+esc(s.container_name)+'</td>'
+                + '<td><span class="badge '+(s.type==='http'?'bg-info':'bg-secondary')+'">'+s.type.toUpperCase()+'</span></td>'
+                + '<td class="text-truncate" style="max-width:300px">'+(s.url?'<a href="'+esc(s.url)+'">'+esc(s.url)+'</a>':'—')+'</td>'
+                + '<td>'+(s.in_kuma
+                    ? '<span class="badge bg-success">In Kuma</span>'
+                    : '<span class="badge bg-secondary">Missing</span>')+'</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function loadKumaMonitors() {
+    fetch('/api/monitors').then(r => r.json()).then(function(monitors) {
+        const tbody = document.getElementById('kuma-tbody');
+        if (monitors.error) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">'+esc(monitors.error)+'</td></tr>';
+            return;
+        }
+        if (!monitors.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No monitors in Uptime Kuma</td></tr>';
+            return;
+        }
+        tbody.innerHTML = monitors.map(function(m) {
+            return '<tr>'
+                + '<td>#'+m.id+'</td>'
+                + '<td>'+esc(m.name)+'</td>'
+                + '<td><span class="badge '+(m.type==='http'?'bg-info':m.type==='docker'?'bg-warning text-dark':'bg-secondary')+'">'+m.type.toUpperCase()+'</span></td>'
+                + '<td class="text-truncate" style="max-width:300px">'+(m.url?esc(m.url):m.docker_container?esc(m.docker_container):'—')+'</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function loadNPMProxies() {
+    fetch('/api/proxies').then(r => r.json()).then(function(proxies) {
+        const tbody = document.getElementById('npm-tbody');
+        if (proxies.error) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">'+esc(proxies.error)+'</td></tr>';
+            return;
+        }
+        if (!proxies.length) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No proxy hosts found</td></tr>';
+            return;
+        }
+        tbody.innerHTML = proxies.map(function(p) {
+            return '<tr>'
+                + '<td><code>'+esc(p.cname)+'</code></td>'
+                + '<td>'+esc(p.container)+'</td>'
+                + '<td>'+(p.in_kuma
+                    ? '<span class="badge bg-success">In Kuma</span>'
+                    : '<span class="badge bg-secondary">Missing</span>')+'</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function loadHistory() {
+    fetch('/api/sync/history').then(r => r.json()).then(function(runs) {
+        const tbody = document.getElementById('history-tbody');
+        if (!runs.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No sync history yet</td></tr>';
+            return;
+        }
+        tbody.innerHTML = runs.map(function(r) {
+            var badge = 'bg-primary';
+            if (r.status === 'completed') badge = 'bg-success';
+            else if (r.status === 'completed_with_errors') badge = 'bg-warning text-dark';
+            else if (r.status === 'error') badge = 'bg-danger';
+            return '<tr>'
+                + '<td>#'+r.id+'</td>'
+                + '<td><span class="badge '+(r.source==='docker'?'bg-primary':'bg-success')+'">'+r.source+'</span></td>'
+                + '<td><span class="badge '+badge+'">'+r.status+'</span></td>'
+                + '<td class="small">'+(r.started_at?new Date(r.started_at).toLocaleString():'')+'</td>'
+                + '<td>'+r.added+'</td>'
+                + '<td>'+r.skipped+'</td>'
+                + '<td>'+r.failed+'</td>'
+                + '<td class="small text-danger">'+esc(r.error_message||'')+'</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function refreshAll() {
+    loadStatus();
+    loadDockerServices();
+    loadKumaMonitors();
+    loadNPMProxies();
+    loadHistory();
+}
+
+document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
+    tab.addEventListener('shown.bs.tab', function(e) {
+        var target = e.target.getAttribute('data-bs-target');
+        if (target === '#tab-docker') loadDockerServices();
+        else if (target === '#tab-npm') loadNPMProxies();
+        else if (target === '#tab-kuma') loadKumaMonitors();
+        else if (target === '#tab-history') loadHistory();
+    });
+});
+
+// --- Settings ---
+
+function toggleSettings() {
+    var body = document.getElementById('settings-body');
+    var chev = document.getElementById('settings-chevron');
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        chev.textContent = 'Hide';
+        loadSettings();
+    } else {
+        body.style.display = 'none';
+        chev.textContent = 'Show';
+    }
+}
+
+function loadSettings() {
+    fetch('/api/settings').then(r => r.json()).then(function(s) {
+        document.getElementById('s-kuma-url').value = s.kuma_url || '';
+        document.getElementById('s-kuma-user').value = s.kuma_user || '';
+        document.getElementById('s-kuma-pass').value = s.kuma_pass || '';
+        document.getElementById('s-npm-host').value = s.npm_host || '';
+        document.getElementById('s-npm-user').value = s.npm_user || '';
+        document.getElementById('s-npm-pass').value = s.npm_pass || '';
+        document.getElementById('s-compose-path').value = s.compose_path || '';
+    });
+}
+
+function saveSettings(e) {
+    e.preventDefault();
+    var payload = {
+        kuma_url:  document.getElementById('s-kuma-url').value,
+        kuma_user: document.getElementById('s-kuma-user').value,
+        kuma_pass: document.getElementById('s-kuma-pass').value,
+        npm_host:  document.getElementById('s-npm-host').value,
+        npm_user:  document.getElementById('s-npm-user').value,
+        npm_pass:  document.getElementById('s-npm-pass').value,
+        compose_path: document.getElementById('s-compose-path')?.value || ''
+    };
+    fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+        .then(r => r.json())
+        .then(function(d) {
+            if (d.status === 'saved') {
+                var el = document.getElementById('settings-saved');
+                el.classList.remove('d-none');
+                setTimeout(function() { el.classList.add('d-none'); }, 2000);
+            }
+        });
+}
+
+function testConnection(service) {
+    var resultEl = document.getElementById('test-' + service + '-result');
+    resultEl.innerHTML = '<span class="text-muted">Testing...</span>';
+
+    var payload = {
+        kuma_url:     document.getElementById('s-kuma-url').value,
+        kuma_user:    document.getElementById('s-kuma-user').value,
+        kuma_pass:    document.getElementById('s-kuma-pass').value || '',
+        npm_host:     document.getElementById('s-npm-host').value,
+        npm_user:     document.getElementById('s-npm-user').value,
+        npm_pass:     document.getElementById('s-npm-pass').value || '',
+        compose_path: document.getElementById('s-compose-path').value || ''
+    };
+
+    // Save first so test reads from DB
+    fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+        .then(r => r.json())
+        .then(function() {
+            return fetch('/api/test/' + service, { method: 'POST' });
+        })
+        .then(r => r.json())
+        .then(function(d) {
+            resultEl.innerHTML = d.ok
+                ? '<span class="text-success">OK</span>'
+                : '<span class="text-danger">' + esc(d.message) + '</span>';
+        })
+        .catch(function(err) {
+            resultEl.innerHTML = '<span class="text-danger">' + esc(''+err) + '</span>';
+        });
+}
+
+refreshAll();
+</script>
+</body>
+</html>

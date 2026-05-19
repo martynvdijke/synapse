@@ -1,0 +1,28 @@
+# Binaries
+synapse-server
+*.exe
+*.test
+*.out
+
+# Database
+synapse.db*
+
+# Environment files
+.env
+.env-kuma-sync
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Air hot reload tmp
+tmp/
+
+# Node
+node_modules/

@@ -1,0 +1,71 @@
+name: Stale Branches
+on:
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (list only, no deletion)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  stale-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Delete stale branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+          STALE_DAYS: 90
+          EXEMPT_BRANCHES: 'main renovate/ dependabot/ feat/'
+        run: |
+          cutoff=$(date -d "-${STALE_DAYS} days" +%s)
+          echo "Cutoff: $(date -d @$cutoff)"
+          echo "Dry run: $DRY_RUN"
+          deleted=0
+          skipped=0
+
+          for branch in $(git branch -r --list 'origin/*' | sed 's|origin/||' | grep -v HEAD); do
+            exempt=0
+            for pattern in $EXEMPT_BRANCHES; do
+              if [[ "$branch" == $pattern* ]]; then
+                echo "  SKIP (exempt): $branch"
+                ((skipped++)) || true
+                exempt=1
+                break
+              fi
+            done
+            [ "$exempt" = 1 ] && continue
+
+            ts=$(git log -1 --format=%ct "origin/$branch" 2>/dev/null)
+            if [ -z "$ts" ]; then
+              echo "  SKIP (no commits): $branch"
+              ((skipped++)) || true
+              continue
+            fi
+
+            if [ "$ts" -lt "$cutoff" ]; then
+              echo "  STALE: $branch (last commit: $(date -d @$ts))"
+              if [ "$DRY_RUN" = "false" ]; then
+                git push origin --delete "$branch" 2>/dev/null && \
+                  echo "  DELETED: $branch" && \
+                  ((deleted++)) || true
+              fi
+            else
+              echo "  FRESH: $branch (last commit: $(date -d @$ts))"
+            fi
+          done
+
+          echo "Summary: deleted=$deleted skipped=$skipped"
