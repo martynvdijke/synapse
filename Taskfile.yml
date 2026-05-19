@@ -2,70 +2,61 @@ version: '3'
 
 tasks:
   default:
-    desc: Run the server with hot reload
-    deps: [install-air]
+    desc: List available tasks
     cmds:
-      - air
+      - task --list
+
+  install:
+    desc: Install all dependencies
+    cmds:
+      - go mod download
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  test:
+    desc: Run Go unit tests
+    cmds:
+      - go test -v ./...
 
   build:
-    desc: Build the server binary
+    desc: Build Go binary
     cmds:
       - go build -o synapse-server .
 
   run:
-    desc: Build and run the server
+    desc: Run the application
     cmds:
-      - task: build
-      - ./synapse-server
+      - go run main.go
 
   dev:
-    desc: Run with hot reload
-    deps: [install-air]
+    desc: Run with hot-reload
     cmds:
       - air
 
-  test:
-    desc: Run tests
-    cmds:
-      - go test -v ./...
-
-  lint:
-    desc: Run go vet
-    cmds:
-      - go vet ./...
-
-  tidy:
-    desc: Tidy module and format code
-    cmds:
-      - go mod tidy
-      - go fmt ./...
-
-  docker-build:
+  docker:build:
     desc: Build Docker image
     cmds:
-      - docker build -t synapse .
-
-  docker-run:
-    desc: Run Docker container
-    cmds:
-      - docker run -p 6270:6270 -e KUMA_PASS=yourpass synapse
+      - docker build . -t synapse:local
 
   clean:
     desc: Clean build artifacts
     cmds:
-      - rm -f synapse-server synapse.db
+      - rm -f synapse-server
+      - rm -f synapse.db*
 
-  prepush:
-    desc: Run all checks before push
+  pre-push:
+    desc: Run all checks before pushing
     cmds:
-      - task: tidy
-      - task: lint
-      - task: build
+      - task: fmt
       - task: test
+      - task: build
 
-  install-air:
-    desc: Install air for hot reload
+  all:
+    desc: Run format, test, and build
     cmds:
-      - command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest
-    status:
-      - command -v air >/dev/null 2>&1
+      - task: fmt
+      - task: test
+      - task: build

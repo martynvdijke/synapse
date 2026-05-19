@@ -1,15 +1,31 @@
 root = "."
-testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
   cmd = "go build -o ./tmp/synapse ."
   bin = "./tmp/synapse"
-  full_bin = ""
-  include_ext = ["go", "html"]
-  exclude_dir = ["tmp", "vendor", "testdata", "node_modules"]
-  delay = 500
+  full_bin = "./tmp/synapse"
+  include_ext = ["go", "tpl", "tmpl", "html", "css", "js"]
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "node_modules"]
+  exclude_file = []
+  delay = 1000
+  exclude_regex = ["_test.go"]
+  kill_delay = "0s"
+  log = "build-errors.log"
   stop_on_error = true
+  send_interrupt = true
+  rerun = false
+  poll = false
+  include_dir = []
+
+[log]
+  main_only = false
+  time = false
+
+[color]
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
 
 [misc]
-  clean_on_exit = false
+  clean_on_exit = true
