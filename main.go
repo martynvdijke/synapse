@@ -438,15 +438,45 @@ func (app *App) Proxies(c *gin.Context) {
 }
 
 type KumaMonitorSummary struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	URL   string `json:"url,omitempty"`
-	DockerContainer string `json:"docker_container,omitempty"`
+	ID              int     `json:"id"`
+	Name            string  `json:"name"`
+	Type            string  `json:"type"`
+	URL             string  `json:"url,omitempty"`
+	DockerContainer string  `json:"docker_container,omitempty"`
+	Status          int     `json:"status,omitempty"`
+	Uptime24h       float64 `json:"uptime_24h,omitempty"`
+	Uptime7d        float64 `json:"uptime_7d,omitempty"`
+	Uptime1y        float64 `json:"uptime_1y,omitempty"`
+	AvgPing         float64 `json:"ping,omitempty"`
+	LastMsg         string  `json:"last_msg,omitempty"`
 }
 
 func (app *App) KumaMonitors(c *gin.Context) {
 	s := app.settings()
+
+	// Try Socket.IO first (supports newer Kuma versions without REST API).
+	monitors, err := kuma.QueryMonitorsViaSocketIO(s.KumaURL, s.KumaUser, s.KumaPass)
+	if err == nil {
+		result := make([]KumaMonitorSummary, 0, len(monitors))
+		for _, m := range monitors {
+			result = append(result, KumaMonitorSummary{
+				ID:        m.ID,
+				Name:      m.Name,
+				Type:      m.Type,
+				URL:       m.URL,
+				Status:    m.Status,
+				Uptime24h: m.Uptime24h,
+				Uptime7d:  m.Uptime7d,
+				Uptime1y:  m.Uptime1y,
+				AvgPing:   m.Ping,
+				LastMsg:   m.LastMsg,
+			})
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+
+	// Fall back to REST API for older Kuma versions.
 	client := kuma.NewClient(s.KumaURL)
 	if err := client.Login(s.KumaUser, s.KumaPass); err != nil {
 		c.JSON(http.StatusOK, gin.H{"error": err.Error()})
