@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"synapse/internal/db"
@@ -23,6 +26,62 @@ import (
 )
 
 var version = "1.0.4"
+
+type sessionInfo struct {
+	Expiry time.Time
+}
+
+var (
+	sessionStore   = make(map[string]sessionInfo)
+	sessionStoreMu sync.RWMutex
+)
+
+func generateSessionID() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+func setSessionCookie(c *gin.Context, id string) {
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("session", id, 86400, "/", "", false, true)
+}
+
+func cleanupSessions() {
+	sessionStoreMu.Lock()
+	defer sessionStoreMu.Unlock()
+	now := time.Now()
+	for id, s := range sessionStore {
+		if now.After(s.Expiry) {
+			delete(sessionStore, id)
+		}
+	}
+}
+
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID, err := c.Cookie("session")
+		if err != nil || sessionID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+			return
+		}
+		sessionStoreMu.RLock()
+		s, ok := sessionStore[sessionID]
+		sessionStoreMu.RUnlock()
+		if !ok || time.Now().After(s.Expiry) {
+			if ok {
+				sessionStoreMu.Lock()
+				delete(sessionStore, sessionID)
+				sessionStoreMu.Unlock()
+			}
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
+			return
+		}
+		c.Next()
+	}
+}
 
 type App struct {
 	database *db.DB
@@ -94,12 +153,43 @@ func main() {
 	r.LoadHTMLGlob("static/*.html")
 
 	r.GET("/", app.Dashboard)
+	r.GET("/setup", func(c *gin.Context) {
+		count, _ := app.database.CountAdminUsers()
+		if count > 0 {
+			c.Redirect(http.StatusFound, "/login")
+			return
+		}
+		c.HTML(http.StatusOK, "setup.html", nil)
+	})
+	r.GET("/login", func(c *gin.Context) {
+		sessionID, err := c.Cookie("session")
+		if err == nil && sessionID != "" {
+			sessionStoreMu.RLock()
+			s, ok := sessionStore[sessionID]
+			sessionStoreMu.RUnlock()
+			if ok && time.Now().Before(s.Expiry) {
+				c.Redirect(http.StatusFound, "/")
+				return
+			}
+		}
+		count, _ := app.database.CountAdminUsers()
+		if count == 0 {
+			c.Redirect(http.StatusFound, "/setup")
+			return
+		}
+		c.HTML(http.StatusOK, "login.html", nil)
+	})
 	r.GET("/static/*filepath", func(c *gin.Context) {
 		c.File("static/" + c.Param("filepath"))
 	})
 
+	r.GET("/api/check-setup", app.HandleCheckSetup)
+	r.POST("/api/login", app.HandleLogin)
+
 	api := r.Group("/api")
+	api.Use(authMiddleware())
 	{
+		api.POST("/logout", app.HandleLogout)
 		api.GET("/settings", app.GetSettings)
 		api.POST("/settings", app.SaveSettings)
 		api.POST("/test/npm", app.TestNPM)
@@ -113,6 +203,14 @@ func main() {
 		api.GET("/monitors", app.KumaMonitors)
 		api.GET("/status", app.Status)
 	}
+
+	// Session cleanup goroutine
+	go func() {
+		for {
+			time.Sleep(15 * time.Minute)
+			cleanupSessions()
+		}
+	}()
 
 	fmt.Printf("synapse v%s listening on %s\n", version, addr)
 
@@ -130,6 +228,86 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("server shutdown error: %v", err)
 	}
+}
+
+func (app *App) HandleCheckSetup(c *gin.Context) {
+	count, err := app.database.CountAdminUsers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"setup": count > 0})
+}
+
+func (app *App) HandleLogin(c *gin.Context) {
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Setup    bool   `json:"setup"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	count, _ := app.database.CountAdminUsers()
+
+	if input.Setup && count > 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Setup already completed"})
+		return
+	}
+
+	if count == 0 {
+		if len(input.Password) < 8 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+			return
+		}
+		_, err = app.database.CreateAdminUser(input.Username, string(hash))
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
+			return
+		}
+		sessionID := generateSessionID()
+		sessionStoreMu.Lock()
+		sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour)}
+		sessionStoreMu.Unlock()
+		setSessionCookie(c, sessionID)
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		return
+	}
+
+	user, err := app.database.GetAdminUser(input.Username)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		return
+	}
+
+	sessionID := generateSessionID()
+	sessionStoreMu.Lock()
+	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour)}
+	sessionStoreMu.Unlock()
+	setSessionCookie(c, sessionID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (app *App) HandleLogout(c *gin.Context) {
+	sessionID, err := c.Cookie("session")
+	if err == nil && sessionID != "" {
+		sessionStoreMu.Lock()
+		delete(sessionStore, sessionID)
+		sessionStoreMu.Unlock()
+	}
+	c.SetCookie("session", "", -1, "/", "", false, true)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (app *App) Dashboard(c *gin.Context) {

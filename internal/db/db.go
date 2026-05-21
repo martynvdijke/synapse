@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"synapse/ent"
@@ -10,7 +11,7 @@ import (
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 
-	"entgo.io/ent/dialect/sql"
+	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -38,6 +39,12 @@ type Monitor struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type AdminUser struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Password string `json:"-"`
+}
+
 type Settings struct {
 	ComposePath string `json:"compose_path"`
 	NPMHost     string `json:"npm_host"`
@@ -49,11 +56,12 @@ type Settings struct {
 }
 
 type DB struct {
-	client *ent.Client
+	client  *ent.Client
+	rawDB   *sql.DB
 }
 
 func Open(path string) (*DB, error) {
-	drv, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000&_fk=1")
+	drv, err := entsql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000&_fk=1")
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +72,47 @@ func Open(path string) (*DB, error) {
 	if err := client.Schema.Create(context.Background(), migrate.WithForeignKeys(false)); err != nil {
 		return nil, err
 	}
-	return &DB{client: client}, nil
+
+	db := &DB{client: client, rawDB: sqlDB}
+	if err := db.createAdminUsersTable(); err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+
+func (db *DB) createAdminUsersTable() error {
+	_, err := db.rawDB.Exec(`CREATE TABLE IF NOT EXISTS admin_users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT NOT NULL UNIQUE,
+		password TEXT NOT NULL
+	)`)
+	return err
+}
+
+func (db *DB) CreateAdminUser(username, passwordHash string) (int64, error) {
+	res, err := db.rawDB.Exec("INSERT INTO admin_users (username, password) VALUES (?, ?)", username, passwordHash)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
+	var u AdminUser
+	err := db.rawDB.QueryRow("SELECT id, username, password FROM admin_users WHERE username = ?", username).Scan(&u.ID, &u.Username, &u.Password)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (db *DB) CountAdminUsers() (int, error) {
+	var count int
+	err := db.rawDB.QueryRow("SELECT COUNT(*) FROM admin_users").Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (db *DB) Close() error {
@@ -135,7 +183,7 @@ func (db *DB) FinishSyncRun(id int64, status string, added, skipped, failed int,
 
 func (db *DB) GetSyncRuns(limit int) ([]SyncRun, error) {
 	entries, err := db.client.SyncRun.Query().
-		Order(syncrun.ByID(sql.OrderDesc())).
+		Order(syncrun.ByID(entsql.OrderDesc())).
 		Limit(limit).
 		All(context.Background())
 	if err != nil {
@@ -149,7 +197,7 @@ func (db *DB) GetSyncRuns(limit int) ([]SyncRun, error) {
 }
 
 func (db *DB) GetLatestSyncRun(source string) (*SyncRun, error) {
-	q := db.client.SyncRun.Query().Order(syncrun.ByID(sql.OrderDesc())).Limit(1)
+	q := db.client.SyncRun.Query().Order(syncrun.ByID(entsql.OrderDesc())).Limit(1)
 	if source != "" {
 		q = q.Where(syncrun.Source(source))
 	}
@@ -185,7 +233,7 @@ func (db *DB) AddMonitor(m *Monitor) error {
 
 func (db *DB) GetMonitors() ([]Monitor, error) {
 	entries, err := db.client.Monitor.Query().
-		Order(monitor.ByID(sql.OrderDesc())).
+		Order(monitor.ByID(entsql.OrderDesc())).
 		All(context.Background())
 	if err != nil {
 		return nil, err

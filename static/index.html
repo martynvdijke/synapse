@@ -27,6 +27,9 @@
 <nav class="navbar navbar-dark bg-dark px-4">
     <span class="navbar-brand mb-0 h1">Synapse</span>
     <span class="text-light opacity-75 small">v{{ .Version }}</span>
+    <div>
+        <button class="btn btn-outline-light btn-sm" onclick="logout()">Logout</button>
+    </div>
 </nav>
 
 <div class="container-fluid px-4">
@@ -101,71 +104,6 @@
         </div>
     </div>
 
-    <div class="settings-section mb-3">
-        <div class="p-3 d-flex align-items-center justify-content-between settings-toggle" onclick="toggleSettings()">
-            <h6 class="mb-0 fw-semibold">Settings</h6>
-            <span class="text-muted small" id="settings-chevron">Show</span>
-        </div>
-        <div id="settings-body" style="display:none">
-            <hr class="my-0">
-            <div class="p-3">
-            <form id="settings-form" onsubmit="saveSettings(event)">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <h6 class="mb-3 text-primary">Uptime Kuma</h6>
-                        <div class="mb-2">
-                            <label class="form-label">URL</label>
-                            <input class="form-control form-control-sm" id="s-kuma-url" placeholder="http://uptime-kuma:3001">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label">Username</label>
-                            <input class="form-control form-control-sm" id="s-kuma-user" placeholder="admin">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label">Password</label>
-                            <input class="form-control form-control-sm" type="password" id="s-kuma-pass" placeholder="Leave blank to keep current">
-                        </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testConnection('kuma')">Test Kuma</button>
-                            <span class="test-result" id="test-kuma-result"></span>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <h6 class="mb-3 text-success">Nginx Proxy Manager</h6>
-                        <div class="mb-2">
-                            <label class="form-label">URL</label>
-                            <input class="form-control form-control-sm" id="s-npm-host" placeholder="http://nginx:81">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label">Username</label>
-                            <input class="form-control form-control-sm" id="s-npm-user" placeholder="admin">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label">Password</label>
-                            <input class="form-control form-control-sm" type="password" id="s-npm-pass" placeholder="Leave blank to keep current">
-                        </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testConnection('npm')">Test NPM</button>
-                            <span class="test-result" id="test-npm-result"></span>
-                        </div>
-                    </div>
-                    <div class="col-12">
-                        <h6 class="mb-3">Docker Compose</h6>
-                        <div class="mb-2">
-                            <label class="form-label">Compose File Path</label>
-                            <input class="form-control form-control-sm" id="s-compose-path" placeholder="docker-compose.yml" style="max-width:400px">
-                        </div>
-                    </div>
-                </div>
-                <div class="mt-3">
-                    <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
-                    <span class="text-success small ms-2 d-none" id="settings-saved">Settings saved</span>
-                </div>
-            </form>
-            </div>
-        </div>
-    </div>
-
     <ul class="nav nav-tabs mb-3" role="tablist">
         <li class="nav-item" role="presentation">
             <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-docker" type="button">
@@ -185,6 +123,11 @@
         <li class="nav-item" role="presentation">
             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">
                 Sync History
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-settings" type="button">
+                Settings
             </button>
         </li>
     </ul>
@@ -265,12 +208,86 @@
                 </table>
             </div>
         </div>
+
+        <div class="tab-pane fade" id="tab-settings">
+            <div class="bg-white rounded shadow-sm p-4">
+                <form id="settings-form" onsubmit="saveSettings(event)">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <h6 class="mb-3 text-primary">Uptime Kuma</h6>
+                            <div class="mb-2">
+                                <label class="form-label">URL</label>
+                                <input class="form-control form-control-sm" id="s-kuma-url" placeholder="http://uptime-kuma:3001">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Username</label>
+                                <input class="form-control form-control-sm" id="s-kuma-user" placeholder="admin">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Password</label>
+                                <input class="form-control form-control-sm" type="password" id="s-kuma-pass" placeholder="Leave blank to keep current">
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testConnection('kuma')">Test Kuma</button>
+                                <span class="test-result" id="test-kuma-result"></span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="mb-3 text-success">Nginx Proxy Manager</h6>
+                            <div class="mb-2">
+                                <label class="form-label">URL</label>
+                                <input class="form-control form-control-sm" id="s-npm-host" placeholder="http://nginx:81">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Username</label>
+                                <input class="form-control form-control-sm" id="s-npm-user" placeholder="admin">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Password</label>
+                                <input class="form-control form-control-sm" type="password" id="s-npm-pass" placeholder="Leave blank to keep current">
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="testConnection('npm')">Test NPM</button>
+                                <span class="test-result" id="test-npm-result"></span>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <h6 class="mb-3">Docker Compose</h6>
+                            <div class="mb-2">
+                                <label class="form-label">Compose File Path</label>
+                                <input class="form-control form-control-sm" id="s-compose-path" placeholder="docker-compose.yml" style="max-width:400px">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
+                        <span class="text-success small ms-2 d-none" id="settings-saved">Settings saved</span>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function apiFetch(url, opts) {
+    return fetch(url, opts).then(function(r) {
+        if (r.status === 401) {
+            window.location.href = '/login';
+            throw new Error('not authenticated');
+        }
+        return r;
+    });
+}
+
+function logout() {
+    apiFetch('/api/logout', { method: 'POST' }).then(function() {
+        window.location.href = '/login';
+    });
+}
 
 const evtSource = new EventSource('/api/sync/progress');
 evtSource.onmessage = function(e) {
@@ -296,8 +313,9 @@ function startSync(source) {
     document.getElementById('btn-docker').disabled = true;
     document.getElementById('btn-npm').disabled = true;
     document.getElementById('stat-status').innerHTML = '<span class="badge bg-primary">Running...</span>';
-    fetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(d => console.log(source + ' sync started', d))
-        .catch(function() {
+    apiFetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(d => console.log(source + ' sync started', d))
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
             document.getElementById('btn-docker').disabled = false;
             document.getElementById('btn-npm').disabled = false;
             document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
@@ -305,7 +323,7 @@ function startSync(source) {
 }
 
 function loadStatus() {
-    fetch('/api/status').then(r => r.json()).then(function(d) {
+    apiFetch('/api/status').then(r => r.json()).then(function(d) {
         document.getElementById('stat-docker').textContent = d.docker_count;
         document.getElementById('stat-npm').textContent = d.npm_error ? '⚠' : d.npm_count;
         document.getElementById('stat-monitors').textContent = d.monitor_count;
@@ -318,7 +336,7 @@ function loadStatus() {
 }
 
 function loadDockerServices() {
-    fetch('/api/services').then(r => r.json()).then(function(services) {
+    apiFetch('/api/services').then(r => r.json()).then(function(services) {
         const tbody = document.getElementById('docker-tbody');
         if (services.error) {
             tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">'+esc(services.error)+'</td></tr>';
@@ -343,7 +361,7 @@ function loadDockerServices() {
 }
 
 function loadKumaMonitors() {
-    fetch('/api/monitors').then(r => r.json()).then(function(monitors) {
+    apiFetch('/api/monitors').then(r => r.json()).then(function(monitors) {
         const tbody = document.getElementById('kuma-tbody');
         if (monitors.error) {
             tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">'+esc(monitors.error)+'</td></tr>';
@@ -365,7 +383,7 @@ function loadKumaMonitors() {
 }
 
 function loadNPMProxies() {
-    fetch('/api/proxies').then(r => r.json()).then(function(proxies) {
+    apiFetch('/api/proxies').then(r => r.json()).then(function(proxies) {
         const tbody = document.getElementById('npm-tbody');
         if (proxies.error) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">'+esc(proxies.error)+'</td></tr>';
@@ -388,7 +406,7 @@ function loadNPMProxies() {
 }
 
 function loadHistory() {
-    fetch('/api/sync/history').then(r => r.json()).then(function(runs) {
+    apiFetch('/api/sync/history').then(r => r.json()).then(function(runs) {
         const tbody = document.getElementById('history-tbody');
         if (!runs.length) {
             tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No sync history yet</td></tr>';
@@ -428,26 +446,14 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-npm') loadNPMProxies();
         else if (target === '#tab-kuma') loadKumaMonitors();
         else if (target === '#tab-history') loadHistory();
+        else if (target === '#tab-settings') loadSettings();
     });
 });
 
 // --- Settings ---
 
-function toggleSettings() {
-    var body = document.getElementById('settings-body');
-    var chev = document.getElementById('settings-chevron');
-    if (body.style.display === 'none') {
-        body.style.display = 'block';
-        chev.textContent = 'Hide';
-        loadSettings();
-    } else {
-        body.style.display = 'none';
-        chev.textContent = 'Show';
-    }
-}
-
 function loadSettings() {
-    fetch('/api/settings').then(r => r.json()).then(function(s) {
+    apiFetch('/api/settings').then(r => r.json()).then(function(s) {
         document.getElementById('s-kuma-url').value = s.kuma_url || '';
         document.getElementById('s-kuma-user').value = s.kuma_user || '';
         document.getElementById('s-kuma-pass').value = s.kuma_pass || '';
@@ -469,7 +475,7 @@ function saveSettings(e) {
         npm_pass:  document.getElementById('s-npm-pass').value,
         compose_path: document.getElementById('s-compose-path')?.value || ''
     };
-    fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    apiFetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
         .then(r => r.json())
         .then(function(d) {
             if (d.status === 'saved') {
@@ -495,10 +501,10 @@ function testConnection(service) {
     };
 
     // Save first so test reads from DB
-    fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    apiFetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
         .then(r => r.json())
         .then(function() {
-            return fetch('/api/test/' + service, { method: 'POST' });
+            return apiFetch('/api/test/' + service, { method: 'POST' });
         })
         .then(r => r.json())
         .then(function(d) {
@@ -507,11 +513,15 @@ function testConnection(service) {
                 : '<span class="text-danger">' + esc(d.message) + '</span>';
         })
         .catch(function(err) {
+            if (err.message === 'not authenticated') return;
             resultEl.innerHTML = '<span class="text-danger">' + esc(''+err) + '</span>';
         });
 }
 
-refreshAll();
+// Check that app is set up before loading
+apiFetch('/api/status').then(function() { refreshAll(); }).catch(function(err) {
+    if (err.message === 'not authenticated') return;
+});
 </script>
 </body>
 </html>
