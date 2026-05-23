@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -63,50 +64,88 @@ type ProxyInfo struct {
 	KumaID    int    `json:"kuma_id,omitempty"`
 }
 
+// extractTestString joins healthcheck.Test into a single string for regex matching.
+func extractTestString(test any) string {
+	switch v := test.(type) {
+	case []any:
+		var parts []string
+		for _, t := range v {
+			parts = append(parts, fmt.Sprintf("%v", t))
+		}
+		return strings.Join(parts, " ")
+	case string:
+		return v
+	default:
+		return ""
+	}
+}
+
+// urlSuffixRx matches the optional port and path portion of a URL (starting after the host).
+var urlSuffixRx = regexp.MustCompile(`(?::(\d+))?(/[^\s"']*)?`)
+
+// ParseHealthcheck extracts a monitor URL from a docker-compose healthcheck definition.
+//
+// It supports these patterns:
+//   - CMD curl/wget http://localhost:PORT/PATH
+//   - CMD-SHELL curl/wget http://localhost:PORT/PATH || exit 1
+//   - String healthcheck: curl -f http://localhost:PORT/PATH
+//   - Non-localhost URLs (service names / container names) used as-is
+//
+// For localhost URLs, the host is rewritten to the service/container name so that
+// Uptime Kuma can reach it via the Docker internal network. For non-localhost URLs
+// the URL is returned unchanged.
 func ParseHealthcheck(name string, svc ServiceDef) string {
 	if svc.HealthCheck == nil {
 		return ""
 	}
-	var testStr string
-	switch v := svc.HealthCheck.Test.(type) {
-	case []any:
-		for _, t := range v {
-			testStr += fmt.Sprintf("%v ", t)
-		}
-		if len(testStr) > 0 {
-			testStr = testStr[:len(testStr)-1]
-		}
-	case string:
-		testStr = v
-	default:
+
+	testStr := extractTestString(svc.HealthCheck.Test)
+	if testStr == "" {
 		return ""
 	}
 
-	re := regexp.MustCompile(`https?://(?:localhost|127\.0\.0\.1)(?::(\d+))?(/[\w/.-]*)?`)
-	m := re.FindStringSubmatch(testStr)
-	if m == nil {
-		return ""
-	}
-
-	port := "80"
-	if m[1] != "" {
-		port = m[1]
-	}
-	path := "/"
-	if m[2] != "" {
-		path = m[2]
-	}
-
-	hostname := name
-	if svc.NetworkMode != "" {
-		if len(svc.NetworkMode) > 8 && svc.NetworkMode[:8] == "service:" {
-			hostname = svc.NetworkMode[8:]
+	// First try: match localhost / 127.0.0.1 URLs.
+	// Extract port and path, then reconstruct with container/service name as host.
+	reLocal := regexp.MustCompile(`https?://(?:localhost|127\.0\.0\.1)(?::(\d+))?(/[^\s"']*)?`)
+	if m := reLocal.FindStringSubmatch(testStr); m != nil {
+		port := "80"
+		if m[1] != "" {
+			port = m[1]
 		}
-	} else if svc.ContainerName != "" {
-		hostname = svc.ContainerName
+		path := "/"
+		if m[2] != "" {
+			path = m[2]
+		}
+
+		hostname := name
+		if svc.NetworkMode != "" {
+			if len(svc.NetworkMode) > 8 && svc.NetworkMode[:8] == "service:" {
+				hostname = svc.NetworkMode[8:]
+			}
+		} else if svc.ContainerName != "" {
+			hostname = svc.ContainerName
+		}
+
+		return fmt.Sprintf("http://%s:%s%s", hostname, port, path)
 	}
 
-	return fmt.Sprintf("http://%s:%s%s", hostname, port, path)
+	// Second try: non-localhost URL (e.g. service-name:port/path).
+	// These are already valid Docker-internal URLs, so use them as-is.
+	reSvc := regexp.MustCompile(`https?://([^/\s"':]+)(?::(\d+))?(/[^\s"']*)?`)
+	if m := reSvc.FindStringSubmatch(testStr); m != nil {
+		host := m[1]
+		port := "80"
+		if m[2] != "" {
+			port = m[2]
+		}
+		path := "/"
+		if m[3] != "" {
+			path = m[3]
+		}
+		return fmt.Sprintf("http://%s:%s%s", host, port, path)
+	}
+
+	return ""
 }
 
 func LoadServices(path string) (map[string]ServiceDef, error) {

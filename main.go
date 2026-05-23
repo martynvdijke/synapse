@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -100,6 +101,15 @@ func (app *App) settings() db.Settings {
 func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func getEnvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -202,6 +212,12 @@ func main() {
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
 		api.GET("/status", app.Status)
+	}
+
+	// Start periodic sync scheduler (if SYNC_INTERVAL > 0)
+	syncInterval := getEnvInt("SYNC_INTERVAL", 0)
+	if syncInterval > 0 {
+		go app.startSyncScheduler(ctx, syncInterval)
 	}
 
 	// Session cleanup goroutine
@@ -593,6 +609,57 @@ func (app *App) NPMSync(c *gin.Context) {
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "started", "source": "npm"})
+}
+
+// startSyncScheduler runs periodic docker and NPM syncs on a configurable interval.
+// It is intended to run as a background goroutine and respects context cancellation.
+func (app *App) startSyncScheduler(ctx context.Context, intervalMinutes int) {
+	log.Printf("starting sync scheduler: every %d minute(s)", intervalMinutes)
+	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("sync scheduler stopped")
+			return
+		case <-ticker.C:
+			app.runScheduledSync()
+		}
+	}
+}
+
+// runScheduledSync executes both docker and NPM syncs sequentially with proper locking.
+func (app *App) runScheduledSync() {
+	app.mu.Lock()
+	if app.running {
+		app.mu.Unlock()
+		log.Println("scheduler: sync already running, skipping this interval")
+		return
+	}
+	app.running = true
+	app.mu.Unlock()
+
+	defer func() {
+		app.mu.Lock()
+		app.running = false
+		app.mu.Unlock()
+	}()
+
+	s := app.settings()
+	log.Println("scheduler: starting periodic docker sync")
+
+	synclib.RunDockerSync(s.ComposePath, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
+		log.Printf("[scheduler] docker sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
+	})
+
+	log.Println("scheduler: starting periodic npm sync")
+
+	synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
+		log.Printf("[scheduler] npm sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
+	})
+
+	log.Println("scheduler: periodic sync complete")
 }
 
 func (app *App) ProgressSSE(c *gin.Context) {
