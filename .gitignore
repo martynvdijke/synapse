@@ -27,6 +27,10 @@ tmp/
 # Node
 node_modules/
 
+# Playwright
+playwright-report/
+test-results/
+
 # OpenCode / OpenSpec dev artifacts
 .opencode/
 openspec/

@@ -3,7 +3,10 @@
   "version": "1.0.4",
   "private": true,
   "scripts": {
-    "test": "go test ./..."
+    "test": "go test ./...",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "serve-test": "http-server ./static -p 8765 -c-1 --silent"
   },
   "repository": {
     "type": "git",
@@ -16,5 +19,9 @@
   "bugs": {
     "url": "https://github.com/martynvdijke/synapse/issues"
   },
-  "homepage": "https://github.com/martynvdijke/synapse#readme"
+  "homepage": "https://github.com/martynvdijke/synapse#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "http-server": "^14.1.1"
+  }
 }
