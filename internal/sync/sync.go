@@ -216,6 +216,35 @@ func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string
 	return result, nil
 }
 
+// NPMProxyEntry is the full proxy entry data (without Kuma status).
+type NPMProxyEntry struct {
+	CNAME     string `json:"cname"`
+	Container string `json:"container"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Protocol  string `json:"protocol"`
+}
+
+// GetNPMProxyEntries fetches proxy entries from NPM without Kuma status augmentation.
+func GetNPMProxyEntries(npmHost, npmUser, npmPass string) ([]NPMProxyEntry, error) {
+	entries, err := npm.GetProxyHosts(npmHost, npmUser, npmPass)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]NPMProxyEntry, len(entries))
+	for i, e := range entries {
+		result[i] = NPMProxyEntry{
+			CNAME:     e.CNAME,
+			Container: e.Container,
+			Host:      e.Host,
+			Port:      e.Port,
+			Protocol:  e.Protocol,
+		}
+	}
+	return result, nil
+}
+
 func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string) ([]ProxyInfo, error) {
 	_, span := tracer.Start(context.Background(), "GetNPMProxiesWithStatus",
 		trace.WithAttributes(attribute.String("npm_host", npmHost)),

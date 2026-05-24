@@ -198,6 +198,9 @@ func TestAPI_RequiresAuth(t *testing.T) {
 		"/api/settings",
 		"/api/sync/history",
 		"/api/monitors",
+		"/api/authelia/status",
+		"/api/authelia/alerts",
+		"/api/authelia/temp-access",
 	}
 
 	for _, ep := range endpoints {
@@ -369,6 +372,13 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/sync/docker", app.DockerSync)
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/monitors", app.KumaMonitors)
+		api.GET("/authelia/status", app.AutheliaStatus)
+		api.GET("/authelia/alerts", app.AutheliaAlerts)
+		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
+		api.GET("/authelia/temp-access", app.AutheliaTempAccess)
+		api.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
+		api.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
+		api.POST("/authelia/sync", app.AutheliaSync)
 	}
 
 	return r

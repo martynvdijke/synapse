@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"synapse/internal/authelia"
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	synclib "synapse/internal/sync"
@@ -93,13 +94,17 @@ type App struct {
 
 func (app *App) settings() db.Settings {
 	return app.database.GetSettings(db.Settings{
-		ComposePath: getEnv("COMPOSE_PATH", "docker-compose.yml"),
-		NPMHost:     getEnv("NPM_HOST", "http://nginx:81"),
-		NPMUser:     getEnv("NPM_USER", "admin"),
-		NPMPass:     getEnv("NPM_PASS", ""),
-		KumaURL:     getEnv("KUMA_URL", "http://uptime-kuma:3001"),
-		KumaUser:    getEnv("KUMA_USER", "admin"),
-		KumaPass:    getEnv("KUMA_PASS", ""),
+		ComposePath:           getEnv("COMPOSE_PATH", "docker-compose.yml"),
+		NPMHost:               getEnv("NPM_HOST", "http://nginx:81"),
+		NPMUser:               getEnv("NPM_USER", "admin"),
+		NPMPass:               getEnv("NPM_PASS", ""),
+		KumaURL:               getEnv("KUMA_URL", "http://uptime-kuma:3001"),
+		KumaUser:              getEnv("KUMA_USER", "admin"),
+		KumaPass:              getEnv("KUMA_PASS", ""),
+		AutheliaConfigPath:    getEnv("AUTHELIA_CONFIG_PATH", ""),
+		AutheliaDBPath:        getEnv("AUTHELIA_DB_PATH", ""),
+		AutheliaSyncEnabled:   getEnv("AUTHELIA_SYNC_ENABLED", "") == "true",
+		AutheliaDefaultPolicy: getEnv("AUTHELIA_DEFAULT_POLICY", authelia.DefaultPolicy),
 	})
 }
 
@@ -202,6 +207,15 @@ func main() {
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
 		api.GET("/status", app.Status)
+
+		// Authelia endpoints
+		api.GET("/authelia/status", app.AutheliaStatus)
+		api.GET("/authelia/alerts", app.AutheliaAlerts)
+		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
+		api.GET("/authelia/temp-access", app.AutheliaTempAccess)
+		api.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
+		api.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
+		api.POST("/authelia/sync", app.AutheliaSync)
 	}
 
 	// Start periodic sync scheduler (if SYNC_INTERVAL > 0)
@@ -325,13 +339,18 @@ func (app *App) Dashboard(c *gin.Context) {
 func (app *App) GetSettings(c *gin.Context) {
 	s := app.settings()
 	c.JSON(http.StatusOK, gin.H{
-		"compose_path": s.ComposePath,
-		"npm_host":     s.NPMHost,
-		"npm_user":     s.NPMUser,
-		"npm_pass":     mask(s.NPMPass),
-		"kuma_url":    s.KumaURL,
-		"kuma_user":   s.KumaUser,
-		"kuma_pass":   mask(s.KumaPass),
+		"compose_path":            s.ComposePath,
+		"npm_host":               s.NPMHost,
+		"npm_user":               s.NPMUser,
+		"npm_pass":               mask(s.NPMPass),
+		"kuma_url":               s.KumaURL,
+		"kuma_user":              s.KumaUser,
+		"kuma_pass":              mask(s.KumaPass),
+		"authelia_config_path":    s.AutheliaConfigPath,
+		"authelia_db_path":        s.AutheliaDBPath,
+		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
+		"authelia_default_policy": s.AutheliaDefaultPolicy,
+		"authelia_sync_overrides": s.AutheliaSyncOverrides,
 	})
 }
 
@@ -349,6 +368,15 @@ func (app *App) SaveSettings(c *gin.Context) {
 	}
 	if s.KumaPass == "" {
 		s.KumaPass = current.KumaPass
+	}
+	if s.AutheliaConfigPath == "" {
+		s.AutheliaConfigPath = current.AutheliaConfigPath
+	}
+	if s.AutheliaDBPath == "" {
+		s.AutheliaDBPath = current.AutheliaDBPath
+	}
+	if s.AutheliaDefaultPolicy == "" {
+		s.AutheliaDefaultPolicy = current.AutheliaDefaultPolicy
 	}
 
 	if err := app.database.SaveSettings(s); err != nil {
@@ -728,4 +756,297 @@ func (app *App) ProgressSSE(c *gin.Context) {
 			}
 		}
 	}
+}
+
+// ─── Authelia Handlers ──────────────────────────────────────────────────────
+
+// AutheliaStatus returns the current state of Authelia integration:
+//   - Whether the config file can be loaded
+//   - NPM CNAMEs and whether they're covered by Authelia rules
+//   - Open alerts count
+func (app *App) AutheliaStatus(c *gin.Context) {
+	s := app.settings()
+
+	if s.AutheliaConfigPath == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"configured": false,
+			"message":    "Authelia config path not set",
+		})
+		return
+	}
+
+	// Parse Authelia config
+	ac, err := authelia.ParseConfig(s.AutheliaConfigPath)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"configured": true,
+			"error":      err.Error(),
+			"domains":    []string{},
+		})
+		return
+	}
+
+	autheliaDomains := authelia.GetDomains(ac)
+
+	// Get NPM CNAMEs for comparison
+	var npmCNAMEs []string
+	proxies, npmErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
+	if npmErr == nil {
+		for _, p := range proxies {
+			npmCNAMEs = append(npmCNAMEs, p.CNAME)
+		}
+	}
+
+	matched, missing := authelia.CompareCNAMEs(npmCNAMEs, autheliaDomains)
+
+	openAlerts := 0
+	if alerts, err := app.database.GetOpenAutheliaAlerts(); err == nil {
+		openAlerts = len(alerts)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"configured":      true,
+		"domains":         autheliaDomains,
+		"npm_cnames":      npmCNAMEs,
+		"matched":         matched,
+		"missing":         missing,
+		"open_alerts":     openAlerts,
+		"sync_enabled":    s.AutheliaSyncEnabled,
+		"default_policy":  s.AutheliaDefaultPolicy,
+		"npm_error":       npmErr != nil,
+		"npm_error_msg":   func() string { if npmErr != nil { return npmErr.Error() }; return "" }(),
+	})
+}
+
+// AutheliaAlerts returns all authelia alerts.
+func (app *App) AutheliaAlerts(c *gin.Context) {
+	alerts, err := app.database.GetAutheliaAlerts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if alerts == nil {
+		alerts = []db.AutheliaAlert{}
+	}
+	c.JSON(http.StatusOK, alerts)
+}
+
+// AutheliaResolveAlert marks an authelia alert as resolved.
+func (app *App) AutheliaResolveAlert(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	if err := app.database.ResolveAutheliaAlert(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "resolved"})
+}
+
+// AutheliaTempAccess returns all temporary IP access rules.
+func (app *App) AutheliaTempAccess(c *gin.Context) {
+	// Clean up expired rules first
+	_ = app.database.CleanupExpiredTempAccess()
+
+	rules, err := app.database.GetTempAccessRules()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if rules == nil {
+		rules = []db.TempAccess{}
+	}
+	c.JSON(http.StatusOK, rules)
+}
+
+// AutheliaAddTempAccess creates a new temporary IP access rule.
+func (app *App) AutheliaAddTempAccess(c *gin.Context) {
+	var input struct {
+		IP        string `json:"ip"`
+		Reason    string `json:"reason"`
+		Duration  string `json:"duration"` // Go duration string (e.g., "24h", "7d")
+		ExpiresAt string `json:"expires_at"` // RFC3339 timestamp (alternative to duration)
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	if input.IP == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ip is required"})
+		return
+	}
+
+	var expiresAt time.Time
+
+	if input.ExpiresAt != "" {
+		var err error
+		expiresAt, err = time.Parse(time.RFC3339, input.ExpiresAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid expires_at format, use RFC3339"})
+			return
+		}
+	} else if input.Duration != "" {
+		d, err := time.ParseDuration(input.Duration)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration: " + err.Error()})
+			return
+		}
+		expiresAt = time.Now().Add(d)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "duration or expires_at is required"})
+		return
+	}
+
+	rule := &db.TempAccess{
+		IP:        input.IP,
+		Reason:    input.Reason,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now(),
+	}
+
+	if err := app.database.AddTempAccess(rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "created"})
+}
+
+// AutheliaRevokeTempAccess revokes a temporary IP access rule.
+func (app *App) AutheliaRevokeTempAccess(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	if err := app.database.RevokeTempAccess(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
+}
+
+// AutheliaSync runs an Authelia sync operation (dry-run or actual).
+// Request body can include:
+//   - dry_run: bool (default: true for safety)
+//   - auto_sync: bool (overrides settings)
+func (app *App) AutheliaSync(c *gin.Context) {
+	s := app.settings()
+
+	if s.AutheliaConfigPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Authelia config path not set"})
+		return
+	}
+
+	var input struct {
+		DryRun   *bool `json:"dry_run"`
+		AutoSync *bool `json:"auto_sync"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		// Use defaults on parse error
+	}
+
+	dryRun := true
+	if input.DryRun != nil {
+		dryRun = *input.DryRun
+	}
+
+	autoSync := s.AutheliaSyncEnabled
+	if input.AutoSync != nil {
+		autoSync = *input.AutoSync
+	}
+
+	// Fetch NPM entries
+	npmEntries, err := synclib.GetNPMProxyEntries(s.NPMHost, s.NPMUser, s.NPMPass)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch NPM entries: " + err.Error()})
+		return
+	}
+
+	// Parse overrides from settings JSON
+	var overrides map[string]string
+	if s.AutheliaSyncOverrides != "" {
+		if err := json.Unmarshal([]byte(s.AutheliaSyncOverrides), &overrides); err != nil {
+			overrides = nil
+		}
+	}
+
+	// Convert NPM entries to authelia.ProxyEntry
+	var proxyEntries []authelia.ProxyEntry
+	for _, e := range npmEntries {
+		proxyEntries = append(proxyEntries, authelia.ProxyEntry{
+			CNAME:     e.CNAME,
+			Container: e.Container,
+			Host:      e.Host,
+			Port:      e.Port,
+			Protocol:  e.Protocol,
+		})
+	}
+
+	actions, err := authelia.SyncConfig(s.AutheliaConfigPath, proxyEntries, s.AutheliaDefaultPolicy, overrides, autoSync, dryRun)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "actions": actions})
+		return
+	}
+
+	// If not dry-run and auto-sync enabled, create alerts for any errors
+	if !dryRun && autoSync {
+		for _, a := range actions {
+			if a.Action == "add" {
+				app.database.AddAutheliaAlert(&db.AutheliaAlert{
+					CNAME:     a.CNAME,
+					Message:   a.Message,
+					Severity:  "info",
+					Status:    "resolved",
+					CreatedAt: time.Now(),
+				})
+			}
+		}
+	}
+
+	// If auto-sync is disabled, create open alerts for missing CNAMEs
+	if !autoSync {
+		for _, a := range actions {
+			if a.Action == "alert" {
+				app.database.AddAutheliaAlert(&db.AutheliaAlert{
+					CNAME:     a.CNAME,
+					Message:   a.Message,
+					Severity:  "warning",
+					CreatedAt: time.Now(),
+				})
+			}
+		}
+	}
+
+	resp := gin.H{
+		"dry_run":  dryRun,
+		"actions":  actions,
+		"added":    0,
+		"skipped":  0,
+		"alerted":  0,
+	}
+
+	for _, a := range actions {
+		switch a.Action {
+		case "add":
+			resp["added"] = resp["added"].(int) + 1
+		case "skip":
+			resp["skipped"] = resp["skipped"].(int) + 1
+		case "alert":
+			resp["alerted"] = resp["alerted"].(int) + 1
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

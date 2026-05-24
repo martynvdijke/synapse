@@ -45,14 +45,37 @@ type AdminUser struct {
 	Password string `json:"-"`
 }
 
+type AutheliaAlert struct {
+	ID        int64     `json:"id"`
+	CNAME     string    `json:"cname"`
+	Message   string    `json:"message"`
+	Severity  string    `json:"severity"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type TempAccess struct {
+	ID        int64     `json:"id"`
+	IP        string    `json:"ip"`
+	Reason    string    `json:"reason"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	Status    string    `json:"status"`
+}
+
 type Settings struct {
-	ComposePath string `json:"compose_path"`
-	NPMHost     string `json:"npm_host"`
-	NPMUser     string `json:"npm_user"`
-	NPMPass     string `json:"npm_pass"`
-	KumaURL     string `json:"kuma_url"`
-	KumaUser    string `json:"kuma_user"`
-	KumaPass    string `json:"kuma_pass"`
+	ComposePath           string `json:"compose_path"`
+	NPMHost               string `json:"npm_host"`
+	NPMUser               string `json:"npm_user"`
+	NPMPass               string `json:"npm_pass"`
+	KumaURL               string `json:"kuma_url"`
+	KumaUser              string `json:"kuma_user"`
+	KumaPass              string `json:"kuma_pass"`
+	AutheliaConfigPath    string `json:"authelia_config_path"`
+	AutheliaDBPath        string `json:"authelia_db_path"`
+	AutheliaSyncEnabled   bool   `json:"authelia_sync_enabled"`
+	AutheliaDefaultPolicy string `json:"authelia_default_policy"`
+	AutheliaSyncOverrides string `json:"authelia_sync_overrides"`
 }
 
 type DB struct {
@@ -77,6 +100,9 @@ func Open(path string) (*DB, error) {
 	if err := db.createAdminUsersTable(); err != nil {
 		return nil, err
 	}
+	if err := db.createAutheliaTables(); err != nil {
+		return nil, err
+	}
 	return db, nil
 }
 
@@ -85,6 +111,30 @@ func (db *DB) createAdminUsersTable() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT NOT NULL UNIQUE,
 		password TEXT NOT NULL
+	)`)
+	return err
+}
+
+func (db *DB) createAutheliaTables() error {
+	_, err := db.rawDB.Exec(`CREATE TABLE IF NOT EXISTS authelia_alerts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		cname TEXT NOT NULL,
+		message TEXT NOT NULL DEFAULT '',
+		severity TEXT NOT NULL DEFAULT 'warning',
+		status TEXT NOT NULL DEFAULT 'open',
+		created_at DATETIME NOT NULL
+	)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.rawDB.Exec(`CREATE TABLE IF NOT EXISTS temp_access (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ip TEXT NOT NULL,
+		reason TEXT NOT NULL DEFAULT '',
+		expires_at DATETIME NOT NULL,
+		created_at DATETIME NOT NULL,
+		status TEXT NOT NULL DEFAULT 'active'
 	)`)
 	return err
 }
@@ -271,20 +321,40 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.KumaUser = row.Value
 		case "kuma_pass":
 			s.KumaPass = row.Value
+		case "authelia_config_path":
+			s.AutheliaConfigPath = row.Value
+		case "authelia_db_path":
+			s.AutheliaDBPath = row.Value
+		case "authelia_sync_enabled":
+			s.AutheliaSyncEnabled = row.Value == "true"
+		case "authelia_default_policy":
+			s.AutheliaDefaultPolicy = row.Value
+		case "authelia_sync_overrides":
+			s.AutheliaSyncOverrides = row.Value
 		}
 	}
 	return s
 }
 
 func (db *DB) SaveSettings(s Settings) error {
+	syncEnabled := "false"
+	if s.AutheliaSyncEnabled {
+		syncEnabled = "true"
+	}
+
 	pairs := map[string]string{
-		"compose_path": s.ComposePath,
-		"npm_host":    s.NPMHost,
-		"npm_user":    s.NPMUser,
-		"npm_pass":    s.NPMPass,
-		"kuma_url":    s.KumaURL,
-		"kuma_user":    s.KumaUser,
-		"kuma_pass":    s.KumaPass,
+		"compose_path":            s.ComposePath,
+		"npm_host":               s.NPMHost,
+		"npm_user":               s.NPMUser,
+		"npm_pass":               s.NPMPass,
+		"kuma_url":               s.KumaURL,
+		"kuma_user":               s.KumaUser,
+		"kuma_pass":               s.KumaPass,
+		"authelia_config_path":    s.AutheliaConfigPath,
+		"authelia_db_path":        s.AutheliaDBPath,
+		"authelia_sync_enabled":   syncEnabled,
+		"authelia_default_policy": s.AutheliaDefaultPolicy,
+		"authelia_sync_overrides": s.AutheliaSyncOverrides,
 	}
 	for k, v := range pairs {
 		created, err := db.client.Settings.Create().
@@ -307,4 +377,120 @@ func (db *DB) SaveSettings(s Settings) error {
 		_ = created
 	}
 	return nil
+}
+
+// AutheliaAlert CRUD
+
+func (db *DB) AddAutheliaAlert(a *AutheliaAlert) error {
+	_, err := db.rawDB.Exec(
+		"INSERT INTO authelia_alerts (cname, message, severity, status, created_at) VALUES (?, ?, ?, ?, ?)",
+		a.CNAME, a.Message, a.Severity, "open", a.CreatedAt,
+	)
+	return err
+}
+
+func (db *DB) GetAutheliaAlerts() ([]AutheliaAlert, error) {
+	rows, err := db.rawDB.Query(
+		"SELECT id, cname, message, severity, status, created_at FROM authelia_alerts ORDER BY id DESC",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []AutheliaAlert
+	for rows.Next() {
+		var a AutheliaAlert
+		if err := rows.Scan(&a.ID, &a.CNAME, &a.Message, &a.Severity, &a.Status, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, a)
+	}
+	return alerts, rows.Err()
+}
+
+func (db *DB) GetOpenAutheliaAlerts() ([]AutheliaAlert, error) {
+	rows, err := db.rawDB.Query(
+		"SELECT id, cname, message, severity, status, created_at FROM authelia_alerts WHERE status = 'open' ORDER BY id DESC",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []AutheliaAlert
+	for rows.Next() {
+		var a AutheliaAlert
+		if err := rows.Scan(&a.ID, &a.CNAME, &a.Message, &a.Severity, &a.Status, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, a)
+	}
+	return alerts, rows.Err()
+}
+
+func (db *DB) ResolveAutheliaAlert(id int64) error {
+	_, err := db.rawDB.Exec("UPDATE authelia_alerts SET status = 'resolved' WHERE id = ?", id)
+	return err
+}
+
+// TempAccess CRUD
+
+func (db *DB) AddTempAccess(t *TempAccess) error {
+	_, err := db.rawDB.Exec(
+		"INSERT INTO temp_access (ip, reason, expires_at, created_at, status) VALUES (?, ?, ?, ?, ?)",
+		t.IP, t.Reason, t.ExpiresAt, t.CreatedAt, "active",
+	)
+	return err
+}
+
+func (db *DB) GetTempAccessRules() ([]TempAccess, error) {
+	rows, err := db.rawDB.Query(
+		"SELECT id, ip, reason, expires_at, created_at, status FROM temp_access ORDER BY id DESC",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []TempAccess
+	for rows.Next() {
+		var t TempAccess
+		if err := rows.Scan(&t.ID, &t.IP, &t.Reason, &t.ExpiresAt, &t.CreatedAt, &t.Status); err != nil {
+			return nil, err
+		}
+		rules = append(rules, t)
+	}
+	return rules, rows.Err()
+}
+
+func (db *DB) GetActiveTempAccess() ([]TempAccess, error) {
+	rows, err := db.rawDB.Query(
+		"SELECT id, ip, reason, expires_at, created_at, status FROM temp_access WHERE status = 'active' ORDER BY id DESC",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []TempAccess
+	for rows.Next() {
+		var t TempAccess
+		if err := rows.Scan(&t.ID, &t.IP, &t.Reason, &t.ExpiresAt, &t.CreatedAt, &t.Status); err != nil {
+			return nil, err
+		}
+		rules = append(rules, t)
+	}
+	return rules, rows.Err()
+}
+
+func (db *DB) RevokeTempAccess(id int64) error {
+	_, err := db.rawDB.Exec("UPDATE temp_access SET status = 'revoked' WHERE id = ?", id)
+	return err
+}
+
+func (db *DB) CleanupExpiredTempAccess() error {
+	now := time.Now()
+	_, err := db.rawDB.Exec("UPDATE temp_access SET status = 'expired' WHERE status = 'active' AND expires_at <= ?", now)
+	return err
 }

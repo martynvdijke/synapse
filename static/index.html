@@ -80,6 +80,16 @@
                 </div>
             </div>
         </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-0 shadow-sm">
+                <div class="card-body text-center py-3">
+                    <div class="text-muted small text-uppercase">Authelia</div>
+                    <div class="fs-6 fw-semibold mt-2" id="stat-authelia">
+                        <span class="badge bg-secondary">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="sync-section p-4 mb-3">
@@ -135,6 +145,11 @@
         <li class="nav-item" role="presentation">
             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">
                 Sync History
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-authelia" type="button">
+                Authelia
             </button>
         </li>
         <li class="nav-item" role="presentation">
@@ -221,6 +236,126 @@
             </div>
         </div>
 
+        <div class="tab-pane fade" id="tab-authelia">
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body text-center py-3">
+                            <div class="text-muted small text-uppercase">Domains in Config</div>
+                            <div class="fs-3 fw-bold text-info" id="auth-domain-count">—</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body text-center py-3">
+                            <div class="text-muted small text-uppercase">NPM Coverage</div>
+                            <div class="fs-3 fw-bold text-success" id="auth-coverage">—</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body text-center py-3">
+                            <div class="text-muted small text-uppercase">Open Alerts</div>
+                            <div class="fs-3 fw-bold text-danger" id="auth-open-alerts">—</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded shadow-sm p-3 mb-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h6 class="mb-0 fw-semibold">CNAME Coverage <small class="text-muted fw-normal">(NPM vs Authelia)</small></h6>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-info btn-sm" id="btn-auth-dryrun">Dry Run Sync</button>
+                        <button class="btn btn-info btn-sm" id="btn-auth-sync">Sync & Auto-Add</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>CNAME</th>
+                                <th>Container</th>
+                                <th>Coverage</th>
+                                <th>Policy</th>
+                            </tr>
+                        </thead>
+                        <tbody id="auth-coverage-tbody">
+                            <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="auth-sync-result" class="small d-none mt-2"></div>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="bg-white rounded shadow-sm p-3">
+                        <h6 class="fw-semibold mb-2">Authelia Alerts</h6>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle small">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>CNAME</th>
+                                        <th>Message</th>
+                                        <th>Severity</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="auth-alerts-tbody">
+                                    <tr><td colspan="4" class="text-center text-muted py-3">No alerts</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="bg-white rounded shadow-sm p-3">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h6 class="fw-semibold mb-0">Temporary IP Access</h6>
+                            <button class="btn btn-outline-primary btn-sm" id="btn-add-temp-access" data-bs-toggle="collapse" data-bs-target="#temp-access-form">+ Add Rule</button>
+                        </div>
+                        <div class="collapse mb-2" id="temp-access-form">
+                            <div class="card card-body bg-light p-2">
+                                <div class="row g-1">
+                                    <div class="col-md-4">
+                                        <input class="form-control form-control-sm" id="ta-ip" placeholder="IP address">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <input class="form-control form-control-sm" id="ta-reason" placeholder="Reason">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input class="form-control form-control-sm" id="ta-duration" placeholder="Duration (e.g. 24h, 7d)">
+                                    </div>
+                                    <div class="col-md-1">
+                                        <button class="btn btn-primary btn-sm w-100" id="btn-ta-submit">Add</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle small">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>IP</th>
+                                        <th>Reason</th>
+                                        <th>Expires</th>
+                                        <th>Status</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="auth-temp-tbody">
+                                    <tr><td colspan="5" class="text-center text-muted py-3">No rules</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="tab-pane fade" id="tab-settings">
             <div class="bg-white rounded shadow-sm p-4">
                 <form id="settings-form">
@@ -261,6 +396,39 @@
                             <div class="d-flex align-items-center gap-2">
                                 <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-test-npm">Test NPM</button>
                                 <span class="test-result" id="test-npm-result"></span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="mb-3 text-info">Authelia</h6>
+                            <div class="mb-2">
+                                <label class="form-label">Config Path</label>
+                                <input class="form-control form-control-sm" id="s-auth-config-path" placeholder="/config/configuration.yml">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Database Path</label>
+                                <input class="form-control form-control-sm" id="s-auth-db-path" placeholder="/config/db.sqlite3">
+                            </div>
+                            <div class="mb-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="s-auth-sync-enabled">
+                                    <label class="form-check-label" for="s-auth-sync-enabled">Auto-sync CNAMEs to Authelia</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="mb-3 text-info">Authelia Policies</h6>
+                            <div class="mb-2">
+                                <label class="form-label">Default Policy</label>
+                                <select class="form-select form-select-sm" id="s-auth-default-policy">
+                                    <option value="one_factor">one_factor</option>
+                                    <option value="two_factor">two_factor</option>
+                                    <option value="bypass">bypass</option>
+                                    <option value="deny">deny</option>
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Policy Overrides (JSON: {"cname":"policy"})</label>
+                                <textarea class="form-control form-control-sm" id="s-auth-overrides" rows="3" placeholder='{"public.example.com":"bypass"}'></textarea>
                             </div>
                         </div>
                         <div class="col-12">
@@ -406,6 +574,22 @@ function loadStatus() {
         document.getElementById('btn-docker').disabled = d.running;
         document.getElementById('btn-npm').disabled = d.running;
     });
+    // Load authelia status separately
+    apiFetch('/api/authelia/status').then(r => r.json()).then(function(d) {
+        var el = document.getElementById('stat-authelia');
+        if (!d.configured) {
+            el.innerHTML = '<span class="badge bg-secondary">Not configured</span>';
+            return;
+        }
+        if (d.error) {
+            el.innerHTML = '<span class="badge bg-danger">Config error</span>';
+            return;
+        }
+        var total = d.npm_cnames ? d.npm_cnames.length : 0;
+        var matched = d.matched ? d.matched.length : 0;
+        var coverage = total > 0 ? Math.round(matched / total * 100) : 0;
+        el.innerHTML = '<span class="badge ' + (coverage >= 100 ? 'bg-success' : coverage > 0 ? 'bg-warning text-dark' : 'bg-danger') + '">' + matched + '/' + total + ' (' + coverage + '%)</span>';
+    });
 }
 
 function loadDockerServices() {
@@ -524,6 +708,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-kuma') loadKumaMonitors();
         else if (target === '#tab-history') loadHistory();
         else if (target === '#tab-settings') loadSettings();
+        else if (target === '#tab-authelia') loadAutheliaDashboard();
     });
 });
 
@@ -538,6 +723,11 @@ function loadSettings() {
         document.getElementById('s-npm-user').value = s.npm_user || '';
         document.getElementById('s-npm-pass').value = '';
         document.getElementById('s-compose-path').value = s.compose_path || '';
+        document.getElementById('s-auth-config-path').value = s.authelia_config_path || '';
+        document.getElementById('s-auth-db-path').value = s.authelia_db_path || '';
+        document.getElementById('s-auth-sync-enabled').checked = !!s.authelia_sync_enabled;
+        document.getElementById('s-auth-default-policy').value = s.authelia_default_policy || 'one_factor';
+        document.getElementById('s-auth-overrides').value = s.authelia_sync_overrides || '';
     });
 }
 
@@ -555,7 +745,12 @@ function saveSettings(e) {
         npm_host:  document.getElementById('s-npm-host').value,
         npm_user:  document.getElementById('s-npm-user').value,
         npm_pass:  document.getElementById('s-npm-pass').value,
-        compose_path: document.getElementById('s-compose-path')?.value || ''
+        compose_path: document.getElementById('s-compose-path')?.value || '',
+        authelia_config_path: document.getElementById('s-auth-config-path')?.value || '',
+        authelia_db_path: document.getElementById('s-auth-db-path')?.value || '',
+        authelia_sync_enabled: document.getElementById('s-auth-sync-enabled')?.checked || false,
+        authelia_default_policy: document.getElementById('s-auth-default-policy')?.value || 'one_factor',
+        authelia_sync_overrides: document.getElementById('s-auth-overrides')?.value || ''
     };
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r) {
@@ -614,12 +809,230 @@ function testConnection(service) {
         });
 }
 
-// --- Sync with confirmation ---
+// ─── Authelia ────────────────────────────────────────────────────────────────
+
+function loadAutheliaDashboard() {
+    loadAutheliaStatus();
+    loadAutheliaAlerts();
+    loadAutheliaTempAccess();
+}
+
+function loadAutheliaStatus() {
+    apiFetch('/api/authelia/status').then(r => r.json()).then(function(d) {
+        if (!d.configured) {
+            document.getElementById('auth-domain-count').textContent = '—';
+            document.getElementById('auth-coverage').textContent = '—';
+            document.getElementById('auth-open-alerts').textContent = '—';
+            document.getElementById('auth-coverage-tbody').innerHTML = emptyRow(4, 'Authelia not configured. Set config path in Settings.');
+            return;
+        }
+        if (d.error) {
+            document.getElementById('auth-domain-count').textContent = '⚠';
+            document.getElementById('auth-coverage').textContent = '⚠';
+            document.getElementById('auth-open-alerts').textContent = '⚠';
+            document.getElementById('auth-coverage-tbody').innerHTML = emptyRow(4, 'Error loading config: ' + esc(d.error));
+            return;
+        }
+
+        var domainCount = d.domains ? d.domains.length : 0;
+        document.getElementById('auth-domain-count').textContent = domainCount;
+
+        var total = d.npm_cnames ? d.npm_cnames.length : 0;
+        var matched = d.matched ? d.matched.length : 0;
+        var missing = d.missing ? d.missing.length : 0;
+        document.getElementById('auth-coverage').textContent = matched + '/' + total;
+        document.getElementById('auth-open-alerts').textContent = d.open_alerts || 0;
+
+        // Build coverage table from all NPM CNAMEs
+        var tbody = document.getElementById('auth-coverage-tbody');
+        if (total === 0) {
+            tbody.innerHTML = emptyRow(4, 'No NPM proxy hosts found');
+            return;
+        }
+
+        // Build lookup maps
+        var matchedMap = {};
+        (d.matched || []).forEach(function(c) { matchedMap[c] = true; });
+
+        tbody.innerHTML = (d.npm_cnames || []).map(function(cname) {
+            var isCovered = matchedMap[cname];
+            return '<tr>'
+                + '<td><code>' + esc(cname) + '</code></td>'
+                + '<td>—</td>'
+                + '<td>' + (isCovered
+                    ? '<span class="badge bg-success">Covered</span>'
+                    : '<span class="badge bg-danger">Missing</span>') + '</td>'
+                + '<td>' + (isCovered ? 'Existing rule' : '<span class="text-warning">No rule found</span>') + '</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function loadAutheliaAlerts() {
+    apiFetch('/api/authelia/alerts').then(r => r.json()).then(function(alerts) {
+        var tbody = document.getElementById('auth-alerts-tbody');
+        if (!alerts || !alerts.length) {
+            tbody.innerHTML = emptyRow(4, 'No alerts');
+            return;
+        }
+        tbody.innerHTML = alerts.map(function(a) {
+            var sevBadge = a.severity === 'error' ? 'bg-danger' : a.severity === 'warning' ? 'bg-warning text-dark' : 'bg-info';
+            return '<tr>'
+                + '<td><code>' + esc(a.cname) + '</code></td>'
+                + '<td class="small">' + esc(a.message) + '</td>'
+                + '<td><span class="badge ' + sevBadge + '">' + esc(a.severity) + '</span></td>'
+                + '<td>' + (a.status === 'open'
+                    ? '<button class="btn btn-outline-success btn-sm" onclick="resolveAlert(' + a.id + ')">Resolve</button>'
+                    : '<span class="text-muted">' + esc(a.status) + '</span>') + '</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function resolveAlert(id) {
+    apiFetch('/api/authelia/alerts/' + id + '/resolve', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            toast('Alert resolved', 'success');
+            loadAutheliaAlerts();
+            loadAutheliaStatus();
+        })
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
+            toast('Failed to resolve alert', 'error');
+        });
+}
+
+function loadAutheliaTempAccess() {
+    apiFetch('/api/authelia/temp-access').then(r => r.json()).then(function(rules) {
+        var tbody = document.getElementById('auth-temp-tbody');
+        if (!rules || !rules.length) {
+            tbody.innerHTML = emptyRow(5, 'No temporary access rules');
+            return;
+        }
+        tbody.innerHTML = rules.map(function(r) {
+            var statusBadge = r.status === 'active' ? 'bg-success'
+                : r.status === 'expired' ? 'bg-secondary'
+                : 'bg-danger';
+            return '<tr>'
+                + '<td><code>' + esc(r.ip) + '</code></td>'
+                + '<td class="small">' + esc(r.reason) + '</td>'
+                + '<td class="small">' + (r.expires_at ? new Date(r.expires_at).toLocaleString() : '—') + '</td>'
+                + '<td><span class="badge ' + statusBadge + '">' + esc(r.status) + '</span></td>'
+                + '<td>' + (r.status === 'active'
+                    ? '<button class="btn btn-outline-danger btn-sm" onclick="revokeTempAccess(' + r.id + ')">Revoke</button>'
+                    : '—') + '</td>'
+                + '</tr>';
+        }).join('');
+    });
+}
+
+function revokeTempAccess(id) {
+    apiFetch('/api/authelia/temp-access/' + id + '/revoke', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            toast('Access rule revoked', 'success');
+            loadAutheliaTempAccess();
+        })
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
+            toast('Failed to revoke rule', 'error');
+        });
+}
+
+function runAutheliaSync(dryRun) {
+    var btn = dryRun ? document.getElementById('btn-auth-dryrun') : document.getElementById('btn-auth-sync');
+    btn.disabled = true;
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-sm"></span> ' + (dryRun ? 'Dry running...' : 'Syncing...');
+
+    apiFetch('/api/authelia/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run: dryRun })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                toast('Sync error: ' + d.error, 'error');
+                return;
+            }
+            var actions = d.actions || [];
+            var added = actions.filter(function(a) { return a.action === 'add'; });
+            var skipped = actions.filter(function(a) { return a.action === 'skip'; });
+            var alerted = actions.filter(function(a) { return a.action === 'alert'; });
+
+            var resultHtml = '<div class="alert ' + (dryRun ? 'alert-info' : 'alert-success') + ' p-2 mb-0">';
+            resultHtml += '<strong>' + (dryRun ? 'Dry Run Results' : 'Sync Results') + '</strong>: ';
+            resultHtml += 'Added: ' + (d.added || 0) + ', Skipped: ' + (d.skipped || 0) + ', Alerted: ' + (d.alerted || 0);
+            if (actions.length) {
+                resultHtml += '<ul class="mb-0 mt-1 small">';
+                actions.forEach(function(a) {
+                    resultHtml += '<li>[' + esc(a.action) + '] ' + esc(a.cname) + (a.policy ? ' → ' + esc(a.policy) : '') + ': ' + esc(a.message) + '</li>';
+                });
+                resultHtml += '</ul>';
+            }
+            resultHtml += '</div>';
+
+            var resultDiv = document.getElementById('auth-sync-result');
+            resultDiv.innerHTML = resultHtml;
+            resultDiv.classList.remove('d-none');
+
+            loadAutheliaStatus();
+            loadAutheliaAlerts();
+            if (!dryRun) toast('Sync completed', 'success');
+        })
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
+            toast('Sync failed', 'error');
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+        });
+}
+
+// ─── Event listeners ─────────────────────────────────────────────────────────
+
 document.getElementById('btn-docker').addEventListener('click', function() {
     if (confirm('Start Docker Compose sync?')) startSync('docker');
 });
 document.getElementById('btn-npm').addEventListener('click', function() {
     if (confirm('Start NPM Proxy Hosts sync?')) startSync('npm');
+});
+
+document.getElementById('btn-auth-dryrun').addEventListener('click', function() { runAutheliaSync(true); });
+document.getElementById('btn-auth-sync').addEventListener('click', function() {
+    if (confirm('Auto-add missing CNAMEs to Authelia config? This modifies the Authelia configuration file.')) {
+        runAutheliaSync(false);
+    }
+});
+
+document.getElementById('btn-ta-submit').addEventListener('click', function() {
+    var ip = document.getElementById('ta-ip').value.trim();
+    var reason = document.getElementById('ta-reason').value.trim();
+    var duration = document.getElementById('ta-duration').value.trim();
+    if (!ip) { toast('IP address is required', 'error'); return; }
+    if (!duration) { toast('Duration is required', 'error'); return; }
+
+    apiFetch('/api/authelia/temp-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: ip, reason: reason, duration: duration })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { toast(d.error, 'error'); return; }
+            toast('Temp access rule added', 'success');
+            document.getElementById('ta-ip').value = '';
+            document.getElementById('ta-reason').value = '';
+            document.getElementById('ta-duration').value = '';
+            loadAutheliaTempAccess();
+        })
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
+            toast('Failed to add rule', 'error');
+        });
 });
 
 document.getElementById('btn-logout').addEventListener('click', logout);
