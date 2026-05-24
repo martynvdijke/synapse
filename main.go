@@ -68,15 +68,14 @@ func authMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
 			return
 		}
-		sessionStoreMu.RLock()
+		sessionStoreMu.Lock()
 		s, ok := sessionStore[sessionID]
-		sessionStoreMu.RUnlock()
-		if !ok || time.Now().After(s.Expiry) {
-			if ok {
-				sessionStoreMu.Lock()
-				delete(sessionStore, sessionID)
-				sessionStoreMu.Unlock()
-			}
+		if ok && time.Now().After(s.Expiry) {
+			delete(sessionStore, sessionID)
+			ok = false
+		}
+		sessionStoreMu.Unlock()
+		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
 			return
 		}
@@ -87,15 +86,21 @@ func authMiddleware() gin.HandlerFunc {
 type App struct {
 	database *db.DB
 
-	defaultSettings db.Settings
-
 	mu            sync.Mutex
 	running       bool
 	progressChans []chan synclib.Progress
 }
 
 func (app *App) settings() db.Settings {
-	return app.database.GetSettings(app.defaultSettings)
+	return app.database.GetSettings(db.Settings{
+		ComposePath: getEnv("COMPOSE_PATH", "docker-compose.yml"),
+		NPMHost:     getEnv("NPM_HOST", "http://nginx:81"),
+		NPMUser:     getEnv("NPM_USER", "admin"),
+		NPMPass:     getEnv("NPM_PASS", ""),
+		KumaURL:     getEnv("KUMA_URL", "http://uptime-kuma:3001"),
+		KumaUser:    getEnv("KUMA_USER", "admin"),
+		KumaPass:    getEnv("KUMA_PASS", ""),
+	})
 }
 
 func getEnv(key, def string) string {
@@ -114,23 +119,9 @@ func getEnvInt(key string, def int) int {
 	return def
 }
 
-func mask(s string) string {
-	if s != "" {
-		return "****"
-	}
-	return ""
-}
+func mask(string) string { return "" }
 
 func main() {
-	defaults := db.Settings{
-		ComposePath: getEnv("COMPOSE_PATH", "docker-compose.yml"),
-		NPMHost:     getEnv("NPM_HOST", "http://nginx:81"),
-		NPMUser:     getEnv("NPM_USER", "admin"),
-		NPMPass:     getEnv("NPM_PASS", ""),
-		KumaURL:     getEnv("KUMA_URL", "http://uptime-kuma:3001"),
-		KumaUser:    getEnv("KUMA_USER", "admin"),
-		KumaPass:    getEnv("KUMA_PASS", ""),
-	}
 	dbPath := getEnv("DB_PATH", "synapse.db")
 	addr := getEnv("LISTEN_ADDR", ":6270")
 
@@ -141,8 +132,7 @@ func main() {
 	defer database.Close()
 
 	app := &App{
-		database:        database,
-		defaultSettings: defaults,
+		database: database,
 	}
 
 	tp, err := telemetry.InitTracerProvider()
@@ -354,10 +344,10 @@ func (app *App) SaveSettings(c *gin.Context) {
 
 	current := app.settings()
 
-	if s.NPMPass == "" || s.NPMPass == "****" {
+	if s.NPMPass == "" {
 		s.NPMPass = current.NPMPass
 	}
-	if s.KumaPass == "" || s.KumaPass == "****" {
+	if s.KumaPass == "" {
 		s.KumaPass = current.KumaPass
 	}
 
@@ -371,6 +361,18 @@ func (app *App) SaveSettings(c *gin.Context) {
 
 func (app *App) TestNPM(c *gin.Context) {
 	s := app.settings()
+	var input db.Settings
+	if err := c.ShouldBindJSON(&input); err == nil {
+		if input.NPMHost != "" {
+			s.NPMHost = input.NPMHost
+		}
+		if input.NPMUser != "" {
+			s.NPMUser = input.NPMUser
+		}
+		if input.NPMPass != "" && input.NPMPass != "****" {
+			s.NPMPass = input.NPMPass
+		}
+	}
 	_, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
@@ -381,6 +383,18 @@ func (app *App) TestNPM(c *gin.Context) {
 
 func (app *App) TestKuma(c *gin.Context) {
 	s := app.settings()
+	var input db.Settings
+	if err := c.ShouldBindJSON(&input); err == nil {
+		if input.KumaURL != "" {
+			s.KumaURL = input.KumaURL
+		}
+		if input.KumaUser != "" {
+			s.KumaUser = input.KumaUser
+		}
+		if input.KumaPass != "" && input.KumaPass != "****" {
+			s.KumaPass = input.KumaPass
+		}
+	}
 	client := kuma.NewClient(s.KumaURL)
 	if err := client.Login(s.KumaUser, s.KumaPass); err != nil {
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})

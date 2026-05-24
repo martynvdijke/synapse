@@ -21,6 +21,18 @@
         .test-result { font-size: .8rem; margin-top: .25rem; }
         .nav-tabs .nav-link { font-size: .9rem; }
         .settings-toggle { cursor: pointer; }
+        .spinner-sm { display: inline-block; width: 1rem; height: 1rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .5s linear infinite; vertical-align: middle; margin-right: .25rem; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: .5rem; }
+        .toast-msg { background: #fff; border-radius: .5rem; box-shadow: 0 4px 12px rgba(0,0,0,.15); padding: .75rem 1rem; font-size: .875rem; display: flex; align-items: center; gap: .5rem; animation: slideIn .2s ease; min-width: 250px; }
+        .toast-msg.toast-success { border-left: 4px solid #198754; }
+        .toast-msg.toast-error { border-left: 4px solid #dc3545; }
+        .toast-msg.toast-info { border-left: 4px solid #0d6efd; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .empty-state { padding: 3rem 1rem; text-align: center; color: #adb5bd; }
+        .empty-state svg { width: 64px; height: 64px; margin-bottom: .5rem; }
+        .loading-row td { text-align: center; padding: 2rem; }
+        .tab-pane.loading { opacity: .6; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -289,37 +301,98 @@ function logout() {
     });
 }
 
-const evtSource = new EventSource('/api/sync/progress');
-evtSource.onmessage = function(e) {
-    const p = JSON.parse(e.data);
-    const area = document.getElementById('progress-area');
-    area.classList.add('active');
-    const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
-    document.getElementById('progress-bar').style.width = pct + '%';
-    document.getElementById('progress-pct').textContent = pct + '%';
-    document.getElementById('progress-msg').textContent = p.message;
-    document.getElementById('count-added').textContent = p.added;
-    document.getElementById('count-skipped').textContent = p.skipped;
-    document.getElementById('count-failed').textContent = p.failed;
-    if (p.status === 'completed' || p.status === 'completed_with_errors' || p.status === 'error') {
-        document.getElementById('btn-docker').disabled = false;
-        document.getElementById('btn-npm').disabled = false;
-        document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
-        setTimeout(refreshAll, 500);
+// --- Toast notifications ---
+function toast(msg, type) {
+    type = type || 'info';
+    var container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
     }
-};
+    var el = document.createElement('div');
+    el.className = 'toast-msg toast-' + type;
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(function() { el.remove(); }, 4000);
+}
+
+// --- Loading button helper ---
+function setLoading(btnId, loading) {
+    var btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (loading) {
+        btn.dataset.origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-sm"></span> ' + (btn.dataset.loadingText || btn.textContent.trim());
+    } else {
+        btn.disabled = false;
+        if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml;
+    }
+}
+
+// --- SSE with reconnection ---
+function connectSSE() {
+    var retryDelay = 1000;
+    function connect() {
+        var es = new EventSource('/api/sync/progress');
+        es.onmessage = function(e) {
+            retryDelay = 1000;
+            var p = JSON.parse(e.data);
+            var area = document.getElementById('progress-area');
+            area.classList.add('active');
+            var pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+            document.getElementById('progress-bar').style.width = pct + '%';
+            document.getElementById('progress-pct').textContent = pct + '%';
+            document.getElementById('progress-msg').textContent = p.message;
+            document.getElementById('count-added').textContent = p.added;
+            document.getElementById('count-skipped').textContent = p.skipped;
+            document.getElementById('count-failed').textContent = p.failed;
+            if (p.status === 'completed' || p.status === 'completed_with_errors' || p.status === 'error') {
+                document.getElementById('btn-docker').disabled = false;
+                document.getElementById('btn-npm').disabled = false;
+                document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
+                setTimeout(refreshAll, 500);
+            }
+        };
+        es.onerror = function() {
+            es.close();
+            setTimeout(connect, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 30000);
+        };
+    }
+    connect();
+}
+connectSSE();
+
+// --- Empty state SVG icon ---
+function emptyIcon() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
+}
+
+function emptyRow(colspan, msg) {
+    return '<tr><td colspan="' + colspan + '" class="empty-state">' + emptyIcon() + '<div class="mt-2">' + esc(msg) + '</div></td></tr>';
+}
+
+function loadingRow(colspan) {
+    return '<tr class="loading-row"><td colspan="' + colspan + '"><span class="spinner-sm"></span> Loading...</td></tr>';
+}
 
 function startSync(source) {
     document.getElementById('btn-docker').disabled = true;
     document.getElementById('btn-npm').disabled = true;
     document.getElementById('stat-status').innerHTML = '<span class="badge bg-primary">Running...</span>';
-    apiFetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(d => console.log(source + ' sync started', d))
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            document.getElementById('btn-docker').disabled = false;
-            document.getElementById('btn-npm').disabled = false;
-            document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
-        });
+    toast('Sync started: ' + source, 'info');
+    apiFetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(function(d) {
+        console.log(source + ' sync started', d);
+    }).catch(function(err) {
+        if (err.message === 'not authenticated') return;
+        document.getElementById('btn-docker').disabled = false;
+        document.getElementById('btn-npm').disabled = false;
+        document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
+        toast('Sync failed to start', 'error');
+    });
 }
 
 function loadStatus() {
@@ -336,80 +409,84 @@ function loadStatus() {
 }
 
 function loadDockerServices() {
+    document.getElementById('docker-tbody').innerHTML = loadingRow(5);
     apiFetch('/api/services').then(r => r.json()).then(function(services) {
-        const tbody = document.getElementById('docker-tbody');
+        var tbody = document.getElementById('docker-tbody');
         if (services.error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">'+esc(services.error)+'</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc(services.error) + '</td></tr>';
             return;
         }
         if (!services.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No services found</td></tr>';
+            tbody.innerHTML = emptyRow(5, 'No services found');
             return;
         }
         tbody.innerHTML = services.map(function(s) {
             return '<tr>'
-                + '<td><code>'+esc(s.name)+'</code></td>'
-                + '<td>'+esc(s.container_name)+'</td>'
-                + '<td><span class="badge '+(s.type==='http'?'bg-info':'bg-secondary')+'">'+s.type.toUpperCase()+'</span></td>'
-                + '<td class="text-truncate" style="max-width:300px">'+(s.url?'<a href="'+esc(s.url)+'">'+esc(s.url)+'</a>':'—')+'</td>'
-                + '<td>'+(s.in_kuma
+                + '<td><code>' + esc(s.name) + '</code></td>'
+                + '<td>' + esc(s.container_name) + '</td>'
+                + '<td><span class="badge ' + (s.type === 'http' ? 'bg-info' : 'bg-secondary') + '">' + s.type.toUpperCase() + '</span></td>'
+                + '<td class="text-truncate" style="max-width:300px">' + (s.url ? '<a href="' + esc(s.url) + '">' + esc(s.url) + '</a>' : '—') + '</td>'
+                + '<td>' + (s.in_kuma
                     ? '<span class="badge bg-success">In Kuma</span>'
-                    : '<span class="badge bg-secondary">Missing</span>')+'</td>'
+                    : '<span class="badge bg-secondary">Missing</span>') + '</td>'
                 + '</tr>';
         }).join('');
     });
 }
 
 function loadKumaMonitors() {
+    document.getElementById('kuma-tbody').innerHTML = loadingRow(4);
     apiFetch('/api/monitors').then(r => r.json()).then(function(monitors) {
-        const tbody = document.getElementById('kuma-tbody');
+        var tbody = document.getElementById('kuma-tbody');
         if (monitors.error) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">'+esc(monitors.error)+'</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc(monitors.error) + '</td></tr>';
             return;
         }
         if (!monitors.length) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No monitors in Uptime Kuma</td></tr>';
+            tbody.innerHTML = emptyRow(4, 'No monitors in Uptime Kuma');
             return;
         }
         tbody.innerHTML = monitors.map(function(m) {
             return '<tr>'
-                + '<td>#'+m.id+'</td>'
-                + '<td>'+esc(m.name)+'</td>'
-                + '<td><span class="badge '+(m.type==='http'?'bg-info':m.type==='docker'?'bg-warning text-dark':'bg-secondary')+'">'+m.type.toUpperCase()+'</span></td>'
-                + '<td class="text-truncate" style="max-width:300px">'+(m.url?esc(m.url):m.docker_container?esc(m.docker_container):'—')+'</td>'
+                + '<td>#' + m.id + '</td>'
+                + '<td>' + esc(m.name) + '</td>'
+                + '<td><span class="badge ' + (m.type === 'http' ? 'bg-info' : m.type === 'docker' ? 'bg-warning text-dark' : 'bg-secondary') + '">' + m.type.toUpperCase() + '</span></td>'
+                + '<td class="text-truncate" style="max-width:300px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
                 + '</tr>';
         }).join('');
     });
 }
 
 function loadNPMProxies() {
+    document.getElementById('npm-tbody').innerHTML = loadingRow(3);
     apiFetch('/api/proxies').then(r => r.json()).then(function(proxies) {
-        const tbody = document.getElementById('npm-tbody');
+        var tbody = document.getElementById('npm-tbody');
         if (proxies.error) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">'+esc(proxies.error)+'</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">' + esc(proxies.error) + '</td></tr>';
             return;
         }
         if (!proxies.length) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No proxy hosts found</td></tr>';
+            tbody.innerHTML = emptyRow(3, 'No proxy hosts found');
             return;
         }
         tbody.innerHTML = proxies.map(function(p) {
             return '<tr>'
-                + '<td><code>'+esc(p.cname)+'</code></td>'
-                + '<td>'+esc(p.container)+'</td>'
-                + '<td>'+(p.in_kuma
+                + '<td><code>' + esc(p.cname) + '</code></td>'
+                + '<td>' + esc(p.container) + '</td>'
+                + '<td>' + (p.in_kuma
                     ? '<span class="badge bg-success">In Kuma</span>'
-                    : '<span class="badge bg-secondary">Missing</span>')+'</td>'
+                    : '<span class="badge bg-secondary">Missing</span>') + '</td>'
                 + '</tr>';
         }).join('');
     });
 }
 
 function loadHistory() {
+    document.getElementById('history-tbody').innerHTML = loadingRow(8);
     apiFetch('/api/sync/history').then(r => r.json()).then(function(runs) {
-        const tbody = document.getElementById('history-tbody');
+        var tbody = document.getElementById('history-tbody');
         if (!runs.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No sync history yet</td></tr>';
+            tbody.innerHTML = emptyRow(8, 'No sync history yet');
             return;
         }
         tbody.innerHTML = runs.map(function(r) {
@@ -418,14 +495,14 @@ function loadHistory() {
             else if (r.status === 'completed_with_errors') badge = 'bg-warning text-dark';
             else if (r.status === 'error') badge = 'bg-danger';
             return '<tr>'
-                + '<td>#'+r.id+'</td>'
-                + '<td><span class="badge '+(r.source==='docker'?'bg-primary':'bg-success')+'">'+r.source+'</span></td>'
-                + '<td><span class="badge '+badge+'">'+r.status+'</span></td>'
-                + '<td class="small">'+(r.started_at?new Date(r.started_at).toLocaleString():'')+'</td>'
-                + '<td>'+r.added+'</td>'
-                + '<td>'+r.skipped+'</td>'
-                + '<td>'+r.failed+'</td>'
-                + '<td class="small text-danger">'+esc(r.error_message||'')+'</td>'
+                + '<td>#' + r.id + '</td>'
+                + '<td><span class="badge ' + (r.source === 'docker' ? 'bg-primary' : 'bg-success') + '">' + r.source + '</span></td>'
+                + '<td><span class="badge ' + badge + '">' + r.status + '</span></td>'
+                + '<td class="small">' + (r.started_at ? new Date(r.started_at).toLocaleString() : '') + '</td>'
+                + '<td>' + r.added + '</td>'
+                + '<td>' + r.skipped + '</td>'
+                + '<td>' + r.failed + '</td>'
+                + '<td class="small text-danger">' + esc(r.error_message || '') + '</td>'
                 + '</tr>';
         }).join('');
     });
@@ -456,16 +533,21 @@ function loadSettings() {
     apiFetch('/api/settings').then(r => r.json()).then(function(s) {
         document.getElementById('s-kuma-url').value = s.kuma_url || '';
         document.getElementById('s-kuma-user').value = s.kuma_user || '';
-        document.getElementById('s-kuma-pass').value = s.kuma_pass || '';
+        document.getElementById('s-kuma-pass').value = '';
         document.getElementById('s-npm-host').value = s.npm_host || '';
         document.getElementById('s-npm-user').value = s.npm_user || '';
-        document.getElementById('s-npm-pass').value = s.npm_pass || '';
+        document.getElementById('s-npm-pass').value = '';
         document.getElementById('s-compose-path').value = s.compose_path || '';
     });
 }
 
 function saveSettings(e) {
     e.preventDefault();
+    var btn = document.querySelector('#settings-form button[type="submit"]');
+    btn.disabled = true;
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
+
     var payload = {
         kuma_url:  document.getElementById('s-kuma-url').value,
         kuma_user: document.getElementById('s-kuma-user').value,
@@ -475,20 +557,29 @@ function saveSettings(e) {
         npm_pass:  document.getElementById('s-npm-pass').value,
         compose_path: document.getElementById('s-compose-path')?.value || ''
     };
-    apiFetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
-        .then(r => r.json())
-        .then(function(d) {
-            if (d.status === 'saved') {
-                var el = document.getElementById('settings-saved');
-                el.classList.remove('d-none');
-                setTimeout(function() { el.classList.add('d-none'); }, 2000);
-            }
+    apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        .then(function(r) {
+            if (!r.ok) throw new Error('Save failed');
+            return r.json();
+        })
+        .then(function() {
+            toast('Settings saved', 'success');
+        })
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
+            toast('Failed to save settings', 'error');
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.innerHTML = orig;
         });
 }
 
 function testConnection(service) {
+    var btn = service === 'kuma' ? document.getElementById('btn-test-kuma') : document.getElementById('btn-test-npm');
     var resultEl = document.getElementById('test-' + service + '-result');
-    resultEl.innerHTML = '<span class="text-muted">Testing...</span>';
+    resultEl.innerHTML = '<span class="spinner-sm"></span> Testing...';
+    btn.disabled = true;
 
     var payload = {
         kuma_url:     document.getElementById('s-kuma-url').value,
@@ -500,35 +591,46 @@ function testConnection(service) {
         compose_path: document.getElementById('s-compose-path').value || ''
     };
 
-    // Save first so test reads from DB
-    apiFetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
-        .then(r => r.json())
-        .then(function() {
-            return apiFetch('/api/test/' + service, { method: 'POST' });
-        })
-        .then(r => r.json())
+    apiFetch('/api/test/' + service, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+        .then(function(r) { return r.json(); })
         .then(function(d) {
             resultEl.innerHTML = d.ok
-                ? '<span class="text-success">OK</span>'
-                : '<span class="text-danger">' + esc(d.message) + '</span>';
+                ? '<span class="text-success fw-semibold">✓ OK</span>'
+                : '<span class="text-danger">✗ ' + esc(d.message) + '</span>';
+            if (d.ok) toast(service === 'kuma' ? 'Uptime Kuma connection OK' : 'NPM connection OK', 'success');
+            else toast(d.message, 'error');
         })
         .catch(function(err) {
             if (err.message === 'not authenticated') return;
-            resultEl.innerHTML = '<span class="text-danger">' + esc(''+err) + '</span>';
+            resultEl.innerHTML = '<span class="text-danger">' + esc('' + err) + '</span>';
+            toast('Connection test failed', 'error');
+        })
+        .finally(function() {
+            btn.disabled = false;
         });
 }
 
-// Check that app is set up before loading
-apiFetch('/api/status').then(function() { refreshAll(); }).catch(function(err) {
-    if (err.message === 'not authenticated') return;
+// --- Sync with confirmation ---
+document.getElementById('btn-docker').addEventListener('click', function() {
+    if (confirm('Start Docker Compose sync?')) startSync('docker');
+});
+document.getElementById('btn-npm').addEventListener('click', function() {
+    if (confirm('Start NPM Proxy Hosts sync?')) startSync('npm');
 });
 
 document.getElementById('btn-logout').addEventListener('click', logout);
-document.getElementById('btn-docker').addEventListener('click', function() { startSync('docker'); });
-document.getElementById('btn-npm').addEventListener('click', function() { startSync('npm'); });
 document.getElementById('settings-form').addEventListener('submit', saveSettings);
 document.getElementById('btn-test-kuma').addEventListener('click', function() { testConnection('kuma'); });
 document.getElementById('btn-test-npm').addEventListener('click', function() { testConnection('npm'); });
+
+// Initial load
+apiFetch('/api/status').then(function() { refreshAll(); }).catch(function(err) {
+    if (err.message === 'not authenticated') return;
+});
 </script>
 </body>
 </html>

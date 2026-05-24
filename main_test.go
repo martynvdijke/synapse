@@ -17,6 +17,14 @@ import (
 )
 
 func setupTest(t *testing.T) (*App, *gin.Engine) {
+	t.Setenv("COMPOSE_PATH", "testdata/docker-compose.yml")
+	t.Setenv("NPM_HOST", "http://localhost:81")
+	t.Setenv("NPM_USER", "admin")
+	t.Setenv("NPM_PASS", "")
+	t.Setenv("KUMA_URL", "http://localhost:3001")
+	t.Setenv("KUMA_USER", "admin")
+	t.Setenv("KUMA_PASS", "")
+
 	tmpDB := t.TempDir() + "/test.db"
 	database, err := db.Open(tmpDB)
 	if err != nil {
@@ -26,15 +34,6 @@ func setupTest(t *testing.T) (*App, *gin.Engine) {
 
 	app := &App{
 		database: database,
-		defaultSettings: db.Settings{
-			ComposePath: "testdata/docker-compose.yml",
-			NPMHost:     "http://localhost:81",
-			NPMUser:     "admin",
-			NPMPass:     "",
-			KumaURL:     "http://localhost:3001",
-			KumaUser:    "admin",
-			KumaPass:    "",
-		},
 	}
 	r := setupRouter(app)
 	return app, r
