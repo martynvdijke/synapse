@@ -105,6 +105,8 @@ func (app *App) settings() db.Settings {
 		AutheliaDBPath:        getEnv("AUTHELIA_DB_PATH", ""),
 		AutheliaSyncEnabled:   getEnv("AUTHELIA_SYNC_ENABLED", "") == "true",
 		AutheliaDefaultPolicy: getEnv("AUTHELIA_DEFAULT_POLICY", authelia.DefaultPolicy),
+		OTelEndpoint:          getEnv("OTEL_ENDPOINT", ""),
+		OTelEnabled:           getEnv("OTEL_ENABLED", "") == "true",
 	})
 }
 
@@ -140,7 +142,14 @@ func main() {
 		database: database,
 	}
 
-	tp, err := telemetry.InitTracerProvider()
+	// Read OTel endpoint from database settings, fall back to env var
+	otelSettings := app.settings()
+	otelEndpoint := ""
+	if otelSettings.OTelEnabled {
+		otelEndpoint = otelSettings.OTelEndpoint
+	}
+
+	tp, err := telemetry.InitTracerProvider(otelEndpoint)
 	if err != nil {
 		log.Fatalf("failed to init telemetry: %v", err)
 	}
@@ -351,6 +360,8 @@ func (app *App) GetSettings(c *gin.Context) {
 		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
 		"authelia_default_policy": s.AutheliaDefaultPolicy,
 		"authelia_sync_overrides": s.AutheliaSyncOverrides,
+		"otel_endpoint":           s.OTelEndpoint,
+		"otel_enabled":            s.OTelEnabled,
 	})
 }
 

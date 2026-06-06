@@ -16,8 +16,11 @@ import (
 
 var Tracer trace.Tracer
 
-func InitTracerProvider() (*sdktrace.TracerProvider, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+func InitTracerProvider(dbEndpoint string) (*sdktrace.TracerProvider, error) {
+	endpoint := dbEndpoint
+	if endpoint == "" {
+		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	}
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
 		serviceName = "synapse"

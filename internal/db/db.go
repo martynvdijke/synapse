@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"time"
 
 	"synapse/ent"
@@ -76,6 +77,8 @@ type Settings struct {
 	AutheliaSyncEnabled   bool   `json:"authelia_sync_enabled"`
 	AutheliaDefaultPolicy string `json:"authelia_default_policy"`
 	AutheliaSyncOverrides string `json:"authelia_sync_overrides"`
+	OTelEndpoint          string `json:"otel_endpoint"`
+	OTelEnabled           bool   `json:"otel_enabled"`
 }
 
 type DB struct {
@@ -331,6 +334,10 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.AutheliaDefaultPolicy = row.Value
 		case "authelia_sync_overrides":
 			s.AutheliaSyncOverrides = row.Value
+		case "otel_endpoint":
+			s.OTelEndpoint = row.Value
+		case "otel_enabled":
+			s.OTelEnabled = row.Value == "true"
 		}
 	}
 	return s
@@ -355,6 +362,8 @@ func (db *DB) SaveSettings(s Settings) error {
 		"authelia_sync_enabled":   syncEnabled,
 		"authelia_default_policy": s.AutheliaDefaultPolicy,
 		"authelia_sync_overrides": s.AutheliaSyncOverrides,
+		"otel_endpoint":           s.OTelEndpoint,
+		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
 	}
 	for k, v := range pairs {
 		created, err := db.client.Settings.Create().
