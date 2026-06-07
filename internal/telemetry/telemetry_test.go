@@ -14,7 +14,7 @@ import (
 
 func TestInitTracerProvider_NoEndpoint(t *testing.T) {
 	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	tp, err := InitTracerProvider()
+	tp, err := InitTracerProvider("")
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestInitTracerProvider_WithEndpoint(t *testing.T) {
 	os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	defer os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-	tp, err := InitTracerProvider()
+	tp, err := InitTracerProvider("http://localhost:4318")
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
