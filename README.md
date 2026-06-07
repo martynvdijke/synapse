@@ -1,19 +1,94 @@
-# Synapse
+# Synapse — Uptime Kuma Monitor Sync
 
-Sync Docker Compose containers and Nginx Proxy Manager hosts to Uptime Kuma for monitoring.
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/Gin-1.12-00ADD8?style=flat&logo=go" alt="Gin">
+  <img src="https://img.shields.io/badge/SQLite3-003B57?style=flat&logo=sqlite" alt="SQLite">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
+  <img src="https://img.shields.io/badge/docker-ready-2496ED?style=flat&logo=docker" alt="Docker">
+</p>
 
-A single-binary web application that provides a dashboard for managing your Uptime Kuma monitors. Supports both Docker container monitors and HTTP monitors from NPM proxy hosts.
+A single-binary web application that synchronizes Docker Compose containers and Nginx Proxy Manager (NPM) proxy hosts to Uptime Kuma for centralized monitoring. Also provides Authelia configuration synchronization for domain-level access control.
+
+## Features
+
+### Docker Compose Sync
+- **Service Discovery** — Parse docker-compose files and discover all defined services
+- **Automatic Monitor Creation** — Create HTTP monitors in Uptime Kuma for each service
+- **Status Tracking** — View which services are monitored and their current status
+- **Duplicate Detection** — Avoid creating duplicate monitors
+
+### Nginx Proxy Manager Sync
+- **Proxy Host Discovery** — Fetch all proxy hosts from NPM API
+- **Automatic Monitor Creation** — Create HTTP monitors for each proxy host
+- **Monitor Status** — View proxy hosts with their current Uptime Kuma monitoring status
+- **Connection Testing** — Test NPM connectivity and credentials
+
+### Authelia Integration
+- **Config Parsing** — Parse Authelia configuration to extract protected domains
+- **CNAME Comparison** — Compare NPM proxy CNAMEs against Authelia access control rules
+- **Auto-Sync** — Automatically add missing domains to Authelia configuration
+- **Config Dry-Run** — Preview changes before applying
+- **Sync Overrides** — Custom domain-to-policy mappings in JSON
+- **Alert System** — Open alerts for uncovered domains when auto-sync is disabled
+- **Alert Resolution** — Resolve alerts from the dashboard
+
+### Temporary IP Access
+- **Create Temp Rules** — Grant temporary IP access to Authelia with expiration
+- **Duration Support** — Set access duration (e.g., "24h", "7d") or specific expiry time
+- **Auto-Cleanup** — Expired rules automatically cleaned up
+- **Revoke Rules** — Manually revoke access before expiration
+
+### Dashboard & Monitoring
+- **Service Dashboard** — See all discovered services with monitor status
+- **Proxy Dashboard** — View all NPM proxy hosts with monitor status
+- **Monitor Detail View** — Full Uptime Kuma monitor details including uptime percentages (24h, 7d, 1y), average ping, and last message
+- **Status Overview** — Dashboard showing counts for Docker services, NPM proxies, and monitors
+
+### Synchronization
+- **On-Demand Sync** — Trigger Docker or NPM sync manually
+- **Periodic Sync** — Configurable sync interval via `SYNC_INTERVAL` environment variable
+- **Progress Streaming** — Real-time sync progress via Server-Sent Events (SSE)
+- **Sync History** — View past sync runs with timestamps and results
+- **Concurrency Protection** — Prevents overlapping sync operations
+
+### Administration
+- **First-Time Setup** — Create admin account on first run
+- **Session Authentication** — Cookie-based sessions with bcrypt password hashing
+- **Settings Management** — Configure all integrations through the web UI
+- **Connection Testing** — Test NPM and Kuma connections individually
+
+### Observability
+- **OpenTelemetry** — Request tracing via OTel middleware
+- **Structured Logging** — Gin-based request logging
 
 ## Quick Start
 
-```sh
-go build -o synapse-server .
+### Docker
+
+```bash
+docker build -t synapse .
+docker run -p 6270:6270 \
+  -e KUMA_PASS=your-kuma-password \
+  synapse
+```
+
+### Manual Setup
+
+```bash
+# Install dependencies
+go mod download
+
+# Build
+CGO_ENABLED=1 go build -o synapse-server .
+
+# Run
 ./synapse-server
 ```
 
-Then open `http://localhost:6270`.
+Open **[http://localhost:6270](http://localhost:6270)** and complete the initial setup.
 
-## Environment Variables
+## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -26,10 +101,89 @@ Then open `http://localhost:6270`.
 | `NPM_PASS` | — | NPM password |
 | `DB_PATH` | `synapse.db` | SQLite database path |
 | `LISTEN_ADDR` | `:6270` | HTTP listen address |
+| `SYNC_INTERVAL` | `0` | Periodic sync interval in minutes (0 = disabled) |
+| `AUTHELIA_CONFIG_PATH` | — | Path to Authelia configuration.yml |
+| `AUTHELIA_DB_PATH` | — | Path to Authelia SQLite database |
+| `AUTHELIA_SYNC_ENABLED` | `false` | Enable automatic Authelia config sync |
+| `AUTHELIA_DEFAULT_POLICY` | `deny` | Default access policy for new domains |
+| `OTEL_ENDPOINT` | — | OpenTelemetry OTLP endpoint |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
 
-## Tasks
+## API Endpoints
 
-```sh
+### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/check-setup` | Check if admin account exists |
+| `POST` | `/api/login` | Login or create initial admin account |
+| `POST` | `/api/logout` | Logout |
+
+### Settings
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/settings` | Get current settings |
+| `POST` | `/api/settings` | Save settings |
+| `POST` | `/api/test/npm` | Test NPM connection |
+| `POST` | `/api/test/kuma` | Test Kuma connection |
+
+### Sync
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/sync/docker` | Trigger Docker service sync |
+| `POST` | `/api/sync/npm` | Trigger NPM proxy sync |
+| `GET` | `/api/sync/progress` | SSE stream for sync progress |
+| `GET` | `/api/sync/history?source=docker\|npm` | Sync run history |
+
+### Data
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/services` | List Docker services with monitor status |
+| `GET` | `/api/proxies` | List NPM proxy hosts with monitor status |
+| `GET` | `/api/monitors` | List Uptime Kuma monitors with uptime stats |
+| `GET` | `/api/status` | Dashboard status overview |
+
+### Authelia
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/authelia/status` | Authelia integration status |
+| `GET` | `/api/authelia/alerts` | List open Authelia alerts |
+| `POST` | `/api/authelia/alerts/:id/resolve` | Resolve an alert |
+| `GET` | `/api/authelia/temp-access` | List temporary access rules |
+| `POST` | `/api/authelia/temp-access` | Create temporary access rule |
+| `POST` | `/api/authelia/temp-access/:id/revoke` | Revoke temporary access |
+| `POST` | `/api/authelia/sync` | Run Authelia config sync |
+
+## Project Structure
+
+```
+synapse/
+├── main.go                    # Application entry point & route setup
+├── internal/
+│   ├── db/
+│   │   └── db.go              # Database models & operations
+│   ├── kuma/
+│   │   └── kuma.go            # Uptime Kuma client (REST + Socket.IO)
+│   ├── sync/
+│   │   └── sync.go            # Docker & NPM sync logic
+│   ├── authelia/
+│   │   └── authelia.go        # Authelia config parser & sync
+│   └── telemetry/
+│       └── telemetry.go       # OpenTelemetry initialization
+├── static/                    # Frontend HTML templates
+├── testdata/                  # Test fixtures
+├── Dockerfile                 # Multi-stage Docker build
+├── e2e/                       # Playwright E2E tests
+└── go.mod / go.sum            # Go module dependencies
+```
+
+## Development
+
+```bash
 task build        # Build binary
 task run          # Build and run
 task dev          # Hot reload (requires air)
@@ -39,9 +193,6 @@ task docker-build # Build Docker image
 task docker-run   # Run Docker container
 ```
 
-## Docker
+## License
 
-```sh
-docker build -t synapse .
-docker run -p 6270:6270 -e KUMA_PASS=yourpass synapse
-```
+MIT
