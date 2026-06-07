@@ -18,6 +18,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+      actions: read
 
   release:
     needs: ci
