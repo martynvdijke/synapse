@@ -22,7 +22,7 @@ import (
 	"synapse/internal/telemetry"
 )
 
-var version = "1.0.3"
+var version = "1.0.4"
 
 type App struct {
 	database *db.DB
