@@ -23,7 +23,7 @@ services:
       interval: 10s
 
   redis:
-    image: redis:7
+    image: redis:8
     container_name: cache-redis
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
