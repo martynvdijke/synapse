@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/martynvdijke/synapse/compare/v1.1.4...v1.2.0) (2026-06-11)
+
+
+### Features
+
+* add central logging tab with external dependency instrumentation ([5a3689f](https://github.com/martynvdijke/synapse/commit/5a3689f5d29a410017c6062070dd25f3cf974cd7))
+
 ## [1.1.4](https://github.com/martynvdijke/synapse/compare/v1.1.3...v1.1.4) (2026-06-09)
 
 ## [1.1.3](https://github.com/martynvdijke/synapse/compare/v1.1.2...v1.1.3) (2026-06-09)
