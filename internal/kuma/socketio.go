@@ -3,10 +3,13 @@ package kuma
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"synapse/internal/logging"
 )
 
 // Minimal Engine.IO v4 / Socket.IO v4 client — only enough for Uptime Kuma.
@@ -44,6 +47,7 @@ type sioClient struct {
 }
 
 func dialSIO(serverURL string) (*sioClient, error) {
+	start := time.Now()
 	scheme := "ws"
 	if len(serverURL) > 5 && serverURL[:5] == "https" {
 		scheme = "wss"
@@ -55,9 +59,18 @@ func dialSIO(serverURL string) (*sioClient, error) {
 		u = fmt.Sprintf("wss://%s/socket.io/?EIO=4&transport=websocket", serverURL[8:])
 	}
 
+	logging.LogDebug("kuma", "Dialing Socket.IO",
+		slog.String("url", serverURL),
+		slog.String("ws_url", u),
+	)
+
 	dialer := &websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	c, _, err := dialer.Dial(u, nil)
 	if err != nil {
+		logging.LogError("kuma", "Socket.IO dial failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("ws dial: %w", err)
 	}
 
@@ -71,26 +84,42 @@ func dialSIO(serverURL string) (*sioClient, error) {
 	_, msg, err := c.ReadMessage()
 	if err != nil {
 		c.Close()
+		logging.LogError("kuma", "Socket.IO read open failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("read eio open: %w", err)
 	}
 	if len(msg) == 0 || eioType(msg[0]) != eioOpen {
 		c.Close()
+		logging.LogError("kuma", "Socket.IO unexpected open message",
+			slog.String("msg", string(msg)),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("expected eio open, got %q", string(msg))
 	}
 
 	var open struct {
-		Sid           string `json:"sid"`
-		PingInterval  int    `json:"pingInterval"`
-		PingTimeout   int    `json:"pingTimeout"`
+		Sid          string `json:"sid"`
+		PingInterval int    `json:"pingInterval"`
+		PingTimeout  int    `json:"pingTimeout"`
 	}
 	if err := json.Unmarshal(msg[1:], &open); err != nil {
 		c.Close()
+		logging.LogError("kuma", "Socket.IO parse open failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("parse eio open: %w", err)
 	}
 
 	// Send Socket.IO CONNECT: Engine.IO MESSAGE(4) + SIO CONNECT(0) = "40"
 	if err := c.WriteMessage(websocket.TextMessage, []byte("40")); err != nil {
 		c.Close()
+		logging.LogError("kuma", "Socket.IO send connect failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("send sio connect: %w", err)
 	}
 
@@ -98,12 +127,25 @@ func dialSIO(serverURL string) (*sioClient, error) {
 	_, msg, err = c.ReadMessage()
 	if err != nil {
 		c.Close()
+		logging.LogError("kuma", "Socket.IO read connect response failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("read sio connect: %w", err)
 	}
 	if len(msg) < 2 || msg[0] != '4' || msg[1] != '0' {
 		c.Close()
+		logging.LogError("kuma", "Socket.IO unexpected connect response",
+			slog.String("msg", string(msg)),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, fmt.Errorf("expected sio connect, got %q", string(msg))
 	}
+
+	logging.LogInfo("kuma", "Socket.IO connected",
+		slog.String("sid", open.Sid),
+		slog.Duration("duration", time.Since(start)),
+	)
 
 	go cli.readLoop()
 	go cli.pingLoop(open.PingInterval)
@@ -116,6 +158,9 @@ func (c *sioClient) readLoop() {
 	for {
 		_, msg, err := c.conn.ReadMessage()
 		if err != nil {
+			logging.LogDebug("kuma", "Socket.IO read loop ended",
+				slog.String("error", err.Error()),
+			)
 			return
 		}
 		if len(msg) == 0 {
@@ -127,6 +172,7 @@ func (c *sioClient) readLoop() {
 		case eioMessage:
 			c.handleSIO(msg[1:])
 		case eioClose:
+			logging.LogDebug("kuma", "Socket.IO received close frame")
 			return
 		}
 	}
@@ -228,8 +274,10 @@ func (c *sioClient) emitWithAck(event string, data any) <-chan []json.RawMessage
 }
 
 func (c *sioClient) close() {
+	logging.LogDebug("kuma", "Closing Socket.IO connection")
 	c.conn.Close()
 	<-c.done
+	logging.LogDebug("kuma", "Socket.IO connection closed")
 }
 
 // --- Kuma-specific query ---
@@ -248,6 +296,11 @@ type KumaMonitor struct {
 }
 
 func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
+	queryStart := time.Now()
+	logging.LogInfo("kuma", "Querying monitors via Socket.IO",
+		slog.String("kuma_url", kumaURL),
+	)
+
 	type named struct{ name, url, mtype string }
 
 	var (
@@ -305,7 +358,9 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 					select {
 					case resp := <-ackCh:
 						if len(resp) > 0 {
-							var r struct{ Ok bool `json:"ok"` }
+							var r struct {
+								Ok bool `json:"ok"`
+							}
 							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
 								loginErr <- nil
 								return
@@ -375,8 +430,8 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 			if len(ev.Args) >= 1 {
 				var hb struct {
 					MonitorID int    `json:"monitorID"`
-					Stat     int    `json:"status"`
-					Msg      string `json:"msg"`
+					Stat      int    `json:"status"`
+					Msg       string `json:"msg"`
 				}
 				if json.Unmarshal(ev.Args[0], &hb) == nil {
 					seen[hb.MonitorID] = true
@@ -397,6 +452,7 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 	}
 
 	// Phase 1: wait for login
+	logging.LogDebug("kuma", "Socket.IO waiting for loginRequired event")
 loop:
 	for {
 		select {
@@ -404,15 +460,26 @@ loop:
 			handleEvent(ev)
 		case err := <-loginErr:
 			if err != nil {
+				logging.LogError("kuma", "Socket.IO login failed",
+					slog.String("error", err.Error()),
+					slog.Duration("duration", time.Since(queryStart)),
+				)
 				return nil, fmt.Errorf("login: %w", err)
 			}
+			logging.LogInfo("kuma", "Socket.IO login successful",
+				slog.Duration("duration", time.Since(queryStart)),
+			)
 			break loop
 		case <-loginTimer:
+			logging.LogError("kuma", "Socket.IO login timeout",
+				slog.Duration("duration", time.Since(queryStart)),
+			)
 			return nil, fmt.Errorf("login timeout")
 		}
 	}
 
 	// Phase 2: collect data for 20 seconds
+	logging.LogDebug("kuma", "Socket.IO collecting monitor data")
 	dataTimer := time.After(20 * time.Second)
 collectLoop:
 	for {
@@ -455,6 +522,11 @@ collectLoop:
 			}
 		}
 	}
+
+	logging.LogInfo("kuma", "Socket.IO monitor query complete",
+		slog.Int("monitor_count", len(out)),
+		slog.Duration("duration", time.Since(queryStart)),
+	)
 
 	return out, nil
 }

@@ -3,18 +3,20 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"gopkg.in/yaml.v3"
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/logging"
 	"synapse/internal/npm"
 )
 
@@ -149,14 +151,33 @@ func ParseHealthcheck(name string, svc ServiceDef) string {
 }
 
 func LoadServices(path string) (map[string]ServiceDef, error) {
+	start := time.Now()
+	logging.LogDebug("sync", "Loading compose file",
+		slog.String("path", path),
+	)
 	data, err := os.ReadFile(path)
 	if err != nil {
+		logging.LogError("sync", "Failed to read compose file",
+			slog.String("path", path),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, err
 	}
 	var c Compose
 	if err := yaml.Unmarshal(data, &c); err != nil {
+		logging.LogError("sync", "Failed to parse compose file",
+			slog.String("path", path),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, err
 	}
+	logging.LogInfo("sync", "Loaded compose file",
+		slog.String("path", path),
+		slog.Int("service_count", len(c.Services)),
+		slog.Duration("duration", time.Since(start)),
+	)
 	return c.Services, nil
 }
 
@@ -165,6 +186,11 @@ func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string
 		trace.WithAttributes(attribute.String("compose_path", composePath)),
 	)
 	defer span.End()
+
+	start := time.Now()
+	logging.LogDebug("sync", "Getting Docker services with status",
+		slog.String("compose_path", composePath),
+	)
 
 	services, err := LoadServices(composePath)
 	if err != nil {
@@ -213,6 +239,11 @@ func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string
 
 		result = append(result, info)
 	}
+
+	logging.LogInfo("sync", "Docker services with status",
+		slog.Int("service_count", len(result)),
+		slog.Duration("duration", time.Since(start)),
+	)
 	return result, nil
 }
 
@@ -251,6 +282,11 @@ func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaP
 	)
 	defer span.End()
 
+	start := time.Now()
+	logging.LogDebug("sync", "Getting NPM proxies with Kuma status",
+		slog.String("npm_host", npmHost),
+	)
+
 	entries, err := npm.GetProxyHosts(npmHost, npmUser, npmPass)
 	if err != nil {
 		return nil, err
@@ -285,6 +321,11 @@ func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaP
 
 		result = append(result, info)
 	}
+
+	logging.LogInfo("sync", "NPM proxies with status",
+		slog.Int("proxy_count", len(result)),
+		slog.Duration("duration", time.Since(start)),
+	)
 	return result, nil
 }
 
@@ -294,6 +335,11 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 	)
 	defer span.End()
 
+	syncStart := time.Now()
+	logging.LogInfo("sync", "Starting Docker sync",
+		slog.String("compose_path", composePath),
+	)
+
 	run := db.SyncRun{
 		Source:    "docker",
 		Status:    "running",
@@ -301,6 +347,9 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 	}
 	id, err := database.CreateSyncRun(&run)
 	if err != nil {
+		logging.LogError("sync", "Failed to create Docker sync run",
+			slog.String("error", err.Error()),
+		)
 		return db.SyncRun{Source: "docker", Status: "error", ErrorMessage: err.Error()}
 	}
 	run.ID = id
@@ -313,6 +362,9 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 		return run
 	}
 	run.TotalServices = len(services)
+	logging.LogInfo("sync", "Docker sync loaded services",
+		slog.Int("service_count", len(services)),
+	)
 
 	onProgress(Progress{RunID: id, Source: "docker", Total: len(services), Status: "logging_in", Message: "Logging into Uptime Kuma..."})
 
@@ -373,6 +425,14 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 
 		if existing[displayName] {
 			skipped++
+			logging.LogInfo("sync", "Skipping service (already monitored)",
+				slog.String("service", displayName),
+				slog.Int("current", current),
+				slog.Int("total", len(services)),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
 			onProgress(Progress{RunID: id, Source: "docker", Total: len(services), Current: current,
 				Status: "skipping", Message: fmt.Sprintf("Skipping %s (already exists)", displayName),
 				Added: added, Skipped: skipped, Failed: failed})
@@ -399,15 +459,32 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 
 		if err != nil {
 			failed++
+			logging.LogError("sync", "Failed to add monitor for service",
+				slog.String("service", displayName),
+				slog.String("error", err.Error()),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
 			onProgress(Progress{RunID: id, Source: "docker", Total: len(services), Current: current,
 				Status: "error", Message: fmt.Sprintf("Failed: %s - %v", displayName, err),
 				Added: added, Skipped: skipped, Failed: failed})
 		} else {
 			added++
+			logging.LogInfo("sync", "Added monitor for service",
+				slog.String("service", displayName),
+				slog.String("monitor_type", func() string {
+					if url != "" { return "http" }
+					return "docker"
+				}()),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
 			database.AddMonitor(&db.Monitor{
-				Name:            displayName,
-				ServiceName:     name,
-				MonitorType:     func() string {
+				Name:        displayName,
+				ServiceName: name,
+				MonitorType: func() string {
 					if url != "" {
 						return "http"
 					}
@@ -443,6 +520,13 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 	run.Failed = failed
 	run.ErrorMessage = errMsg
 
+	logging.LogInfo("sync", "Docker sync complete",
+		slog.Int("added", added),
+		slog.Int("skipped", skipped),
+		slog.Int("failed", failed),
+		slog.Duration("duration", time.Since(syncStart)),
+	)
+
 	onProgress(Progress{RunID: id, Source: "docker", Total: len(services), Current: len(services),
 		Status: status, Message: "Docker sync complete",
 		Added: added, Skipped: skipped, Failed: failed})
@@ -456,6 +540,11 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 	)
 	defer span.End()
 
+	syncStart := time.Now()
+	logging.LogInfo("sync", "Starting NPM sync",
+		slog.String("npm_host", npmHost),
+	)
+
 	run := db.SyncRun{
 		Source:    "npm",
 		Status:    "running",
@@ -463,6 +552,9 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 	}
 	id, err := database.CreateSyncRun(&run)
 	if err != nil {
+		logging.LogError("sync", "Failed to create NPM sync run",
+			slog.String("error", err.Error()),
+		)
 		return db.SyncRun{Source: "npm", Status: "error", ErrorMessage: err.Error()}
 	}
 	run.ID = id
@@ -475,6 +567,9 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 		return run
 	}
 	run.TotalServices = len(entries)
+	logging.LogInfo("sync", "NPM sync loaded proxy entries",
+		slog.Int("entry_count", len(entries)),
+	)
 
 	if len(entries) == 0 {
 		database.FinishSyncRun(id, "completed", 0, 0, 0, "")
@@ -520,6 +615,14 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 
 		if existing[cname] {
 			skipped++
+			logging.LogInfo("sync", "Skipping NPM entry (already monitored)",
+				slog.String("cname", cname),
+				slog.Int("current", current),
+				slog.Int("total", len(entries)),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
 			onProgress(Progress{RunID: id, Source: "npm", Total: len(entries), Current: current,
 				Status: "skipping", Message: fmt.Sprintf("Skipping %s (already exists)", cname),
 				Added: added, Skipped: skipped, Failed: failed})
@@ -534,11 +637,24 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 
 		if err != nil {
 			failed++
+			logging.LogError("sync", "Failed to add monitor for NPM entry",
+				slog.String("cname", cname),
+				slog.String("error", err.Error()),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
 			onProgress(Progress{RunID: id, Source: "npm", Total: len(entries), Current: current,
 				Status: "error", Message: fmt.Sprintf("Failed: %s - %v", cname, err),
 				Added: added, Skipped: skipped, Failed: failed})
 		} else {
 			added++
+			logging.LogInfo("sync", "Added monitor for NPM entry",
+				slog.String("cname", cname),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
 			database.AddMonitor(&db.Monitor{
 				Name:        cname,
 				ServiceName: entry.Container,
@@ -571,6 +687,13 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 	run.Skipped = skipped
 	run.Failed = failed
 	run.ErrorMessage = errMsg
+
+	logging.LogInfo("sync", "NPM sync complete",
+		slog.Int("added", added),
+		slog.Int("skipped", skipped),
+		slog.Int("failed", failed),
+		slog.Duration("duration", time.Since(syncStart)),
+	)
 
 	onProgress(Progress{RunID: id, Source: "npm", Total: len(entries), Current: len(entries),
 		Status: status, Message: "NPM sync complete",

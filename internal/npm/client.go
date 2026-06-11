@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"synapse/internal/logging"
 )
 
 type ProxyHost struct {
@@ -23,7 +26,7 @@ type ForwardingConfig struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	Container string `json:"container"`
-	Protocol   string `json:"protocol"`
+	Protocol  string `json:"protocol"`
 }
 
 type ProxyEntry struct {
@@ -31,7 +34,7 @@ type ProxyEntry struct {
 	Container string `json:"container"`
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
-	Protocol   string `json:"protocol"`
+	Protocol  string `json:"protocol"`
 }
 
 var npmTracer = otel.Tracer("npm")
@@ -44,9 +47,18 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	)
 	defer span.End()
 
+	start := time.Now()
+	logging.LogDebug("npm", "Fetching proxy hosts from NPM",
+		slog.String("npm_host", npmHost),
+	)
+
 	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", npmHost)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		logging.LogError("npm", "Failed to create NPM request",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, err
 	}
 	req.SetBasicAuth(npmUser, npmPass)
@@ -57,16 +69,29 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		logging.LogError("npm", "Failed to fetch proxy hosts from NPM",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get proxy hosts: status %d", resp.StatusCode)
+		err := fmt.Errorf("failed to get proxy hosts: status %d", resp.StatusCode)
+		logging.LogError("npm", "NPM request returned non-OK status",
+			slog.Int("status", resp.StatusCode),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return nil, err
 	}
 
 	var hosts []ProxyHost
 	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
+		logging.LogError("npm", "Failed to decode NPM proxy hosts response",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, err
 	}
 
@@ -83,10 +108,16 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 				Container: forwarding.Container,
 				Host:      forwarding.Host,
 				Port:      forwarding.Port,
-				Protocol:   forwarding.Protocol,
+				Protocol:  forwarding.Protocol,
 			})
 		}
 	}
+
+	logging.LogInfo("npm", "Fetched proxy hosts from NPM",
+		slog.Int("host_count", len(hosts)),
+		slog.Int("entry_count", len(entries)),
+		slog.Duration("duration", time.Since(start)),
+	)
 
 	return entries, nil
 }

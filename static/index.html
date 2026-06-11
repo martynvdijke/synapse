@@ -33,6 +33,19 @@
         .empty-state svg { width: 64px; height: 64px; margin-bottom: .5rem; }
         .loading-row td { text-align: center; padding: 2rem; }
         .tab-pane.loading { opacity: .6; pointer-events: none; }
+        .log-table { font-size: .8rem; }
+        .log-table td { vertical-align: middle; }
+        .log-table .log-time { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: .75rem; white-space: nowrap; color: #6c757d; }
+        .log-table .log-source { font-weight: 500; }
+        .log-table .log-msg { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .log-table .log-duration { font-family: 'SF Mono', 'Consolas', monospace; font-size: .75rem; color: #6c757d; }
+        .log-table .log-error { font-family: 'SF Mono', 'Consolas', monospace; font-size: .75rem; color: #dc3545; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .log-table .log-row-new { animation: logHighlight 1.5s ease-out; }
+        @keyframes logHighlight { from { background-color: #fff3cd; } to { background-color: transparent; } }
+        .log-table .log-meta-row { display: none; }
+        .log-table .log-meta-row.show { display: table-row; }
+        .log-table .log-meta-row td { background: #f8f9fa; padding: .5rem 1rem; }
+        .log-table .log-meta-inner { font-family: 'SF Mono', 'Consolas', monospace; font-size: .75rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -150,6 +163,11 @@
         <li class="nav-item" role="presentation">
             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-authelia" type="button">
                 Authelia
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button">
+                Logs
             </button>
         </li>
         <li class="nav-item" role="presentation">
@@ -352,6 +370,62 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-logs">
+            <div class="bg-white rounded shadow-sm p-3 mb-3">
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label mb-0 small">Level</label>
+                        <select class="form-select form-select-sm" id="log-filter-level">
+                            <option value="">All Levels</option>
+                            <option value="debug">DEBUG</option>
+                            <option value="info">INFO</option>
+                            <option value="warn">WARN</option>
+                            <option value="error">ERROR</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label mb-0 small">Source</label>
+                        <select class="form-select form-select-sm" id="log-filter-source">
+                            <option value="">All Sources</option>
+                            <option value="app">app</option>
+                            <option value="kuma">kuma</option>
+                            <option value="npm">npm</option>
+                            <option value="sync">sync</option>
+                            <option value="authelia">authelia</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label mb-0 small">Search</label>
+                        <input class="form-control form-control-sm" id="log-filter-search" placeholder="Search messages...">
+                    </div>
+                    <div class="col-md-2 d-flex gap-1">
+                        <button class="btn btn-outline-secondary btn-sm flex-grow-1" id="btn-log-refresh">Refresh</button>
+                        <button class="btn btn-outline-danger btn-sm" id="btn-log-clear">Clear</button>
+                    </div>
+                </div>
+                <div class="table-responsive" style="max-height:600px; overflow-y:auto;">
+                    <table class="table table-hover align-middle table-sm log-table" id="log-table">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th style="width:160px">Timestamp</th>
+                                <th style="width:70px">Level</th>
+                                <th style="width:90px">Source</th>
+                                <th>Message</th>
+                                <th style="width:100px">Duration</th>
+                                <th style="width:200px">Error</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-tbody">
+                            <tr><td colspan="6" class="text-center text-muted py-3">Click the Logs tab to load entries...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="text-center mt-2" id="log-load-more-area">
+                    <button class="btn btn-outline-secondary btn-sm" id="btn-log-load-more">Load More</button>
                 </div>
             </div>
         </div>
@@ -709,6 +783,13 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-history') loadHistory();
         else if (target === '#tab-settings') loadSettings();
         else if (target === '#tab-authelia') loadAutheliaDashboard();
+        else if (target === '#tab-logs') {
+            setupLogFilters();
+            if (!logsLoaded) {
+                loadLogs(false);
+                connectLogSSE();
+            }
+        }
     });
 });
 
@@ -807,6 +888,177 @@ function testConnection(service) {
         .finally(function() {
             btn.disabled = false;
         });
+}
+
+// ─── Logs Tab ────────────────────────────────────────────────────────────────
+
+var logsOffset = 0;
+var logsLimit = 200;
+var logsSSE = null;
+var logsLoaded = false;
+
+function getLogFilters() {
+    return {
+        level: document.getElementById('log-filter-level').value,
+        source: document.getElementById('log-filter-source').value,
+        search: document.getElementById('log-filter-search').value.trim()
+    };
+}
+
+function levelBadge(level) {
+    var map = { 'DEBUG': 'bg-secondary', 'INFO': 'bg-primary', 'WARN': 'bg-warning text-dark', 'ERROR': 'bg-danger' };
+    return '<span class="badge ' + (map[level] || 'bg-secondary') + '">' + level + '</span>';
+}
+
+function durationStr(ns) {
+    if (!ns || ns <= 0) return '';
+    if (ns < 1000) return ns + 'ns';
+    if (ns < 1000000) return (ns / 1000).toFixed(1) + 'µs';
+    if (ns < 1000000000) return (ns / 1000000).toFixed(1) + 'ms';
+    return (ns / 1000000000).toFixed(2) + 's';
+}
+
+function timeStr(ts) {
+    var d = new Date(ts);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function loadLogs(append) {
+    if (!append) logsOffset = 0;
+    var filters = getLogFilters();
+    var params = new URLSearchParams();
+    if (filters.level) params.set('level', filters.level);
+    if (filters.source) params.set('source', filters.source);
+    if (filters.search) params.set('search', filters.search);
+    params.set('limit', logsLimit);
+    params.set('offset', logsOffset);
+
+    var tbody = document.getElementById('logs-tbody');
+    if (!append) {
+        tbody.innerHTML = loadingRow(6);
+    }
+
+    apiFetch('/api/logs?' + params.toString()).then(function(r) { return r.json(); }).then(function(entries) {
+        if (append) {
+            // Append to existing rows
+            var html = entries.map(function(e) {
+                return renderLogRow(e, false);
+            }).join('');
+            // Insert before "Load More" row
+            var insertBefore = tbody.querySelector('#log-load-more-row');
+            if (insertBefore) {
+                insertBefore.insertAdjacentHTML('beforebegin', html);
+            } else {
+                tbody.insertAdjacentHTML('beforeend', html);
+            }
+        } else {
+            tbody.innerHTML = entries.length
+                ? entries.map(function(e) {
+                    return renderLogRow(e, true);
+                }).join('')
+                : emptyRow(6, 'No log entries yet');
+        }
+
+        if (entries.length < logsLimit) {
+            document.getElementById('log-load-more-area').style.display = 'none';
+        } else {
+            document.getElementById('log-load-more-area').style.display = '';
+        }
+        logsOffset += entries.length;
+        logsLoaded = true;
+    }).catch(function(err) {
+        if (err.message === 'not authenticated') return;
+        if (!append) tbody.innerHTML = emptyRow(6, 'Failed to load logs');
+    });
+}
+
+function renderLogRow(e, isNew) {
+    var cls = isNew ? 'log-row-new' : '';
+    var meta = e.metadata && Object.keys(e.metadata).length
+        ? '<tr class="log-meta-row" data-log-idx="' + esc(e.timestamp) + '"><td colspan="6"><div class="log-meta-inner">' + esc(JSON.stringify(e.metadata, null, 2)) + '</div></td></tr>'
+        : '';
+    return '<tr class="' + cls + '" onclick="toggleLogMeta(this)" data-log-ts="' + esc(e.timestamp) + '">'
+        + '<td class="log-time">' + timeStr(e.timestamp) + '</td>'
+        + '<td>' + levelBadge(e.level) + '</td>'
+        + '<td class="log-source">' + esc(e.source) + '</td>'
+        + '<td class="log-msg" title="' + esc(e.message) + '">' + esc(e.message) + '</td>'
+        + '<td class="log-duration">' + durationStr(e.duration) + '</td>'
+        + '<td class="log-error" title="' + esc(e.error || '') + '">' + (e.error ? esc(e.error) : '') + '</td>'
+        + '</tr>'
+        + meta;
+}
+
+function toggleLogMeta(row) {
+    var ts = row.getAttribute('data-log-ts');
+    var metaRow = row.parentNode.querySelector('.log-meta-row[data-log-idx="' + ts + '"]');
+    if (metaRow) {
+        metaRow.classList.toggle('show');
+    }
+}
+
+var logSearchDebounce = null;
+function setupLogFilters() {
+    document.getElementById('log-filter-level').addEventListener('change', function() {
+        if (logsLoaded) loadLogs(false);
+    });
+    document.getElementById('log-filter-source').addEventListener('change', function() {
+        if (logsLoaded) loadLogs(false);
+    });
+    document.getElementById('log-filter-search').addEventListener('input', function() {
+        clearTimeout(logSearchDebounce);
+        logSearchDebounce = setTimeout(function() {
+            if (logsLoaded) loadLogs(false);
+        }, 300);
+    });
+    document.getElementById('btn-log-refresh').addEventListener('click', function() {
+        loadLogs(false);
+    });
+    document.getElementById('btn-log-clear').addEventListener('click', function() {
+        document.getElementById('logs-tbody').innerHTML = emptyRow(6, 'No log entries yet');
+        logsOffset = 0;
+        logsLoaded = false;
+    });
+    document.getElementById('btn-log-load-more').addEventListener('click', function() {
+        loadLogs(true);
+    });
+}
+
+function connectLogSSE() {
+    if (logsSSE) {
+        logsSSE.close();
+        logsSSE = null;
+    }
+    var retryDelay = 1000;
+    function connect() {
+        logsSSE = new EventSource('/api/logs/stream');
+        logsSSE.onmessage = function(e) {
+            retryDelay = 1000;
+            var entry = JSON.parse(e.data);
+            var tbody = document.getElementById('logs-tbody');
+            // Prepend new entry
+            var newRow = renderLogRow(entry, true);
+            tbody.insertAdjacentHTML('afterbegin', newRow);
+            // Cap visible rows
+            var rows = tbody.querySelectorAll('tr:not(.log-meta-row)');
+            var maxRows = logsLimit + 50;
+            if (rows.length > maxRows) {
+                for (var i = maxRows; i < rows.length; i++) {
+                    var meta = rows[i].parentNode.querySelector('.log-meta-row[data-log-idx="' + rows[i].getAttribute('data-log-ts') + '"]');
+                    if (meta) meta.remove();
+                    rows[i].remove();
+                }
+            }
+            // Remove empty state if present
+            var emptyState = tbody.querySelector('.empty-state');
+            if (emptyState) emptyState.closest('tr').remove();
+        };
+        logsSSE.onerror = function() {
+            if (logsSSE) logsSSE.close();
+            setTimeout(connect, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 30000);
+        };
+    }
+    connect();
 }
 
 // ─── Authelia ────────────────────────────────────────────────────────────────

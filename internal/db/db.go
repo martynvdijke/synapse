@@ -82,8 +82,8 @@ type Settings struct {
 }
 
 type DB struct {
-	client  *ent.Client
-	rawDB   *sql.DB
+	client *ent.Client
+	rawDB  *sql.DB
 }
 
 func Open(path string) (*DB, error) {
@@ -351,10 +351,10 @@ func (db *DB) SaveSettings(s Settings) error {
 
 	pairs := map[string]string{
 		"compose_path":            s.ComposePath,
-		"npm_host":               s.NPMHost,
-		"npm_user":               s.NPMUser,
-		"npm_pass":               s.NPMPass,
-		"kuma_url":               s.KumaURL,
+		"npm_host":                s.NPMHost,
+		"npm_user":                s.NPMUser,
+		"npm_pass":                s.NPMPass,
+		"kuma_url":                s.KumaURL,
 		"kuma_user":               s.KumaUser,
 		"kuma_pass":               s.KumaPass,
 		"authelia_config_path":    s.AutheliaConfigPath,

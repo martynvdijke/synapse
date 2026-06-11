@@ -61,11 +61,11 @@ func SyncConfig(autheliaPath string, npmEntries []ProxyEntry, defaultPolicy stri
 
 		if matchedDomain != "" {
 			actions = append(actions, SyncAction{
-				CNAME:   cname,
+				CNAME:     cname,
 				Container: container,
-				Action:  "skip",
-				Policy:  matchedDomain,
-				Message: fmt.Sprintf("Covered by rule for %s", matchedDomain),
+				Action:    "skip",
+				Policy:    matchedDomain,
+				Message:   fmt.Sprintf("Covered by rule for %s", matchedDomain),
 			})
 			continue
 		}
@@ -89,11 +89,11 @@ func SyncConfig(autheliaPath string, npmEntries []ProxyEntry, defaultPolicy stri
 
 		if dryRun {
 			actions = append(actions, SyncAction{
-				CNAME:   cname,
+				CNAME:     cname,
 				Container: container,
-				Action:  "add",
-				Policy:  policy,
-				Message: fmt.Sprintf("Would add rule for %s with policy %s", cname, policy),
+				Action:    "add",
+				Policy:    policy,
+				Message:   fmt.Sprintf("Would add rule for %s with policy %s", cname, policy),
 			})
 			continue
 		}
@@ -105,11 +105,11 @@ func SyncConfig(autheliaPath string, npmEntries []ProxyEntry, defaultPolicy stri
 		})
 
 		actions = append(actions, SyncAction{
-			CNAME:   cname,
+			CNAME:     cname,
 			Container: container,
-			Action:  "add",
-			Policy:  policy,
-			Message: fmt.Sprintf("Added rule for %s with policy %s", cname, policy),
+			Action:    "add",
+			Policy:    policy,
+			Message:   fmt.Sprintf("Added rule for %s with policy %s", cname, policy),
 		})
 	}
 

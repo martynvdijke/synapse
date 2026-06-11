@@ -17,14 +17,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"golang.org/x/crypto/bcrypt"
 
 	"synapse/internal/authelia"
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/logging"
 	synclib "synapse/internal/sync"
 	"synapse/internal/telemetry"
+	"log/slog"
 )
 
 var version = "1.1.4"
@@ -129,6 +131,8 @@ func getEnvInt(key string, def int) int {
 func mask(string) string { return "" }
 
 func main() {
+	logging.Init()
+
 	dbPath := getEnv("DB_PATH", "synapse.db")
 	addr := getEnv("LISTEN_ADDR", ":6270")
 
@@ -216,6 +220,10 @@ func main() {
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
 		api.GET("/status", app.Status)
+
+		// Logs endpoints
+		api.GET("/logs", app.LogsHandler)
+		api.GET("/logs/stream", app.LogsStreamSSE)
 
 		// Authelia endpoints
 		api.GET("/authelia/status", app.AutheliaStatus)
@@ -349,12 +357,12 @@ func (app *App) GetSettings(c *gin.Context) {
 	s := app.settings()
 	c.JSON(http.StatusOK, gin.H{
 		"compose_path":            s.ComposePath,
-		"npm_host":               s.NPMHost,
-		"npm_user":               s.NPMUser,
-		"npm_pass":               mask(s.NPMPass),
-		"kuma_url":               s.KumaURL,
-		"kuma_user":              s.KumaUser,
-		"kuma_pass":              mask(s.KumaPass),
+		"npm_host":                s.NPMHost,
+		"npm_user":                s.NPMUser,
+		"npm_pass":                mask(s.NPMPass),
+		"kuma_url":                s.KumaURL,
+		"kuma_user":               s.KumaUser,
+		"kuma_pass":               mask(s.KumaPass),
 		"authelia_config_path":    s.AutheliaConfigPath,
 		"authelia_db_path":        s.AutheliaDBPath,
 		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
@@ -399,6 +407,9 @@ func (app *App) SaveSettings(c *gin.Context) {
 }
 
 func (app *App) TestNPM(c *gin.Context) {
+	start := time.Now()
+	logging.LogDebug("app", "Testing NPM connection")
+
 	s := app.settings()
 	var input db.Settings
 	if err := c.ShouldBindJSON(&input); err == nil {
@@ -414,13 +425,27 @@ func (app *App) TestNPM(c *gin.Context) {
 	}
 	_, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
 	if err != nil {
+		logging.LogError("app", "NPM connection test failed",
+			slog.String("npm_host", s.NPMHost),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
 		return
 	}
+	logging.LogInfo("app", "NPM connection test successful",
+		slog.String("npm_host", s.NPMHost),
+		slog.Duration("duration", time.Since(start)),
+	)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "NPM connection successful"})
 }
 
 func (app *App) TestKuma(c *gin.Context) {
+	start := time.Now()
+	logging.LogDebug("app", "Testing Kuma connection",
+		slog.String("kuma_url", app.settings().KumaURL),
+	)
+
 	s := app.settings()
 	var input db.Settings
 	if err := c.ShouldBindJSON(&input); err == nil {
@@ -436,14 +461,27 @@ func (app *App) TestKuma(c *gin.Context) {
 	}
 	client := kuma.NewClient(s.KumaURL)
 	if err := client.Login(s.KumaUser, s.KumaPass); err != nil {
+		logging.LogError("app", "Kuma connection test failed",
+			slog.String("kuma_url", s.KumaURL),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
 		return
 	}
 	_, err := client.GetMonitors()
 	if err != nil {
+		logging.LogError("app", "Kuma connection test failed on GetMonitors",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
 		return
 	}
+	logging.LogInfo("app", "Kuma connection test successful",
+		slog.String("kuma_url", s.KumaURL),
+		slog.Duration("duration", time.Since(start)),
+	)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Uptime Kuma connection successful"})
 }
 
@@ -667,16 +705,21 @@ func (app *App) NPMSync(c *gin.Context) {
 // startSyncScheduler runs periodic docker and NPM syncs on a configurable interval.
 // It is intended to run as a background goroutine and respects context cancellation.
 func (app *App) startSyncScheduler(ctx context.Context, intervalMinutes int) {
-	log.Printf("starting sync scheduler: every %d minute(s)", intervalMinutes)
+	logging.LogInfo("app", "Sync scheduler started",
+		slog.Int("interval_minutes", intervalMinutes),
+	)
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("sync scheduler stopped")
+			logging.LogInfo("app", "Sync scheduler stopped")
 			return
 		case <-ticker.C:
+			logging.LogDebug("app", "Scheduler tick",
+				slog.Int("interval_minutes", intervalMinutes),
+			)
 			app.runScheduledSync()
 		}
 	}
@@ -687,7 +730,7 @@ func (app *App) runScheduledSync() {
 	app.mu.Lock()
 	if app.running {
 		app.mu.Unlock()
-		log.Println("scheduler: sync already running, skipping this interval")
+		logging.LogDebug("app", "Scheduled sync skipped — already running")
 		return
 	}
 	app.running = true
@@ -700,10 +743,17 @@ func (app *App) runScheduledSync() {
 	}()
 
 	s := app.settings()
-	log.Println("scheduler: starting periodic docker sync")
+	logging.LogInfo("app", "Starting scheduled Docker sync",
+		slog.String("compose_path", s.ComposePath),
+	)
 
 	synclib.RunDockerSync(s.ComposePath, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
-		log.Printf("[scheduler] docker sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
+		logging.LogDebug("app", "Docker sync progress",
+			slog.Int("current", p.Current),
+			slog.Int("total", p.Total),
+			slog.String("status", p.Status),
+			slog.String("message", p.Message),
+		)
 	})
 
 	log.Println("scheduler: starting periodic npm sync")
@@ -769,6 +819,70 @@ func (app *App) ProgressSSE(c *gin.Context) {
 	}
 }
 
+// ─── Logs API ────────────────────────────────────────────────────────────────
+
+// LogsHandler returns filtered log entries from the in-memory buffer.
+// Supports query params: level, source, search, limit, offset.
+func (app *App) LogsHandler(c *gin.Context) {
+	level := c.Query("level")
+	source := c.Query("source")
+	search := c.Query("search")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	entries := logging.DefaultBuffer().Filter(logging.FilterParams{
+		Level:  level,
+		Source: source,
+		Search: search,
+		Limit:  limit,
+		Offset: offset,
+	})
+
+	if entries == nil {
+		entries = []logging.Entry{}
+	}
+
+	c.JSON(http.StatusOK, entries)
+}
+
+// LogsStreamSSE streams new log entries in real-time via SSE.
+func (app *App) LogsStreamSSE(c *gin.Context) {
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.String(http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	ch := logging.Subscribe()
+	defer logging.Unsubscribe(ch)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	ctx := c.Request.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fmt.Fprintf(c.Writer, ": keepalive\n\n")
+			flusher.Flush()
+		case entry, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, _ := json.Marshal(entry)
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
 // ─── Authelia Handlers ──────────────────────────────────────────────────────
 
 // AutheliaStatus returns the current state of Authelia integration:
@@ -777,6 +891,9 @@ func (app *App) ProgressSSE(c *gin.Context) {
 //   - Open alerts count
 func (app *App) AutheliaStatus(c *gin.Context) {
 	s := app.settings()
+	logging.LogDebug("authelia", "Status requested",
+		slog.String("config_path", s.AutheliaConfigPath),
+	)
 
 	if s.AutheliaConfigPath == "" {
 		c.JSON(http.StatusOK, gin.H{
@@ -816,29 +933,41 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"configured":      true,
-		"domains":         autheliaDomains,
-		"npm_cnames":      npmCNAMEs,
-		"matched":         matched,
-		"missing":         missing,
-		"open_alerts":     openAlerts,
-		"sync_enabled":    s.AutheliaSyncEnabled,
-		"default_policy":  s.AutheliaDefaultPolicy,
-		"npm_error":       npmErr != nil,
-		"npm_error_msg":   func() string { if npmErr != nil { return npmErr.Error() }; return "" }(),
+		"configured":     true,
+		"domains":        autheliaDomains,
+		"npm_cnames":     npmCNAMEs,
+		"matched":        matched,
+		"missing":        missing,
+		"open_alerts":    openAlerts,
+		"sync_enabled":   s.AutheliaSyncEnabled,
+		"default_policy": s.AutheliaDefaultPolicy,
+		"npm_error":      npmErr != nil,
+		"npm_error_msg": func() string {
+			if npmErr != nil {
+				return npmErr.Error()
+			}
+			return ""
+		}(),
 	})
 }
 
 // AutheliaAlerts returns all authelia alerts.
 func (app *App) AutheliaAlerts(c *gin.Context) {
+	logging.LogDebug("authelia", "Alerts requested")
 	alerts, err := app.database.GetAutheliaAlerts()
 	if err != nil {
+		logging.LogError("authelia", "Failed to fetch alerts",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if alerts == nil {
 		alerts = []db.AutheliaAlert{}
 	}
+	logging.LogInfo("authelia", "Alerts fetched",
+		slog.Int("alert_count", len(alerts)),
+	)
 	c.JSON(http.StatusOK, alerts)
 }
 
@@ -847,25 +976,47 @@ func (app *App) AutheliaResolveAlert(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
+		logging.LogError("authelia", "Invalid alert ID",
+			slog.String("id_str", idStr),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
 
+	logging.LogInfo("authelia", "Resolving alert",
+		slog.Int64("alert_id", id),
+	)
 	if err := app.database.ResolveAutheliaAlert(id); err != nil {
+		logging.LogError("authelia", "Failed to resolve alert",
+			slog.Int64("alert_id", id),
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	logging.LogInfo("authelia", "Alert resolved",
+		slog.Int64("alert_id", id),
+	)
 	c.JSON(http.StatusOK, gin.H{"status": "resolved"})
 }
 
 // AutheliaTempAccess returns all temporary IP access rules.
 func (app *App) AutheliaTempAccess(c *gin.Context) {
+	logging.LogDebug("authelia", "Temp access rules requested")
 	// Clean up expired rules first
-	_ = app.database.CleanupExpiredTempAccess()
+	logging.LogDebug("authelia", "Cleaning up expired temp access rules")
+	if err := app.database.CleanupExpiredTempAccess(); err != nil {
+		logging.LogError("authelia", "Failed to clean up expired temp access",
+			slog.String("error", err.Error()),
+		)
+	}
 
 	rules, err := app.database.GetTempAccessRules()
 	if err != nil {
+		logging.LogError("authelia", "Failed to fetch temp access rules",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -880,16 +1031,20 @@ func (app *App) AutheliaAddTempAccess(c *gin.Context) {
 	var input struct {
 		IP        string `json:"ip"`
 		Reason    string `json:"reason"`
-		Duration  string `json:"duration"` // Go duration string (e.g., "24h", "7d")
+		Duration  string `json:"duration"`   // Go duration string (e.g., "24h", "7d")
 		ExpiresAt string `json:"expires_at"` // RFC3339 timestamp (alternative to duration)
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
+		logging.LogError("authelia", "Invalid temp access request",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
 
 	if input.IP == "" {
+		logging.LogError("authelia", "Temp access missing IP")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ip is required"})
 		return
 	}
@@ -900,12 +1055,18 @@ func (app *App) AutheliaAddTempAccess(c *gin.Context) {
 		var err error
 		expiresAt, err = time.Parse(time.RFC3339, input.ExpiresAt)
 		if err != nil {
+			logging.LogError("authelia", "Invalid expires_at format",
+				slog.String("expires_at", input.ExpiresAt),
+			)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid expires_at format, use RFC3339"})
 			return
 		}
 	} else if input.Duration != "" {
 		d, err := time.ParseDuration(input.Duration)
 		if err != nil {
+			logging.LogError("authelia", "Invalid duration format",
+				slog.String("duration", input.Duration),
+			)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration: " + err.Error()})
 			return
 		}
@@ -923,10 +1084,19 @@ func (app *App) AutheliaAddTempAccess(c *gin.Context) {
 	}
 
 	if err := app.database.AddTempAccess(rule); err != nil {
+		logging.LogError("authelia", "Failed to create temp access",
+			slog.String("ip", input.IP),
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	logging.LogInfo("authelia", "Temp access created",
+		slog.String("ip", input.IP),
+		slog.String("reason", input.Reason),
+		slog.Time("expires_at", expiresAt),
+	)
 	c.JSON(http.StatusOK, gin.H{"status": "created"})
 }
 
@@ -935,15 +1105,28 @@ func (app *App) AutheliaRevokeTempAccess(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
+		logging.LogError("authelia", "Invalid temp access ID",
+			slog.String("id_str", idStr),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
 
+	logging.LogInfo("authelia", "Revoking temp access",
+		slog.Int64("rule_id", id),
+	)
 	if err := app.database.RevokeTempAccess(id); err != nil {
+		logging.LogError("authelia", "Failed to revoke temp access",
+			slog.Int64("rule_id", id),
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	logging.LogInfo("authelia", "Temp access revoked",
+		slog.Int64("rule_id", id),
+	)
 	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
 }
 
@@ -952,9 +1135,14 @@ func (app *App) AutheliaRevokeTempAccess(c *gin.Context) {
 //   - dry_run: bool (default: true for safety)
 //   - auto_sync: bool (overrides settings)
 func (app *App) AutheliaSync(c *gin.Context) {
+	start := time.Now()
 	s := app.settings()
+	logging.LogInfo("authelia", "Authelia sync triggered",
+		slog.String("config_path", s.AutheliaConfigPath),
+	)
 
 	if s.AutheliaConfigPath == "" {
+		logging.LogError("authelia", "Authelia sync failed — config path not set")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Authelia config path not set"})
 		return
 	}
@@ -981,9 +1169,15 @@ func (app *App) AutheliaSync(c *gin.Context) {
 	// Fetch NPM entries
 	npmEntries, err := synclib.GetNPMProxyEntries(s.NPMHost, s.NPMUser, s.NPMPass)
 	if err != nil {
+		logging.LogError("authelia", "Failed to fetch NPM entries for Authelia sync",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch NPM entries: " + err.Error()})
 		return
 	}
+	logging.LogInfo("authelia", "Fetched NPM entries for Authelia sync",
+		slog.Int("entry_count", len(npmEntries)),
+	)
 
 	// Parse overrides from settings JSON
 	var overrides map[string]string
@@ -1007,9 +1201,16 @@ func (app *App) AutheliaSync(c *gin.Context) {
 
 	actions, err := authelia.SyncConfig(s.AutheliaConfigPath, proxyEntries, s.AutheliaDefaultPolicy, overrides, autoSync, dryRun)
 	if err != nil {
+		logging.LogError("authelia", "Authelia sync config failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "actions": actions})
 		return
 	}
+	logging.LogInfo("authelia", "Authelia sync config processed",
+		slog.Int("actions", len(actions)),
+	)
 
 	// If not dry-run and auto-sync enabled, create alerts for any errors
 	if !dryRun && autoSync {
@@ -1041,11 +1242,11 @@ func (app *App) AutheliaSync(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"dry_run":  dryRun,
-		"actions":  actions,
-		"added":    0,
-		"skipped":  0,
-		"alerted":  0,
+		"dry_run": dryRun,
+		"actions": actions,
+		"added":   0,
+		"skipped": 0,
+		"alerted": 0,
 	}
 
 	for _, a := range actions {
@@ -1058,6 +1259,15 @@ func (app *App) AutheliaSync(c *gin.Context) {
 			resp["alerted"] = resp["alerted"].(int) + 1
 		}
 	}
+
+	logging.LogInfo("authelia", "Authelia sync complete",
+		slog.Int("actions", len(actions)),
+		slog.Int("added", resp["added"].(int)),
+		slog.Int("skipped", resp["skipped"].(int)),
+		slog.Int("alerted", resp["alerted"].(int)),
+		slog.Bool("dry_run", dryRun),
+		slog.Duration("duration", time.Since(start)),
+	)
 
 	c.JSON(http.StatusOK, resp)
 }

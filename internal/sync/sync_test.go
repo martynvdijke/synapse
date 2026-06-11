@@ -318,8 +318,8 @@ func TestParseHealthcheck_FromFile(t *testing.T) {
 	}{
 		{"web", "http://nginx-web:80/health"},
 		{"api", "http://myapp-api:8080/api/health"},
-		{"db", ""},      // pg_isready, no HTTP
-		{"redis", ""},   // redis-cli ping, no HTTP
+		{"db", ""},                             // pg_isready, no HTTP
+		{"redis", ""},                          // redis-cli ping, no HTTP
 		{"worker", "http://worker:9090/ready"}, // no container_name → uses service name
 	}
 
