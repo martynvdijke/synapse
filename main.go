@@ -29,7 +29,7 @@ import (
 	"log/slog"
 )
 
-var version = "1.2.0"
+var version = "1.2.1"
 
 type sessionInfo struct {
 	Expiry time.Time
