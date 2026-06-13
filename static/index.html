@@ -5,51 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Synapse — Uptime Kuma Sync</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background: #f8f9fa; }
-        .navbar { margin-bottom: 1.5rem; }
-        .stat-card { transition: transform .15s; cursor: pointer; }
-        .stat-card:hover { transform: translateY(-2px); }
-        .progress { height: 0.5rem; }
-        .sync-section, .settings-section { background: #fff; border-radius: .5rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-        .table { font-size: .875rem; margin-bottom: 0; }
-        .sync-btn-group .btn { min-width: 120px; }
-        #progress-area { display: none; }
-        #progress-area.active { display: block; }
-        .settings-section .form-label { font-size: .75rem; margin-bottom: .25rem; text-transform: uppercase; color: #6c757d; }
-        .settings-section .form-control, .settings-section .form-select { font-size: .875rem; }
-        .test-result { font-size: .8rem; margin-top: .25rem; }
-        .nav-tabs .nav-link { font-size: .9rem; }
-        .settings-toggle { cursor: pointer; }
-        .spinner-sm { display: inline-block; width: 1rem; height: 1rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .5s linear infinite; vertical-align: middle; margin-right: .25rem; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: .5rem; }
-        .toast-msg { background: #fff; border-radius: .5rem; box-shadow: 0 4px 12px rgba(0,0,0,.15); padding: .75rem 1rem; font-size: .875rem; display: flex; align-items: center; gap: .5rem; animation: slideIn .2s ease; min-width: 250px; }
-        .toast-msg.toast-success { border-left: 4px solid #198754; }
-        .toast-msg.toast-error { border-left: 4px solid #dc3545; }
-        .toast-msg.toast-info { border-left: 4px solid #0d6efd; }
-        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .empty-state { padding: 3rem 1rem; text-align: center; color: #adb5bd; }
-        .empty-state svg { width: 64px; height: 64px; margin-bottom: .5rem; }
-        .loading-row td { text-align: center; padding: 2rem; }
-        .tab-pane.loading { opacity: .6; pointer-events: none; }
-        .log-table { font-size: .8rem; }
-        .log-table td { vertical-align: middle; }
-        .log-table .log-time { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: .75rem; white-space: nowrap; color: #6c757d; }
-        .log-table .log-source { font-weight: 500; }
-        .log-table .log-msg { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .log-table .log-duration { font-family: 'SF Mono', 'Consolas', monospace; font-size: .75rem; color: #6c757d; }
-        .log-table .log-error { font-family: 'SF Mono', 'Consolas', monospace; font-size: .75rem; color: #dc3545; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .log-table .log-row-new { animation: logHighlight 1.5s ease-out; }
-        @keyframes logHighlight { from { background-color: #fff3cd; } to { background-color: transparent; } }
-        .log-table .log-meta-row { display: none; }
-        .log-table .log-meta-row.show { display: table-row; }
-        .log-table .log-meta-row td { background: #f8f9fa; padding: .5rem 1rem; }
-        .log-table .log-meta-inner { font-family: 'SF Mono', 'Consolas', monospace; font-size: .75rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
-    </style>
+    <link href="/dist/app.css" rel="stylesheet">
 </head>
 <body>
-<nav class="navbar navbar-dark bg-dark px-4">
+<a href="#main-content" class="skip-link">Skip to content</a>
+
+<nav class="navbar navbar-dark bg-dark px-4" aria-label="Main navigation">
     <span class="navbar-brand mb-0 h1">Synapse</span>
     <span class="text-light opacity-75 small">v{{ .Version }}</span>
     <div>
@@ -57,48 +18,48 @@
     </div>
 </nav>
 
-<div class="container-fluid px-4">
-    <div class="row g-3 mb-4">
+<div class="container-fluid px-4" id="main-content">
+    <div class="row g-3 mb-4" aria-label="Service statistics">
         <div class="col-md-3">
-            <div class="card stat-card border-0 shadow-sm">
+            <div class="card stat-card border-0 shadow-sm" aria-label="Docker services count">
                 <div class="card-body text-center py-3">
                     <div class="text-muted small text-uppercase">Docker Services</div>
-                    <div class="fs-2 fw-bold text-primary" id="stat-docker">—</div>
+                    <div class="fs-2 fw-bold text-primary" id="stat-docker"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card stat-card border-0 shadow-sm">
+            <div class="card stat-card border-0 shadow-sm" aria-label="NPM hosts count">
                 <div class="card-body text-center py-3">
                     <div class="text-muted small text-uppercase">NPM Hosts</div>
-                    <div class="fs-2 fw-bold text-success" id="stat-npm">—</div>
+                    <div class="fs-2 fw-bold text-success" id="stat-npm"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card stat-card border-0 shadow-sm">
+            <div class="card stat-card border-0 shadow-sm" aria-label="Kuma monitors count">
                 <div class="card-body text-center py-3">
                     <div class="text-muted small text-uppercase">Kuma Monitors</div>
-                    <div class="fs-2 fw-bold text-info" id="stat-monitors">—</div>
+                    <div class="fs-2 fw-bold text-info" id="stat-monitors"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card stat-card border-0 shadow-sm">
+            <div class="card stat-card border-0 shadow-sm" aria-label="Sync status">
                 <div class="card-body text-center py-3">
                     <div class="text-muted small text-uppercase">Status</div>
                     <div class="fs-6 fw-semibold mt-2" id="stat-status">
-                        <span class="badge bg-secondary">Idle</span>
+                        <span class="skeleton skeleton-md" style="width:70px">&nbsp;</span>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card stat-card border-0 shadow-sm">
+            <div class="card stat-card border-0 shadow-sm" aria-label="Authelia status">
                 <div class="card-body text-center py-3">
                     <div class="text-muted small text-uppercase">Authelia</div>
                     <div class="fs-6 fw-semibold mt-2" id="stat-authelia">
-                        <span class="badge bg-secondary">—</span>
+                        <span class="skeleton skeleton-md" style="width:80px">&nbsp;</span>
                     </div>
                 </div>
             </div>
@@ -118,7 +79,7 @@
             </div>
         </div>
 
-        <div id="progress-area">
+        <div id="progress-area" aria-live="polite" aria-atomic="true">
             <div class="d-flex align-items-center gap-2 mb-2">
                 <div class="flex-grow-1">
                     <div class="progress">
@@ -139,48 +100,48 @@
         </div>
     </div>
 
-    <ul class="nav nav-tabs mb-3" role="tablist">
+    <ul class="nav nav-tabs mb-3" role="tablist" aria-label="Dashboard tabs">
         <li class="nav-item" role="presentation">
-            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-docker" type="button">
+            <button class="nav-link active" id="tab-btn-docker" role="tab" aria-selected="true" aria-controls="tab-docker" tabindex="0" data-bs-toggle="tab" data-bs-target="#tab-docker" type="button">
                 Docker Compose
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-kuma" type="button">
+            <button class="nav-link" id="tab-btn-kuma" role="tab" aria-selected="false" aria-controls="tab-kuma" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-kuma" type="button">
                 Uptime Kuma
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-npm" type="button">
+            <button class="nav-link" id="tab-btn-npm" role="tab" aria-selected="false" aria-controls="tab-npm" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-npm" type="button">
                 NPM Hosts
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">
+            <button class="nav-link" id="tab-btn-history" role="tab" aria-selected="false" aria-controls="tab-history" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">
                 Sync History
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-authelia" type="button">
+            <button class="nav-link" id="tab-btn-authelia" role="tab" aria-selected="false" aria-controls="tab-authelia" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-authelia" type="button">
                 Authelia
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button">
+            <button class="nav-link" id="tab-btn-logs" role="tab" aria-selected="false" aria-controls="tab-logs" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button">
                 Logs
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-settings" type="button">
+            <button class="nav-link" id="tab-btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-settings" type="button">
                 Settings
             </button>
         </li>
     </ul>
 
     <div class="tab-content">
-        <div class="tab-pane fade show active" id="tab-docker">
+        <div class="tab-pane fade show active" id="tab-docker" role="tabpanel" aria-labelledby="tab-btn-docker">
             <div class="table-responsive bg-white rounded shadow-sm">
-                <table class="table table-hover align-middle">
+                <table class="table table-hover align-middle" aria-label="Docker services">
                     <thead class="table-light">
                         <tr>
                             <th>Service</th>
@@ -190,16 +151,18 @@
                             <th>In Kuma</th>
                         </tr>
                     </thead>
-                    <tbody id="docker-tbody">
-                        <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                    <tbody id="docker-tbody" aria-live="polite">
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:70%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div class="tab-pane fade" id="tab-kuma">
+        <div class="tab-pane fade" id="tab-kuma" role="tabpanel" aria-labelledby="tab-btn-kuma">
             <div class="table-responsive bg-white rounded shadow-sm">
-                <table class="table table-hover align-middle">
+                <table class="table table-hover align-middle" aria-label="Uptime Kuma monitors">
                     <thead class="table-light">
                         <tr>
                             <th>ID</th>
@@ -208,16 +171,18 @@
                             <th>URL / Container</th>
                         </tr>
                     </thead>
-                    <tbody id="kuma-tbody">
-                        <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                    <tbody id="kuma-tbody" aria-live="polite">
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div class="tab-pane fade" id="tab-npm">
+        <div class="tab-pane fade" id="tab-npm" role="tabpanel" aria-labelledby="tab-btn-npm">
             <div class="table-responsive bg-white rounded shadow-sm">
-                <table class="table table-hover align-middle">
+                <table class="table table-hover align-middle" aria-label="NPM proxy hosts">
                     <thead class="table-light">
                         <tr>
                             <th>Domain</th>
@@ -225,16 +190,18 @@
                             <th>In Kuma</th>
                         </tr>
                     </thead>
-                    <tbody id="npm-tbody">
-                        <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                    <tbody id="npm-tbody" aria-live="polite">
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div class="tab-pane fade" id="tab-history">
+        <div class="tab-pane fade" id="tab-history" role="tabpanel" aria-labelledby="tab-btn-history">
             <div class="table-responsive bg-white rounded shadow-sm">
-                <table class="table table-hover align-middle">
+                <table class="table table-hover align-middle" aria-label="Sync history">
                     <thead class="table-light">
                         <tr>
                             <th>ID</th>
@@ -247,14 +214,15 @@
                             <th>Error</th>
                         </tr>
                     </thead>
-                    <tbody id="history-tbody">
-                        <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
+                    <tbody id="history-tbody" aria-live="polite">
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:15%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:15%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div class="tab-pane fade" id="tab-authelia">
+        <div class="tab-pane fade" id="tab-authelia" role="tabpanel" aria-labelledby="tab-btn-authelia">
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
                     <div class="card border-0 shadow-sm">
@@ -300,12 +268,13 @@
                                 <th>Policy</th>
                             </tr>
                         </thead>
-                        <tbody id="auth-coverage-tbody">
-                            <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                        <tbody id="auth-coverage-tbody" aria-live="polite">
+                            <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
+                            <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
                         </tbody>
                     </table>
                 </div>
-                <div id="auth-sync-result" class="small d-none mt-2"></div>
+                <div id="auth-sync-result" class="small d-none mt-2" aria-live="polite"></div>
             </div>
 
             <div class="row g-3">
@@ -313,7 +282,7 @@
                     <div class="bg-white rounded shadow-sm p-3">
                         <h6 class="fw-semibold mb-2">Authelia Alerts</h6>
                         <div class="table-responsive">
-                            <table class="table table-hover align-middle small">
+                            <table class="table table-hover align-middle small" aria-label="Authelia alerts">
                                 <thead class="table-light">
                                     <tr>
                                         <th>CNAME</th>
@@ -322,7 +291,7 @@
                                         <th>Action</th>
                                     </tr>
                                 </thead>
-                                <tbody id="auth-alerts-tbody">
+                                <tbody id="auth-alerts-tbody" aria-live="polite">
                                     <tr><td colspan="4" class="text-center text-muted py-3">No alerts</td></tr>
                                 </tbody>
                             </table>
@@ -354,7 +323,7 @@
                             </div>
                         </div>
                         <div class="table-responsive">
-                            <table class="table table-hover align-middle small">
+                            <table class="table table-hover align-middle small" aria-label="Temporary IP access rules">
                                 <thead class="table-light">
                                     <tr>
                                         <th>IP</th>
@@ -364,7 +333,7 @@
                                         <th>Action</th>
                                     </tr>
                                 </thead>
-                                <tbody id="auth-temp-tbody">
+                                <tbody id="auth-temp-tbody" aria-live="polite">
                                     <tr><td colspan="5" class="text-center text-muted py-3">No rules</td></tr>
                                 </tbody>
                             </table>
@@ -374,7 +343,7 @@
             </div>
         </div>
 
-        <div class="tab-pane fade" id="tab-logs">
+        <div class="tab-pane fade" id="tab-logs" role="tabpanel" aria-labelledby="tab-btn-logs">
             <div class="bg-white rounded shadow-sm p-3 mb-3">
                 <div class="row g-2 align-items-end mb-2">
                     <div class="col-md-3">
@@ -419,7 +388,7 @@
                                 <th style="width:200px">Error</th>
                             </tr>
                         </thead>
-                        <tbody id="logs-tbody">
+                            <tbody id="logs-tbody" aria-live="polite">
                             <tr><td colspan="6" class="text-center text-muted py-3">Click the Logs tab to load entries...</td></tr>
                         </tbody>
                     </table>
@@ -430,7 +399,7 @@
             </div>
         </div>
 
-        <div class="tab-pane fade" id="tab-settings">
+        <div class="tab-pane fade" id="tab-settings" role="tabpanel" aria-labelledby="tab-btn-settings">
             <div class="bg-white rounded shadow-sm p-4">
                 <form id="settings-form">
                     <div class="row g-3">
@@ -523,779 +492,26 @@
     </div>
 </div>
 
+<!-- Confirmation Modal -->
+<div class="modal fade" id="confirm-modal" tabindex="-1" aria-labelledby="confirm-modal-title" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirm-modal-title">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="confirm-modal-body">
+                Are you sure?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="confirm-modal-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirm-modal-ok">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-function apiFetch(url, opts) {
-    return fetch(url, opts).then(function(r) {
-        if (r.status === 401) {
-            window.location.href = '/login';
-            throw new Error('not authenticated');
-        }
-        return r;
-    });
-}
-
-function logout() {
-    apiFetch('/api/logout', { method: 'POST' }).then(function() {
-        window.location.href = '/login';
-    });
-}
-
-// --- Toast notifications ---
-function toast(msg, type) {
-    type = type || 'info';
-    var container = document.getElementById('toast-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'toast-container';
-        container.className = 'toast-container';
-        document.body.appendChild(container);
-    }
-    var el = document.createElement('div');
-    el.className = 'toast-msg toast-' + type;
-    el.textContent = msg;
-    container.appendChild(el);
-    setTimeout(function() { el.remove(); }, 4000);
-}
-
-// --- Loading button helper ---
-function setLoading(btnId, loading) {
-    var btn = document.getElementById(btnId);
-    if (!btn) return;
-    if (loading) {
-        btn.dataset.origHtml = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-sm"></span> ' + (btn.dataset.loadingText || btn.textContent.trim());
-    } else {
-        btn.disabled = false;
-        if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml;
-    }
-}
-
-// --- SSE with reconnection ---
-function connectSSE() {
-    var retryDelay = 1000;
-    function connect() {
-        var es = new EventSource('/api/sync/progress');
-        es.onmessage = function(e) {
-            retryDelay = 1000;
-            var p = JSON.parse(e.data);
-            var area = document.getElementById('progress-area');
-            area.classList.add('active');
-            var pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
-            document.getElementById('progress-bar').style.width = pct + '%';
-            document.getElementById('progress-pct').textContent = pct + '%';
-            document.getElementById('progress-msg').textContent = p.message;
-            document.getElementById('count-added').textContent = p.added;
-            document.getElementById('count-skipped').textContent = p.skipped;
-            document.getElementById('count-failed').textContent = p.failed;
-            if (p.status === 'completed' || p.status === 'completed_with_errors' || p.status === 'error') {
-                document.getElementById('btn-docker').disabled = false;
-                document.getElementById('btn-npm').disabled = false;
-                document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
-                setTimeout(refreshAll, 500);
-            }
-        };
-        es.onerror = function() {
-            es.close();
-            setTimeout(connect, retryDelay);
-            retryDelay = Math.min(retryDelay * 2, 30000);
-        };
-    }
-    connect();
-}
-connectSSE();
-
-// --- Empty state SVG icon ---
-function emptyIcon() {
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
-}
-
-function emptyRow(colspan, msg) {
-    return '<tr><td colspan="' + colspan + '" class="empty-state">' + emptyIcon() + '<div class="mt-2">' + esc(msg) + '</div></td></tr>';
-}
-
-function loadingRow(colspan) {
-    return '<tr class="loading-row"><td colspan="' + colspan + '"><span class="spinner-sm"></span> Loading...</td></tr>';
-}
-
-function startSync(source) {
-    document.getElementById('btn-docker').disabled = true;
-    document.getElementById('btn-npm').disabled = true;
-    document.getElementById('stat-status').innerHTML = '<span class="badge bg-primary">Running...</span>';
-    toast('Sync started: ' + source, 'info');
-    apiFetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(function(d) {
-        console.log(source + ' sync started', d);
-    }).catch(function(err) {
-        if (err.message === 'not authenticated') return;
-        document.getElementById('btn-docker').disabled = false;
-        document.getElementById('btn-npm').disabled = false;
-        document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
-        toast('Sync failed to start', 'error');
-    });
-}
-
-function loadStatus() {
-    apiFetch('/api/status').then(r => r.json()).then(function(d) {
-        document.getElementById('stat-docker').textContent = d.docker_count;
-        document.getElementById('stat-npm').textContent = d.npm_error ? '⚠' : d.npm_count;
-        document.getElementById('stat-monitors').textContent = d.monitor_count;
-        if (!d.running) {
-            document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
-        }
-        document.getElementById('btn-docker').disabled = d.running;
-        document.getElementById('btn-npm').disabled = d.running;
-    });
-    // Load authelia status separately
-    apiFetch('/api/authelia/status').then(r => r.json()).then(function(d) {
-        var el = document.getElementById('stat-authelia');
-        if (!d.configured) {
-            el.innerHTML = '<span class="badge bg-secondary">Not configured</span>';
-            return;
-        }
-        if (d.error) {
-            el.innerHTML = '<span class="badge bg-danger">Config error</span>';
-            return;
-        }
-        var total = d.npm_cnames ? d.npm_cnames.length : 0;
-        var matched = d.matched ? d.matched.length : 0;
-        var coverage = total > 0 ? Math.round(matched / total * 100) : 0;
-        el.innerHTML = '<span class="badge ' + (coverage >= 100 ? 'bg-success' : coverage > 0 ? 'bg-warning text-dark' : 'bg-danger') + '">' + matched + '/' + total + ' (' + coverage + '%)</span>';
-    });
-}
-
-function loadDockerServices() {
-    document.getElementById('docker-tbody').innerHTML = loadingRow(5);
-    apiFetch('/api/services').then(r => r.json()).then(function(services) {
-        var tbody = document.getElementById('docker-tbody');
-        if (services.error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc(services.error) + '</td></tr>';
-            return;
-        }
-        if (!services.length) {
-            tbody.innerHTML = emptyRow(5, 'No services found');
-            return;
-        }
-        tbody.innerHTML = services.map(function(s) {
-            return '<tr>'
-                + '<td><code>' + esc(s.name) + '</code></td>'
-                + '<td>' + esc(s.container_name) + '</td>'
-                + '<td><span class="badge ' + (s.type === 'http' ? 'bg-info' : 'bg-secondary') + '">' + s.type.toUpperCase() + '</span></td>'
-                + '<td class="text-truncate" style="max-width:300px">' + (s.url ? '<a href="' + esc(s.url) + '">' + esc(s.url) + '</a>' : '—') + '</td>'
-                + '<td>' + (s.in_kuma
-                    ? '<span class="badge bg-success">In Kuma</span>'
-                    : '<span class="badge bg-secondary">Missing</span>') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function loadKumaMonitors() {
-    document.getElementById('kuma-tbody').innerHTML = loadingRow(4);
-    apiFetch('/api/monitors').then(r => r.json()).then(function(monitors) {
-        var tbody = document.getElementById('kuma-tbody');
-        if (monitors.error) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc(monitors.error) + '</td></tr>';
-            return;
-        }
-        if (!monitors.length) {
-            tbody.innerHTML = emptyRow(4, 'No monitors in Uptime Kuma');
-            return;
-        }
-        tbody.innerHTML = monitors.map(function(m) {
-            return '<tr>'
-                + '<td>#' + m.id + '</td>'
-                + '<td>' + esc(m.name) + '</td>'
-                + '<td><span class="badge ' + (m.type === 'http' ? 'bg-info' : m.type === 'docker' ? 'bg-warning text-dark' : 'bg-secondary') + '">' + m.type.toUpperCase() + '</span></td>'
-                + '<td class="text-truncate" style="max-width:300px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function loadNPMProxies() {
-    document.getElementById('npm-tbody').innerHTML = loadingRow(3);
-    apiFetch('/api/proxies').then(r => r.json()).then(function(proxies) {
-        var tbody = document.getElementById('npm-tbody');
-        if (proxies.error) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">' + esc(proxies.error) + '</td></tr>';
-            return;
-        }
-        if (!proxies.length) {
-            tbody.innerHTML = emptyRow(3, 'No proxy hosts found');
-            return;
-        }
-        tbody.innerHTML = proxies.map(function(p) {
-            return '<tr>'
-                + '<td><code>' + esc(p.cname) + '</code></td>'
-                + '<td>' + esc(p.container) + '</td>'
-                + '<td>' + (p.in_kuma
-                    ? '<span class="badge bg-success">In Kuma</span>'
-                    : '<span class="badge bg-secondary">Missing</span>') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function loadHistory() {
-    document.getElementById('history-tbody').innerHTML = loadingRow(8);
-    apiFetch('/api/sync/history').then(r => r.json()).then(function(runs) {
-        var tbody = document.getElementById('history-tbody');
-        if (!runs.length) {
-            tbody.innerHTML = emptyRow(8, 'No sync history yet');
-            return;
-        }
-        tbody.innerHTML = runs.map(function(r) {
-            var badge = 'bg-primary';
-            if (r.status === 'completed') badge = 'bg-success';
-            else if (r.status === 'completed_with_errors') badge = 'bg-warning text-dark';
-            else if (r.status === 'error') badge = 'bg-danger';
-            return '<tr>'
-                + '<td>#' + r.id + '</td>'
-                + '<td><span class="badge ' + (r.source === 'docker' ? 'bg-primary' : 'bg-success') + '">' + r.source + '</span></td>'
-                + '<td><span class="badge ' + badge + '">' + r.status + '</span></td>'
-                + '<td class="small">' + (r.started_at ? new Date(r.started_at).toLocaleString() : '') + '</td>'
-                + '<td>' + r.added + '</td>'
-                + '<td>' + r.skipped + '</td>'
-                + '<td>' + r.failed + '</td>'
-                + '<td class="small text-danger">' + esc(r.error_message || '') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function refreshAll() {
-    loadStatus();
-    loadDockerServices();
-    loadKumaMonitors();
-    loadNPMProxies();
-    loadHistory();
-}
-
-document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
-    tab.addEventListener('shown.bs.tab', function(e) {
-        var target = e.target.getAttribute('data-bs-target');
-        if (target === '#tab-docker') loadDockerServices();
-        else if (target === '#tab-npm') loadNPMProxies();
-        else if (target === '#tab-kuma') loadKumaMonitors();
-        else if (target === '#tab-history') loadHistory();
-        else if (target === '#tab-settings') loadSettings();
-        else if (target === '#tab-authelia') loadAutheliaDashboard();
-        else if (target === '#tab-logs') {
-            setupLogFilters();
-            if (!logsLoaded) {
-                loadLogs(false);
-                connectLogSSE();
-            }
-        }
-    });
-});
-
-// --- Settings ---
-
-function loadSettings() {
-    apiFetch('/api/settings').then(r => r.json()).then(function(s) {
-        document.getElementById('s-kuma-url').value = s.kuma_url || '';
-        document.getElementById('s-kuma-user').value = s.kuma_user || '';
-        document.getElementById('s-kuma-pass').value = '';
-        document.getElementById('s-npm-host').value = s.npm_host || '';
-        document.getElementById('s-npm-user').value = s.npm_user || '';
-        document.getElementById('s-npm-pass').value = '';
-        document.getElementById('s-compose-path').value = s.compose_path || '';
-        document.getElementById('s-auth-config-path').value = s.authelia_config_path || '';
-        document.getElementById('s-auth-db-path').value = s.authelia_db_path || '';
-        document.getElementById('s-auth-sync-enabled').checked = !!s.authelia_sync_enabled;
-        document.getElementById('s-auth-default-policy').value = s.authelia_default_policy || 'one_factor';
-        document.getElementById('s-auth-overrides').value = s.authelia_sync_overrides || '';
-    });
-}
-
-function saveSettings(e) {
-    e.preventDefault();
-    var btn = document.querySelector('#settings-form button[type="submit"]');
-    btn.disabled = true;
-    var orig = btn.innerHTML;
-    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
-
-    var payload = {
-        kuma_url:  document.getElementById('s-kuma-url').value,
-        kuma_user: document.getElementById('s-kuma-user').value,
-        kuma_pass: document.getElementById('s-kuma-pass').value,
-        npm_host:  document.getElementById('s-npm-host').value,
-        npm_user:  document.getElementById('s-npm-user').value,
-        npm_pass:  document.getElementById('s-npm-pass').value,
-        compose_path: document.getElementById('s-compose-path')?.value || '',
-        authelia_config_path: document.getElementById('s-auth-config-path')?.value || '',
-        authelia_db_path: document.getElementById('s-auth-db-path')?.value || '',
-        authelia_sync_enabled: document.getElementById('s-auth-sync-enabled')?.checked || false,
-        authelia_default_policy: document.getElementById('s-auth-default-policy')?.value || 'one_factor',
-        authelia_sync_overrides: document.getElementById('s-auth-overrides')?.value || ''
-    };
-    apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        .then(function(r) {
-            if (!r.ok) throw new Error('Save failed');
-            return r.json();
-        })
-        .then(function() {
-            toast('Settings saved', 'success');
-        })
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            toast('Failed to save settings', 'error');
-        })
-        .finally(function() {
-            btn.disabled = false;
-            btn.innerHTML = orig;
-        });
-}
-
-function testConnection(service) {
-    var btn = service === 'kuma' ? document.getElementById('btn-test-kuma') : document.getElementById('btn-test-npm');
-    var resultEl = document.getElementById('test-' + service + '-result');
-    resultEl.innerHTML = '<span class="spinner-sm"></span> Testing...';
-    btn.disabled = true;
-
-    var payload = {
-        kuma_url:     document.getElementById('s-kuma-url').value,
-        kuma_user:    document.getElementById('s-kuma-user').value,
-        kuma_pass:    document.getElementById('s-kuma-pass').value || '',
-        npm_host:     document.getElementById('s-npm-host').value,
-        npm_user:     document.getElementById('s-npm-user').value,
-        npm_pass:     document.getElementById('s-npm-pass').value || '',
-        compose_path: document.getElementById('s-compose-path').value || ''
-    };
-
-    apiFetch('/api/test/' + service, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            resultEl.innerHTML = d.ok
-                ? '<span class="text-success fw-semibold">✓ OK</span>'
-                : '<span class="text-danger">✗ ' + esc(d.message) + '</span>';
-            if (d.ok) toast(service === 'kuma' ? 'Uptime Kuma connection OK' : 'NPM connection OK', 'success');
-            else toast(d.message, 'error');
-        })
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            resultEl.innerHTML = '<span class="text-danger">' + esc('' + err) + '</span>';
-            toast('Connection test failed', 'error');
-        })
-        .finally(function() {
-            btn.disabled = false;
-        });
-}
-
-// ─── Logs Tab ────────────────────────────────────────────────────────────────
-
-var logsOffset = 0;
-var logsLimit = 200;
-var logsSSE = null;
-var logsLoaded = false;
-
-function getLogFilters() {
-    return {
-        level: document.getElementById('log-filter-level').value,
-        source: document.getElementById('log-filter-source').value,
-        search: document.getElementById('log-filter-search').value.trim()
-    };
-}
-
-function levelBadge(level) {
-    var map = { 'DEBUG': 'bg-secondary', 'INFO': 'bg-primary', 'WARN': 'bg-warning text-dark', 'ERROR': 'bg-danger' };
-    return '<span class="badge ' + (map[level] || 'bg-secondary') + '">' + level + '</span>';
-}
-
-function durationStr(ns) {
-    if (!ns || ns <= 0) return '';
-    if (ns < 1000) return ns + 'ns';
-    if (ns < 1000000) return (ns / 1000).toFixed(1) + 'µs';
-    if (ns < 1000000000) return (ns / 1000000).toFixed(1) + 'ms';
-    return (ns / 1000000000).toFixed(2) + 's';
-}
-
-function timeStr(ts) {
-    var d = new Date(ts);
-    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
-}
-
-function loadLogs(append) {
-    if (!append) logsOffset = 0;
-    var filters = getLogFilters();
-    var params = new URLSearchParams();
-    if (filters.level) params.set('level', filters.level);
-    if (filters.source) params.set('source', filters.source);
-    if (filters.search) params.set('search', filters.search);
-    params.set('limit', logsLimit);
-    params.set('offset', logsOffset);
-
-    var tbody = document.getElementById('logs-tbody');
-    if (!append) {
-        tbody.innerHTML = loadingRow(6);
-    }
-
-    apiFetch('/api/logs?' + params.toString()).then(function(r) { return r.json(); }).then(function(entries) {
-        if (append) {
-            // Append to existing rows
-            var html = entries.map(function(e) {
-                return renderLogRow(e, false);
-            }).join('');
-            // Insert before "Load More" row
-            var insertBefore = tbody.querySelector('#log-load-more-row');
-            if (insertBefore) {
-                insertBefore.insertAdjacentHTML('beforebegin', html);
-            } else {
-                tbody.insertAdjacentHTML('beforeend', html);
-            }
-        } else {
-            tbody.innerHTML = entries.length
-                ? entries.map(function(e) {
-                    return renderLogRow(e, true);
-                }).join('')
-                : emptyRow(6, 'No log entries yet');
-        }
-
-        if (entries.length < logsLimit) {
-            document.getElementById('log-load-more-area').style.display = 'none';
-        } else {
-            document.getElementById('log-load-more-area').style.display = '';
-        }
-        logsOffset += entries.length;
-        logsLoaded = true;
-    }).catch(function(err) {
-        if (err.message === 'not authenticated') return;
-        if (!append) tbody.innerHTML = emptyRow(6, 'Failed to load logs');
-    });
-}
-
-function renderLogRow(e, isNew) {
-    var cls = isNew ? 'log-row-new' : '';
-    var meta = e.metadata && Object.keys(e.metadata).length
-        ? '<tr class="log-meta-row" data-log-idx="' + esc(e.timestamp) + '"><td colspan="6"><div class="log-meta-inner">' + esc(JSON.stringify(e.metadata, null, 2)) + '</div></td></tr>'
-        : '';
-    return '<tr class="' + cls + '" onclick="toggleLogMeta(this)" data-log-ts="' + esc(e.timestamp) + '">'
-        + '<td class="log-time">' + timeStr(e.timestamp) + '</td>'
-        + '<td>' + levelBadge(e.level) + '</td>'
-        + '<td class="log-source">' + esc(e.source) + '</td>'
-        + '<td class="log-msg" title="' + esc(e.message) + '">' + esc(e.message) + '</td>'
-        + '<td class="log-duration">' + durationStr(e.duration) + '</td>'
-        + '<td class="log-error" title="' + esc(e.error || '') + '">' + (e.error ? esc(e.error) : '') + '</td>'
-        + '</tr>'
-        + meta;
-}
-
-function toggleLogMeta(row) {
-    var ts = row.getAttribute('data-log-ts');
-    var metaRow = row.parentNode.querySelector('.log-meta-row[data-log-idx="' + ts + '"]');
-    if (metaRow) {
-        metaRow.classList.toggle('show');
-    }
-}
-
-var logSearchDebounce = null;
-function setupLogFilters() {
-    document.getElementById('log-filter-level').addEventListener('change', function() {
-        if (logsLoaded) loadLogs(false);
-    });
-    document.getElementById('log-filter-source').addEventListener('change', function() {
-        if (logsLoaded) loadLogs(false);
-    });
-    document.getElementById('log-filter-search').addEventListener('input', function() {
-        clearTimeout(logSearchDebounce);
-        logSearchDebounce = setTimeout(function() {
-            if (logsLoaded) loadLogs(false);
-        }, 300);
-    });
-    document.getElementById('btn-log-refresh').addEventListener('click', function() {
-        loadLogs(false);
-    });
-    document.getElementById('btn-log-clear').addEventListener('click', function() {
-        document.getElementById('logs-tbody').innerHTML = emptyRow(6, 'No log entries yet');
-        logsOffset = 0;
-        logsLoaded = false;
-    });
-    document.getElementById('btn-log-load-more').addEventListener('click', function() {
-        loadLogs(true);
-    });
-}
-
-function connectLogSSE() {
-    if (logsSSE) {
-        logsSSE.close();
-        logsSSE = null;
-    }
-    var retryDelay = 1000;
-    function connect() {
-        logsSSE = new EventSource('/api/logs/stream');
-        logsSSE.onmessage = function(e) {
-            retryDelay = 1000;
-            var entry = JSON.parse(e.data);
-            var tbody = document.getElementById('logs-tbody');
-            // Prepend new entry
-            var newRow = renderLogRow(entry, true);
-            tbody.insertAdjacentHTML('afterbegin', newRow);
-            // Cap visible rows
-            var rows = tbody.querySelectorAll('tr:not(.log-meta-row)');
-            var maxRows = logsLimit + 50;
-            if (rows.length > maxRows) {
-                for (var i = maxRows; i < rows.length; i++) {
-                    var meta = rows[i].parentNode.querySelector('.log-meta-row[data-log-idx="' + rows[i].getAttribute('data-log-ts') + '"]');
-                    if (meta) meta.remove();
-                    rows[i].remove();
-                }
-            }
-            // Remove empty state if present
-            var emptyState = tbody.querySelector('.empty-state');
-            if (emptyState) emptyState.closest('tr').remove();
-        };
-        logsSSE.onerror = function() {
-            if (logsSSE) logsSSE.close();
-            setTimeout(connect, retryDelay);
-            retryDelay = Math.min(retryDelay * 2, 30000);
-        };
-    }
-    connect();
-}
-
-// ─── Authelia ────────────────────────────────────────────────────────────────
-
-function loadAutheliaDashboard() {
-    loadAutheliaStatus();
-    loadAutheliaAlerts();
-    loadAutheliaTempAccess();
-}
-
-function loadAutheliaStatus() {
-    apiFetch('/api/authelia/status').then(r => r.json()).then(function(d) {
-        if (!d.configured) {
-            document.getElementById('auth-domain-count').textContent = '—';
-            document.getElementById('auth-coverage').textContent = '—';
-            document.getElementById('auth-open-alerts').textContent = '—';
-            document.getElementById('auth-coverage-tbody').innerHTML = emptyRow(4, 'Authelia not configured. Set config path in Settings.');
-            return;
-        }
-        if (d.error) {
-            document.getElementById('auth-domain-count').textContent = '⚠';
-            document.getElementById('auth-coverage').textContent = '⚠';
-            document.getElementById('auth-open-alerts').textContent = '⚠';
-            document.getElementById('auth-coverage-tbody').innerHTML = emptyRow(4, 'Error loading config: ' + esc(d.error));
-            return;
-        }
-
-        var domainCount = d.domains ? d.domains.length : 0;
-        document.getElementById('auth-domain-count').textContent = domainCount;
-
-        var total = d.npm_cnames ? d.npm_cnames.length : 0;
-        var matched = d.matched ? d.matched.length : 0;
-        var missing = d.missing ? d.missing.length : 0;
-        document.getElementById('auth-coverage').textContent = matched + '/' + total;
-        document.getElementById('auth-open-alerts').textContent = d.open_alerts || 0;
-
-        // Build coverage table from all NPM CNAMEs
-        var tbody = document.getElementById('auth-coverage-tbody');
-        if (total === 0) {
-            tbody.innerHTML = emptyRow(4, 'No NPM proxy hosts found');
-            return;
-        }
-
-        // Build lookup maps
-        var matchedMap = {};
-        (d.matched || []).forEach(function(c) { matchedMap[c] = true; });
-
-        tbody.innerHTML = (d.npm_cnames || []).map(function(cname) {
-            var isCovered = matchedMap[cname];
-            return '<tr>'
-                + '<td><code>' + esc(cname) + '</code></td>'
-                + '<td>—</td>'
-                + '<td>' + (isCovered
-                    ? '<span class="badge bg-success">Covered</span>'
-                    : '<span class="badge bg-danger">Missing</span>') + '</td>'
-                + '<td>' + (isCovered ? 'Existing rule' : '<span class="text-warning">No rule found</span>') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function loadAutheliaAlerts() {
-    apiFetch('/api/authelia/alerts').then(r => r.json()).then(function(alerts) {
-        var tbody = document.getElementById('auth-alerts-tbody');
-        if (!alerts || !alerts.length) {
-            tbody.innerHTML = emptyRow(4, 'No alerts');
-            return;
-        }
-        tbody.innerHTML = alerts.map(function(a) {
-            var sevBadge = a.severity === 'error' ? 'bg-danger' : a.severity === 'warning' ? 'bg-warning text-dark' : 'bg-info';
-            return '<tr>'
-                + '<td><code>' + esc(a.cname) + '</code></td>'
-                + '<td class="small">' + esc(a.message) + '</td>'
-                + '<td><span class="badge ' + sevBadge + '">' + esc(a.severity) + '</span></td>'
-                + '<td>' + (a.status === 'open'
-                    ? '<button class="btn btn-outline-success btn-sm" onclick="resolveAlert(' + a.id + ')">Resolve</button>'
-                    : '<span class="text-muted">' + esc(a.status) + '</span>') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function resolveAlert(id) {
-    apiFetch('/api/authelia/alerts/' + id + '/resolve', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            toast('Alert resolved', 'success');
-            loadAutheliaAlerts();
-            loadAutheliaStatus();
-        })
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            toast('Failed to resolve alert', 'error');
-        });
-}
-
-function loadAutheliaTempAccess() {
-    apiFetch('/api/authelia/temp-access').then(r => r.json()).then(function(rules) {
-        var tbody = document.getElementById('auth-temp-tbody');
-        if (!rules || !rules.length) {
-            tbody.innerHTML = emptyRow(5, 'No temporary access rules');
-            return;
-        }
-        tbody.innerHTML = rules.map(function(r) {
-            var statusBadge = r.status === 'active' ? 'bg-success'
-                : r.status === 'expired' ? 'bg-secondary'
-                : 'bg-danger';
-            return '<tr>'
-                + '<td><code>' + esc(r.ip) + '</code></td>'
-                + '<td class="small">' + esc(r.reason) + '</td>'
-                + '<td class="small">' + (r.expires_at ? new Date(r.expires_at).toLocaleString() : '—') + '</td>'
-                + '<td><span class="badge ' + statusBadge + '">' + esc(r.status) + '</span></td>'
-                + '<td>' + (r.status === 'active'
-                    ? '<button class="btn btn-outline-danger btn-sm" onclick="revokeTempAccess(' + r.id + ')">Revoke</button>'
-                    : '—') + '</td>'
-                + '</tr>';
-        }).join('');
-    });
-}
-
-function revokeTempAccess(id) {
-    apiFetch('/api/authelia/temp-access/' + id + '/revoke', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            toast('Access rule revoked', 'success');
-            loadAutheliaTempAccess();
-        })
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            toast('Failed to revoke rule', 'error');
-        });
-}
-
-function runAutheliaSync(dryRun) {
-    var btn = dryRun ? document.getElementById('btn-auth-dryrun') : document.getElementById('btn-auth-sync');
-    btn.disabled = true;
-    var orig = btn.innerHTML;
-    btn.innerHTML = '<span class="spinner-sm"></span> ' + (dryRun ? 'Dry running...' : 'Syncing...');
-
-    apiFetch('/api/authelia/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dry_run: dryRun })
-    })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d.error) {
-                toast('Sync error: ' + d.error, 'error');
-                return;
-            }
-            var actions = d.actions || [];
-            var added = actions.filter(function(a) { return a.action === 'add'; });
-            var skipped = actions.filter(function(a) { return a.action === 'skip'; });
-            var alerted = actions.filter(function(a) { return a.action === 'alert'; });
-
-            var resultHtml = '<div class="alert ' + (dryRun ? 'alert-info' : 'alert-success') + ' p-2 mb-0">';
-            resultHtml += '<strong>' + (dryRun ? 'Dry Run Results' : 'Sync Results') + '</strong>: ';
-            resultHtml += 'Added: ' + (d.added || 0) + ', Skipped: ' + (d.skipped || 0) + ', Alerted: ' + (d.alerted || 0);
-            if (actions.length) {
-                resultHtml += '<ul class="mb-0 mt-1 small">';
-                actions.forEach(function(a) {
-                    resultHtml += '<li>[' + esc(a.action) + '] ' + esc(a.cname) + (a.policy ? ' → ' + esc(a.policy) : '') + ': ' + esc(a.message) + '</li>';
-                });
-                resultHtml += '</ul>';
-            }
-            resultHtml += '</div>';
-
-            var resultDiv = document.getElementById('auth-sync-result');
-            resultDiv.innerHTML = resultHtml;
-            resultDiv.classList.remove('d-none');
-
-            loadAutheliaStatus();
-            loadAutheliaAlerts();
-            if (!dryRun) toast('Sync completed', 'success');
-        })
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            toast('Sync failed', 'error');
-        })
-        .finally(function() {
-            btn.disabled = false;
-            btn.innerHTML = orig;
-        });
-}
-
-// ─── Event listeners ─────────────────────────────────────────────────────────
-
-document.getElementById('btn-docker').addEventListener('click', function() {
-    if (confirm('Start Docker Compose sync?')) startSync('docker');
-});
-document.getElementById('btn-npm').addEventListener('click', function() {
-    if (confirm('Start NPM Proxy Hosts sync?')) startSync('npm');
-});
-
-document.getElementById('btn-auth-dryrun').addEventListener('click', function() { runAutheliaSync(true); });
-document.getElementById('btn-auth-sync').addEventListener('click', function() {
-    if (confirm('Auto-add missing CNAMEs to Authelia config? This modifies the Authelia configuration file.')) {
-        runAutheliaSync(false);
-    }
-});
-
-document.getElementById('btn-ta-submit').addEventListener('click', function() {
-    var ip = document.getElementById('ta-ip').value.trim();
-    var reason = document.getElementById('ta-reason').value.trim();
-    var duration = document.getElementById('ta-duration').value.trim();
-    if (!ip) { toast('IP address is required', 'error'); return; }
-    if (!duration) { toast('Duration is required', 'error'); return; }
-
-    apiFetch('/api/authelia/temp-access', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip: ip, reason: reason, duration: duration })
-    })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d.error) { toast(d.error, 'error'); return; }
-            toast('Temp access rule added', 'success');
-            document.getElementById('ta-ip').value = '';
-            document.getElementById('ta-reason').value = '';
-            document.getElementById('ta-duration').value = '';
-            loadAutheliaTempAccess();
-        })
-        .catch(function(err) {
-            if (err.message === 'not authenticated') return;
-            toast('Failed to add rule', 'error');
-        });
-});
-
-document.getElementById('btn-logout').addEventListener('click', logout);
-document.getElementById('settings-form').addEventListener('submit', saveSettings);
-document.getElementById('btn-test-kuma').addEventListener('click', function() { testConnection('kuma'); });
-document.getElementById('btn-test-npm').addEventListener('click', function() { testConnection('npm'); });
-
-// Initial load
-apiFetch('/api/status').then(function() { refreshAll(); }).catch(function(err) {
-    if (err.message === 'not authenticated') return;
-});
-</script>
+<script type="module" src="/dist/app.js"></script>
 </body>
 </html>

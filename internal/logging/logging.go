@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -68,10 +70,13 @@ var (
 	subscribersMu sync.RWMutex
 )
 
+// droppedSubscriberCount tracks total dropped messages across all subscribers.
+var droppedSubscriberCount atomic.Int64
+
 // Subscribe registers a channel that receives new log entries as they are appended.
 // The caller MUST call Unsubscribe with the returned channel to avoid leaks.
 func Subscribe() chan Entry {
-	ch := make(chan Entry, 256)
+	ch := make(chan Entry, 512)
 	subscribersMu.Lock()
 	subscribers = append(subscribers, ch)
 	subscribersMu.Unlock()
@@ -100,6 +105,10 @@ func broadcast(e Entry) {
 		case ch <- e:
 		default:
 			// Subscriber too slow, drop entry
+			n := droppedSubscriberCount.Add(1)
+			if n%100 == 1 {
+				log.Printf("[logging] subscriber channel full, dropped %d messages", n)
+			}
 		}
 	}
 }

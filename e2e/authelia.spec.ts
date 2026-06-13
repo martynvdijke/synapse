@@ -1,17 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
-
-/**
- * Mock API responses for the Authelia frontend.
- * We intercept all /api/* calls to avoid needing a real Go backend.
- */
-
-const MOCK_STATUS = {
-  docker_count: 5,
-  npm_count: 8,
-  npm_error: false,
-  monitor_count: 12,
-  running: false,
-};
+import { test, expect } from '@playwright/test';
+import { setupBaseMocks, MOCK_SETTINGS } from './helpers';
 
 const MOCK_AUTHELIA_STATUS_CONFIGURED = {
   configured: true,
@@ -43,19 +31,6 @@ const MOCK_TEMP_ACCESS = [
   { id: 3, ip: '203.0.113.42', reason: 'Vendor access', expires_at: new Date(Date.now() + 604800000).toISOString(), created_at: new Date().toISOString(), status: 'active' },
 ];
 
-const MOCK_SETTINGS = {
-  kuma_url: 'http://uptime-kuma:3001',
-  kuma_user: 'admin',
-  npm_host: 'http://nginx:81',
-  npm_user: 'admin',
-  compose_path: '/opt/synapse/docker-compose.yml',
-  authelia_config_path: '/config/configuration.yml',
-  authelia_db_path: '/config/db.sqlite3',
-  authelia_sync_enabled: true,
-  authelia_default_policy: 'one_factor',
-  authelia_sync_overrides: '{"admin.example.com":"bypass"}',
-};
-
 const MOCK_SYNC_RESULT = {
   dry_run: false,
   added: 2,
@@ -70,12 +45,10 @@ const MOCK_SYNC_RESULT = {
 };
 
 // Set up API mocking before each test
-async function setupMocks(page: Page, configured = true) {
-  // Intercept all /api/* calls
-  await page.route('**/api/status', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_STATUS) });
-  });
+async function setupAutheliaMocks(page: Page, configured = true) {
+  await setupBaseMocks(page);
 
+  // Override authelia-specific endpoints
   await page.route('**/api/authelia/status', async (route) => {
     const data = configured ? MOCK_AUTHELIA_STATUS_CONFIGURED : MOCK_AUTHELIA_STATUS_NOT_CONFIGURED;
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
@@ -104,43 +77,11 @@ async function setupMocks(page: Page, configured = true) {
   await page.route('**/api/authelia/sync', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_SYNC_RESULT) });
   });
-
-  await page.route('**/api/settings', async (route) => {
-    if (route.request().method() === 'POST') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'saved' }) });
-    } else {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_SETTINGS) });
-    }
-  });
-
-  // Mock services/monitors/proxies/history to avoid 404s
-  await page.route('**/api/services', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
-  });
-  await page.route('**/api/monitors', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
-  });
-  await page.route('**/api/proxies', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
-  });
-  await page.route('**/api/sync/history', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
-  });
-
-  // Mock SSE endpoint so EventSource doesn't fail loudly
-  await page.route('**/api/sync/progress', async (route) => {
-    await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'data: {}\n\n' });
-  });
-
-  // Mock logout
-  await page.route('**/api/logout', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) });
-  });
 }
 
 test.describe('Authelia UI — configured', () => {
   test.beforeEach(async ({ page }) => {
-    await setupMocks(page, true);
+    await setupAutheliaMocks(page, true);
     await page.goto('/');
     // Wait for initial status load to complete
     await page.waitForSelector('#stat-authelia .badge', { timeout: 10000 });
@@ -203,14 +144,16 @@ test.describe('Authelia UI — configured', () => {
     await expect(resultDiv).toContainText('Alerted: 1');
   });
 
-  test('sync button triggers confirm and shows results', async ({ page }) => {
+  test('sync button triggers modal and shows results', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
     await page.waitForSelector('#btn-auth-sync', { timeout: 10000 });
 
-    // The sync button shows a confirm dialog; accept it
-    page.on('dialog', (dialog) => dialog.accept());
-
+    // Click sync button — modal should appear
     await page.click('#btn-auth-sync');
+    await page.waitForSelector('#confirm-modal.show', { timeout: 5000 });
+    // Confirm the modal
+    await page.click('#confirm-modal-ok');
+    await page.waitForSelector('#confirm-modal', { state: 'hidden', timeout: 5000 });
 
     // Wait for result panel
     const resultDiv = page.locator('#auth-sync-result');
@@ -291,7 +234,7 @@ test.describe('Authelia UI — configured', () => {
 
 test.describe('Authelia UI — not configured', () => {
   test.beforeEach(async ({ page }) => {
-    await setupMocks(page, false);
+    await setupAutheliaMocks(page, false);
     await page.goto('/');
     await page.waitForSelector('#stat-authelia .badge', { timeout: 10000 });
   });
@@ -316,7 +259,7 @@ test.describe('Authelia UI — not configured', () => {
 
 test.describe('Settings — Authelia fields', () => {
   test.beforeEach(async ({ page }) => {
-    await setupMocks(page, true);
+    await setupAutheliaMocks(page, true);
     await page.goto('/');
     await page.waitForSelector('#stat-authelia .badge', { timeout: 10000 });
   });

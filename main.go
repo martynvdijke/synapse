@@ -128,7 +128,12 @@ func getEnvInt(key string, def int) int {
 	return def
 }
 
-func mask(string) string { return "" }
+func mask(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "****"
+}
 
 func main() {
 	logging.Init()
@@ -155,7 +160,8 @@ func main() {
 
 	tp, err := telemetry.InitTracerProvider(otelEndpoint)
 	if err != nil {
-		log.Fatalf("failed to init telemetry: %v", err)
+		slog.Warn("telemetry initialization failed, continuing without tracing", "error", err)
+		tp = nil
 	}
 	defer telemetry.Shutdown(tp)
 
@@ -169,6 +175,7 @@ func main() {
 	r.Use(otelgin.Middleware("synapse"))
 
 	r.LoadHTMLGlob("static/*.html")
+	r.Static("/dist", "./static/dist")
 
 	r.GET("/", app.Dashboard)
 	r.GET("/setup", func(c *gin.Context) {

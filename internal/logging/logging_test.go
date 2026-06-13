@@ -445,7 +445,7 @@ func TestSlowSubscriberDropped(t *testing.T) {
 	ch := Subscribe()
 	defer Unsubscribe(ch)
 
-	// Fill the subscriber's channel buffer (size 256)
+	// Fill the subscriber's channel buffer (size 512)
 	// Then verify it doesn't block the broadcaster
 	for i := 0; i < 300; i++ {
 		buf.Append(Entry{Level: "INFO", Source: "test", Message: "flood"})
@@ -462,8 +462,8 @@ func TestSlowSubscriberDropped(t *testing.T) {
 		}
 	}
 done:
-	if drained > 256 {
-		t.Errorf("expected at most 256 entries before buffer drop, drained %d", drained)
+	if drained > 512 {
+		t.Errorf("expected at most 512 entries before buffer drop, drained %d", drained)
 	}
 }
 

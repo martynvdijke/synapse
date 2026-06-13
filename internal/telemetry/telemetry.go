@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var Tracer trace.Tracer
+var Tracer trace.Tracer = trace.NewNoopTracerProvider().Tracer("synapse")
 
 func InitTracerProvider(dbEndpoint string) (*sdktrace.TracerProvider, error) {
 	endpoint := dbEndpoint
