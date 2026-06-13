@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/martynvdijke/synapse/compare/v1.2.1...v1.3.0) (2026-06-13)
+
+
+### Features
+
+* quality and polish improvements ([43b9c70](https://github.com/martynvdijke/synapse/commit/43b9c703dea2eb38cfb03f1eec22721ee5aab019))
+
 ## [1.2.1](https://github.com/martynvdijke/synapse/compare/v1.2.0...v1.2.1) (2026-06-12)
 
 # [1.2.0](https://github.com/martynvdijke/synapse/compare/v1.1.4...v1.2.0) (2026-06-11)
