@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/martynvdijke/synapse/compare/v1.3.0...v1.3.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* default DB_PATH to /db/synapse.db so volume mounts work correctly ([7d299f0](https://github.com/martynvdijke/synapse/commit/7d299f048e5efc505deee28db3d3a714182ff2c8))
+
 # [1.3.0](https://github.com/martynvdijke/synapse/compare/v1.2.1...v1.3.0) (2026-06-13)
 
 
