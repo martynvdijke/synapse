@@ -145,7 +145,7 @@ func TestGetDomains(t *testing.T) {
 		DefaultPolicy: "deny",
 		Rules: []AccessRule{
 			{Domain: "one.example.com", Policy: "one_factor"},
-			{Domain: []interface{}{"two.example.com", "three.example.com"}, Policy: "bypass"},
+			{Domain: []any{"two.example.com", "three.example.com"}, Policy: "bypass"},
 		},
 	}
 
@@ -226,7 +226,7 @@ session:
 	}
 
 	// Verify other sections are preserved
-	var full map[string]interface{}
+	var full map[string]any
 	if err := yaml.Unmarshal(data, &full); err != nil {
 		t.Fatalf("parse full config: %v", err)
 	}

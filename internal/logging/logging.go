@@ -25,12 +25,12 @@ const (
 
 // Entry is a single structured log entry stored in the ring buffer.
 type Entry struct {
-	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`
-	Source    string    `json:"source"`
-	Message   string    `json:"message"`
-	Duration  int64     `json:"duration,omitempty"`  // nanoseconds
-	Error     string    `json:"error,omitempty"`
+	Timestamp time.Time         `json:"timestamp"`
+	Level     string            `json:"level"`
+	Source    string            `json:"source"`
+	Message   string            `json:"message"`
+	Duration  int64             `json:"duration,omitempty"` // nanoseconds
+	Error     string            `json:"error,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
@@ -194,17 +194,11 @@ func (b *LogBuffer) Filter(f FilterParams) []Entry {
 	if limit > 1000 {
 		limit = 1000
 	}
-	offset := f.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(f.Offset, 0)
 	if offset >= len(result) {
 		return nil
 	}
-	end := offset + limit
-	if end > len(result) {
-		end = len(result)
-	}
+	end := min(offset+limit, len(result))
 	return result[offset:end]
 }
 
@@ -238,12 +232,12 @@ func levelFromString(s string) slog.Level {
 
 // BufferHandler is an slog.Handler that writes to both stdout and the LogBuffer.
 type BufferHandler struct {
-	mu        sync.Mutex
-	out       io.Writer
-	buffer    *LogBuffer
-	level     slog.Leveler
-	attrs     []slog.Attr
-	groups    []string
+	mu     sync.Mutex
+	out    io.Writer
+	buffer *LogBuffer
+	level  slog.Leveler
+	attrs  []slog.Attr
+	groups []string
 }
 
 // NewBufferHandler creates a new BufferHandler.
@@ -305,18 +299,19 @@ func (h *BufferHandler) Handle(_ context.Context, r slog.Record) error {
 	levelStr := r.Level.String()
 	msg := r.Message
 
-	textLine := fmt.Sprintf("%s %-5s [%s] %s", timeStr, levelStr, source, msg)
+	var textLine strings.Builder
+	textLine.WriteString(fmt.Sprintf("%s %-5s [%s] %s", timeStr, levelStr, source, msg))
 	if errStr != "" {
-		textLine += " error=" + errStr
+		textLine.WriteString(" error=" + errStr)
 	}
 	if durationNs > 0 {
-		textLine += fmt.Sprintf(" duration=%s", time.Duration(durationNs))
+		textLine.WriteString(fmt.Sprintf(" duration=%s", time.Duration(durationNs)))
 	}
 	for k, v := range metadata {
-		textLine += fmt.Sprintf(" %s=%s", k, v)
+		textLine.WriteString(fmt.Sprintf(" %s=%s", k, v))
 	}
-	textLine += "\n"
-	fmt.Fprint(h.out, textLine)
+	textLine.WriteString("\n")
+	fmt.Fprint(h.out, textLine.String())
 
 	// Add to buffer
 	entry := Entry{
@@ -395,8 +390,9 @@ func LogError(source, msg string, attrs ...slog.Attr) {
 
 // Init sets up the global slog logger with the BufferHandler.
 // env vars:
-//   LOG_LEVEL: debug, info, warn, error (default: info)
-//   LOG_BUFFER_SIZE: capacity of ring buffer (default: 1000)
+//
+//	LOG_LEVEL: debug, info, warn, error (default: info)
+//	LOG_BUFFER_SIZE: capacity of ring buffer (default: 1000)
 func Init() {
 	levelStr := os.Getenv("LOG_LEVEL")
 	if levelStr == "" {

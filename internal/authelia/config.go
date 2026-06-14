@@ -88,7 +88,7 @@ func GetDomains(ac *AccessControlConfig) []string {
 }
 
 // extractDomains converts the domain field (string or []interface{}) to []string.
-func extractDomains(domain interface{}) []string {
+func extractDomains(domain any) []string {
 	if domain == nil {
 		return nil
 	}
@@ -96,7 +96,7 @@ func extractDomains(domain interface{}) []string {
 	switch v := domain.(type) {
 	case string:
 		return []string{v}
-	case []interface{}:
+	case []any:
 		var result []string
 		for _, item := range v {
 			if s, ok := item.(string); ok {
@@ -147,7 +147,7 @@ func accessControlToYAMLNode(ac *AccessControlConfig) (*yaml.Node, error) {
 	encoder.SetIndent(2)
 
 	// Build a temporary struct for encoding
-	tmp := map[string]interface{}{
+	tmp := map[string]any{
 		"access_control": ac,
 	}
 

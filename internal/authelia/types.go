@@ -8,12 +8,12 @@ type AccessControlConfig struct {
 
 // AccessRule represents a single access control rule in Authelia config.
 type AccessRule struct {
-	Domain      interface{} `yaml:"domain,omitempty"`       // string or []string
-	DomainRegex interface{} `yaml:"domain_regex,omitempty"` // string or []string
-	Policy      string      `yaml:"policy"`
-	Subject     interface{} `yaml:"subject,omitempty"` // string or []string
-	Resources   []string    `yaml:"resources,omitempty"`
-	Networks    []string    `yaml:"networks,omitempty"`
+	Domain      any      `yaml:"domain,omitempty"`       // string or []string
+	DomainRegex any      `yaml:"domain_regex,omitempty"` // string or []string
+	Policy      string   `yaml:"policy"`
+	Subject     any      `yaml:"subject,omitempty"` // string or []string
+	Resources   []string `yaml:"resources,omitempty"`
+	Networks    []string `yaml:"networks,omitempty"`
 }
 
 // AutheliaConfig is the top-level structure of Authelia's configuration.yml.

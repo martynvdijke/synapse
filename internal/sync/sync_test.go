@@ -4,7 +4,8 @@ import (
 	"testing"
 )
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 func TestParseHealthcheck_Nil(t *testing.T) {
 	got := ParseHealthcheck("svc", ServiceDef{})

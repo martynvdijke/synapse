@@ -474,7 +474,9 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 			logging.LogInfo("sync", "Added monitor for service",
 				slog.String("service", displayName),
 				slog.String("monitor_type", func() string {
-					if url != "" { return "http" }
+					if url != "" {
+						return "http"
+					}
 					return "docker"
 				}()),
 				slog.Int("added", added),
@@ -514,7 +516,7 @@ func RunDockerSync(composePath, kumaURL, kumaUser, kumaPass string, database *db
 	database.FinishSyncRun(id, status, added, skipped, failed, errMsg)
 
 	run.Status = status
-	run.FinishedAt = timePtr(time.Now())
+	run.FinishedAt = new(time.Now())
 	run.Added = added
 	run.Skipped = skipped
 	run.Failed = failed
@@ -574,7 +576,7 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 	if len(entries) == 0 {
 		database.FinishSyncRun(id, "completed", 0, 0, 0, "")
 		run.Status = "completed"
-		run.FinishedAt = timePtr(time.Now())
+		run.FinishedAt = new(time.Now())
 		onProgress(Progress{RunID: id, Source: "npm", Total: 0, Status: "completed", Message: "No NPM proxy hosts found"})
 		return run
 	}
@@ -682,7 +684,7 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 	database.FinishSyncRun(id, status, added, skipped, failed, errMsg)
 
 	run.Status = status
-	run.FinishedAt = timePtr(time.Now())
+	run.FinishedAt = new(time.Now())
 	run.Added = added
 	run.Skipped = skipped
 	run.Failed = failed
@@ -702,6 +704,7 @@ func RunNPMSync(npmHost, npmUser, npmPass, kumaURL, kumaUser, kumaPass string, d
 	return run
 }
 
+//go:fix inline
 func timePtr(t time.Time) *time.Time {
-	return &t
+	return new(t)
 }

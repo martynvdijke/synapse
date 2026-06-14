@@ -1,3 +1,11 @@
+FROM node:22-alpine AS frontend
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY src/ ./src/
+COPY vite.config.js ./
+RUN npx vite build
+
 FROM golang:1.26.4-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev sqlite-dev
@@ -8,6 +16,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+# Copy pre-built frontend assets
+COPY --from=frontend /app/static/dist ./static/dist
 
 RUN CGO_ENABLED=1 GOOS=linux go build -o synapse-server .
 

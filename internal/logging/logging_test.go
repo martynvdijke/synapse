@@ -45,7 +45,7 @@ func TestNewLogBuffer(t *testing.T) {
 
 func TestLogBufferAppendAndSnapshot(t *testing.T) {
 	b := NewLogBuffer(10)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		b.Append(Entry{Level: "INFO", Message: "msg"})
 	}
 	snap := b.Snapshot()
@@ -68,7 +68,7 @@ func TestLogBufferSnapshotEmpty(t *testing.T) {
 
 func TestLogBufferRingOverwrite(t *testing.T) {
 	b := NewLogBuffer(3)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		b.Append(Entry{Level: "INFO", Message: strings.ToUpper(string(rune('a' + i)))})
 	}
 	snap := b.Snapshot()
@@ -87,7 +87,7 @@ func TestLogBufferRingOverwrite(t *testing.T) {
 func TestLogBufferConcurrentSafe(t *testing.T) {
 	b := NewLogBuffer(100)
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -105,7 +105,7 @@ func TestLogBufferConcurrentSafe(t *testing.T) {
 
 func TestFilterNoParams(t *testing.T) {
 	b := NewLogBuffer(50)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		b.Append(Entry{Level: "INFO", Source: "app", Message: "msg"})
 	}
 	entries := b.Filter(FilterParams{Limit: 200})
@@ -185,7 +185,7 @@ func TestFilterBySearchCaseInsensitive(t *testing.T) {
 
 func TestFilterLimit(t *testing.T) {
 	b := NewLogBuffer(50)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		b.Append(Entry{Level: "INFO", Source: "app", Message: "msg"})
 	}
 	entries := b.Filter(FilterParams{Limit: 5})
@@ -196,7 +196,7 @@ func TestFilterLimit(t *testing.T) {
 
 func TestFilterOffset(t *testing.T) {
 	b := NewLogBuffer(50)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		b.Append(Entry{Level: "INFO", Source: "app", Message: "msg"})
 	}
 	entries := b.Filter(FilterParams{Limit: 200, Offset: 8})
@@ -207,7 +207,7 @@ func TestFilterOffset(t *testing.T) {
 
 func TestFilterOffsetBeyondRange(t *testing.T) {
 	b := NewLogBuffer(10)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		b.Append(Entry{Level: "INFO", Source: "app", Message: "msg"})
 	}
 	entries := b.Filter(FilterParams{Limit: 200, Offset: 10})
@@ -218,7 +218,7 @@ func TestFilterOffsetBeyondRange(t *testing.T) {
 
 func TestFilterMaxLimit(t *testing.T) {
 	b := NewLogBuffer(1200)
-	for i := 0; i < 1200; i++ {
+	for range 1200 {
 		b.Append(Entry{Level: "INFO", Source: "app", Message: "msg"})
 	}
 	entries := b.Filter(FilterParams{Limit: 5000}) // should cap at 1000
@@ -235,7 +235,7 @@ func TestStats(t *testing.T) {
 	if total != 0 || current != 0 {
 		t.Errorf("expected (0,0), got (%d,%d)", total, current)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		b.Append(Entry{Level: "INFO", Message: "msg"})
 	}
 	total, current = b.Stats()
@@ -243,7 +243,7 @@ func TestStats(t *testing.T) {
 		t.Errorf("expected (5,5), got (%d,%d)", total, current)
 	}
 	// Fill past capacity
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		b.Append(Entry{Level: "INFO", Message: "msg"})
 	}
 	total, current = b.Stats()
@@ -447,7 +447,7 @@ func TestSlowSubscriberDropped(t *testing.T) {
 
 	// Fill the subscriber's channel buffer (size 512)
 	// Then verify it doesn't block the broadcaster
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		buf.Append(Entry{Level: "INFO", Source: "test", Message: "flood"})
 	}
 

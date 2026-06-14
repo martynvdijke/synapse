@@ -3,6 +3,7 @@ package authelia
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -228,13 +229,7 @@ access_control:
 	}
 
 	domains := GetDomains(ac)
-	found := false
-	for _, d := range domains {
-		if d == "new.example.com" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(domains, "new.example.com")
 	if !found {
 		t.Errorf("new.example.com not found in config after sync. Domains: %v", domains)
 	}
