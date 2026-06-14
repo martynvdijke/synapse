@@ -1,0 +1,38 @@
+services:
+  synapse:
+    build: .
+    container_name: synapse
+    ports:
+      - "6270:6270"
+    volumes:
+      # Persistent SQLite database
+      - synapse-db:/db
+      # Mount your docker-compose files for Synapse to discover services
+      - /var/docker/compose:/compose:ro
+      # Optional: mount Authelia config if using Authelia sync
+      # - ./authelia:/config/authelia:ro
+    environment:
+      DB_PATH: /db/synapse.db
+      COMPOSE_PATH: /compose/docker-compose.yml
+      LISTEN_ADDR: :6270
+      # Optional: connect to Nginx Proxy Manager
+      # NPM_HOST: http://npm:81
+      # NPM_USER: admin@example.com
+      # NPM_PASS: changeme
+      # Optional: connect to Uptime Kuma
+      # KUMA_URL: http://uptime-kuma:3001
+      # KUMA_USER: admin
+      # KUMA_PASS: changeme
+      # Optional: Authelia sync
+      # AUTHELIA_CONFIG_PATH: /config/authelia/configuration.yml
+      # AUTHELIA_DB_PATH: /config/authelia/db.sqlite3
+      # AUTHELIA_SYNC_ENABLED: "true"
+      # Optional: periodic sync interval (minutes, 0 = manual only)
+      # SYNC_INTERVAL: 60
+      # Optional: OpenTelemetry
+      # OTEL_ENABLED: "true"
+      # OTEL_ENDPOINT: http://otel-collector:4318/v1/traces
+    restart: unless-stopped
+
+volumes:
+  synapse-db:
