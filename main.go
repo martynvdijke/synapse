@@ -138,7 +138,7 @@ func mask(s string) string {
 func main() {
 	logging.Init()
 
-	dbPath := getEnv("DB_PATH", "synapse.db")
+	dbPath := getEnv("DB_PATH", "/db/synapse.db")
 	addr := getEnv("LISTEN_ADDR", ":6270")
 
 	database, err := db.Open(dbPath)
