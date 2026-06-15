@@ -345,6 +345,112 @@ func TestSettingsSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestSaveSettingsOnlySentFields(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Save compose_path first via direct DB
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"compose_path": "/docker/compose.yml",
+	}); err != nil {
+		t.Fatalf("seed compose_path: %v", err)
+	}
+
+	// POST settings with ONLY kuma_url — compose_path should NOT be affected
+	body := `{"kuma_url":"http://updated-kuma:4000"}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// GET settings and verify only sent fields changed
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+
+	if s["compose_path"] != "/docker/compose.yml" {
+		t.Errorf("compose_path should be preserved: expected %q, got %v", "/docker/compose.yml", s["compose_path"])
+	}
+	if s["kuma_url"] != "http://updated-kuma:4000" {
+		t.Errorf("kuma_url should be updated: expected %q, got %v", "http://updated-kuma:4000", s["kuma_url"])
+	}
+	// otel_enabled was never sent or saved — should still be env default (false)
+	if s["otel_enabled"] != false {
+		t.Errorf("otel_enabled should not be affected: expected false, got %v", s["otel_enabled"])
+	}
+}
+
+func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Set initial password in DB
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"kuma_pass": "secret123",
+	}); err != nil {
+		t.Fatalf("seed kuma_pass: %v", err)
+	}
+
+	// Save with empty password (frontend sends "" to mean "keep current")
+	body := `{"kuma_pass":"","kuma_url":"http://test:3001"}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify password preserved and other field updated
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+
+	if s["kuma_pass"] != "****" {
+		t.Errorf("kuma_pass should be masked and non-empty: got %v", s["kuma_pass"])
+	}
+	if s["kuma_url"] != "http://test:3001" {
+		t.Errorf("kuma_url should be updated: expected %q, got %v", "http://test:3001", s["kuma_url"])
+	}
+}
+
+func TestSaveSettingsDoesNotOverwriteUnsentOtelFields(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Seed DB with otel_enabled=true
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"otel_enabled": "true",
+	}); err != nil {
+		t.Fatalf("seed otel_enabled: %v", err)
+	}
+
+	// POST settings without any otel fields
+	body := `{"kuma_url":"http://kuma:3001"}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// otel_enabled should still be true
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+
+	if s["otel_enabled"] != true {
+		t.Errorf("otel_enabled should remain true: got %v", s["otel_enabled"])
+	}
+}
+
 func setupRouter(app *App) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

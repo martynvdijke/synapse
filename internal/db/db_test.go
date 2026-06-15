@@ -233,6 +233,106 @@ func TestAutheliaSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveSettingsMap(t *testing.T) {
+	db := setupTestDB(t)
+
+	err := db.SaveSettingsMap(map[string]string{
+		"compose_path": "/custom/path.yml",
+		"kuma_url":     "http://kuma:3001",
+	})
+	if err != nil {
+		t.Fatalf("save settings map: %v", err)
+	}
+
+	loaded := db.GetSettings(Settings{})
+	if loaded.ComposePath != "/custom/path.yml" {
+		t.Errorf("compose_path: expected %q, got %q", "/custom/path.yml", loaded.ComposePath)
+	}
+	if loaded.KumaURL != "http://kuma:3001" {
+		t.Errorf("kuma_url: expected %q, got %q", "http://kuma:3001", loaded.KumaURL)
+	}
+}
+
+func TestSaveSettingsMapOverwrite(t *testing.T) {
+	db := setupTestDB(t)
+
+	err := db.SaveSettingsMap(map[string]string{"compose_path": "/first.yml"})
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	loaded := db.GetSettings(Settings{})
+	if loaded.ComposePath != "/first.yml" {
+		t.Fatalf("first: expected %q, got %q", "/first.yml", loaded.ComposePath)
+	}
+
+	// Overwrite with different value
+	err = db.SaveSettingsMap(map[string]string{"compose_path": "/second.yml"})
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	loaded = db.GetSettings(Settings{})
+	if loaded.ComposePath != "/second.yml" {
+		t.Errorf("compose_path: expected %q, got %q", "/second.yml", loaded.ComposePath)
+	}
+}
+
+func TestSaveSettingsMapDoesNotAffectUnsentFields(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Save initial compose_path
+	if err := db.SaveSettingsMap(map[string]string{"compose_path": "/initial.yml"}); err != nil {
+		t.Fatalf("save compose_path: %v", err)
+	}
+
+	// Now save only kuma_url — compose_path should be unaffected
+	if err := db.SaveSettingsMap(map[string]string{"kuma_url": "http://kuma:3001"}); err != nil {
+		t.Fatalf("save kuma_url: %v", err)
+	}
+
+	loaded := db.GetSettings(Settings{})
+	if loaded.ComposePath != "/initial.yml" {
+		t.Errorf("compose_path should not be affected: expected %q, got %q", "/initial.yml", loaded.ComposePath)
+	}
+	if loaded.KumaURL != "http://kuma:3001" {
+		t.Errorf("kuma_url: expected %q, got %q", "http://kuma:3001", loaded.KumaURL)
+	}
+}
+
+func TestSaveSettingsMapBoolRoundTrip(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.SaveSettingsMap(map[string]string{
+		"authelia_sync_enabled": "true",
+		"otel_enabled":          "true",
+	}); err != nil {
+		t.Fatalf("save bools: %v", err)
+	}
+
+	loaded := db.GetSettings(Settings{})
+	if !loaded.AutheliaSyncEnabled {
+		t.Error("authelia_sync_enabled expected true")
+	}
+	if !loaded.OTelEnabled {
+		t.Error("otel_enabled expected true")
+	}
+
+	// Flip to false
+	if err := db.SaveSettingsMap(map[string]string{
+		"authelia_sync_enabled": "false",
+		"otel_enabled":          "false",
+	}); err != nil {
+		t.Fatalf("save bools false: %v", err)
+	}
+
+	loaded = db.GetSettings(Settings{})
+	if loaded.AutheliaSyncEnabled {
+		t.Error("authelia_sync_enabled expected false")
+	}
+	if loaded.OTelEnabled {
+		t.Error("otel_enabled expected false")
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

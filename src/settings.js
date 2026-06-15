@@ -52,13 +52,12 @@ export function testConnection(service) {
     btn.disabled = true;
 
     var payload = {
-        kuma_url:     document.getElementById('s-kuma-url').value,
-        kuma_user:    document.getElementById('s-kuma-user').value,
-        kuma_pass:    document.getElementById('s-kuma-pass').value || '',
-        npm_host:     document.getElementById('s-npm-host').value,
-        npm_user:     document.getElementById('s-npm-user').value,
-        npm_pass:     document.getElementById('s-npm-pass').value || '',
-        compose_path: document.getElementById('s-compose-path').value || ''
+        kuma_url:  document.getElementById('s-kuma-url').value,
+        kuma_user: document.getElementById('s-kuma-user').value,
+        kuma_pass: document.getElementById('s-kuma-pass').value || '',
+        npm_host:  document.getElementById('s-npm-host').value,
+        npm_user:  document.getElementById('s-npm-user').value,
+        npm_pass:  document.getElementById('s-npm-pass').value || ''
     };
 
     apiFetch('/api/test/' + service, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })

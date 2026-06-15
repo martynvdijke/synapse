@@ -381,31 +381,82 @@ func (app *App) GetSettings(c *gin.Context) {
 }
 
 func (app *App) SaveSettings(c *gin.Context) {
-	var s db.Settings
-	if err := c.ShouldBindJSON(&s); err != nil {
+	// Parse raw JSON to detect which fields were explicitly sent
+	var raw map[string]json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	current := app.settings()
 
-	if s.NPMPass == "" {
-		s.NPMPass = current.NPMPass
+	// Only save fields that were explicitly sent in the request body
+	pairs := make(map[string]string)
+
+	if v, ok := raw["kuma_url"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["kuma_url"] = val
 	}
-	if s.KumaPass == "" {
-		s.KumaPass = current.KumaPass
+	if v, ok := raw["kuma_user"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["kuma_user"] = val
 	}
-	if s.AutheliaConfigPath == "" {
-		s.AutheliaConfigPath = current.AutheliaConfigPath
+	if v, ok := raw["kuma_pass"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		if val == "" {
+			val = current.KumaPass
+		}
+		pairs["kuma_pass"] = val
 	}
-	if s.AutheliaDBPath == "" {
-		s.AutheliaDBPath = current.AutheliaDBPath
+	if v, ok := raw["npm_host"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["npm_host"] = val
 	}
-	if s.AutheliaDefaultPolicy == "" {
-		s.AutheliaDefaultPolicy = current.AutheliaDefaultPolicy
+	if v, ok := raw["npm_user"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["npm_user"] = val
+	}
+	if v, ok := raw["npm_pass"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		if val == "" {
+			val = current.NPMPass
+		}
+		pairs["npm_pass"] = val
+	}
+	if v, ok := raw["compose_path"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["compose_path"] = val
+	}
+	if v, ok := raw["authelia_config_path"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["authelia_config_path"] = val
+	}
+	if v, ok := raw["authelia_db_path"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["authelia_db_path"] = val
+	}
+	if v, ok := raw["authelia_sync_enabled"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["authelia_sync_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["authelia_default_policy"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["authelia_default_policy"] = val
+	}
+	if v, ok := raw["authelia_sync_overrides"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["authelia_sync_overrides"] = val
+	}
+	if v, ok := raw["otel_endpoint"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["otel_endpoint"] = val
+	}
+	if v, ok := raw["otel_enabled"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["otel_enabled"] = strconv.FormatBool(val)
 	}
 
-	if err := app.database.SaveSettings(s); err != nil {
+	if err := app.database.SaveSettingsMap(pairs); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

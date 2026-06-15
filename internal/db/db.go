@@ -343,28 +343,7 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 	return s
 }
 
-func (db *DB) SaveSettings(s Settings) error {
-	syncEnabled := "false"
-	if s.AutheliaSyncEnabled {
-		syncEnabled = "true"
-	}
-
-	pairs := map[string]string{
-		"compose_path":            s.ComposePath,
-		"npm_host":                s.NPMHost,
-		"npm_user":                s.NPMUser,
-		"npm_pass":                s.NPMPass,
-		"kuma_url":                s.KumaURL,
-		"kuma_user":               s.KumaUser,
-		"kuma_pass":               s.KumaPass,
-		"authelia_config_path":    s.AutheliaConfigPath,
-		"authelia_db_path":        s.AutheliaDBPath,
-		"authelia_sync_enabled":   syncEnabled,
-		"authelia_default_policy": s.AutheliaDefaultPolicy,
-		"authelia_sync_overrides": s.AutheliaSyncOverrides,
-		"otel_endpoint":           s.OTelEndpoint,
-		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
-	}
+func (db *DB) SaveSettingsMap(pairs map[string]string) error {
 	for k, v := range pairs {
 		created, err := db.client.Settings.Create().
 			SetKey(k).
@@ -386,6 +365,26 @@ func (db *DB) SaveSettings(s Settings) error {
 		_ = created
 	}
 	return nil
+}
+
+// SaveSettings saves all known settings keys. Used by tests; prefer SaveSettingsMap for partial updates.
+func (db *DB) SaveSettings(s Settings) error {
+	return db.SaveSettingsMap(map[string]string{
+		"compose_path":            s.ComposePath,
+		"npm_host":                s.NPMHost,
+		"npm_user":                s.NPMUser,
+		"npm_pass":                s.NPMPass,
+		"kuma_url":                s.KumaURL,
+		"kuma_user":               s.KumaUser,
+		"kuma_pass":               s.KumaPass,
+		"authelia_config_path":    s.AutheliaConfigPath,
+		"authelia_db_path":        s.AutheliaDBPath,
+		"authelia_sync_enabled":   strconv.FormatBool(s.AutheliaSyncEnabled),
+		"authelia_default_policy": s.AutheliaDefaultPolicy,
+		"authelia_sync_overrides": s.AutheliaSyncOverrides,
+		"otel_endpoint":           s.OTelEndpoint,
+		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
+	})
 }
 
 // AutheliaAlert CRUD
