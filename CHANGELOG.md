@@ -1,3 +1,15 @@
+# [1.4.0](https://github.com/martynvdijke/synapse/compare/v1.3.3...v1.4.0) (2026-06-16)
+
+
+### Bug Fixes
+
+* preserve compose_path on save, fix skip-link, add SaveSettingsMap tests ([abb3d14](https://github.com/martynvdijke/synapse/commit/abb3d1481c4855098bfc5edcd99ac2ae7704fccf))
+
+
+### Features
+
+* improve compose metadata parsing, connection logging, and health indicators ([bde46cf](https://github.com/martynvdijke/synapse/commit/bde46cf3438bb226c4c10886c85f6f52f4e4605c))
+
 ## [1.3.3](https://github.com/martynvdijke/synapse/compare/v1.3.2...v1.3.3) (2026-06-15)
 
 ## [1.3.2](https://github.com/martynvdijke/synapse/compare/v1.3.1...v1.3.2) (2026-06-15)
