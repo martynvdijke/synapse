@@ -1,4 +1,20 @@
-// Dashboard stat card loading
+// Dashboard stat card loading and connection health indicators
+
+function setHealthDot(id, ok) {
+    var dot = document.getElementById(id);
+    if (!dot) return;
+    dot.className = 'health-dot';
+    if (ok === true) {
+        dot.classList.add('healthy');
+        dot.title = 'Connected';
+    } else if (ok === false) {
+        dot.classList.add('error');
+        dot.title = 'Connection error';
+    } else {
+        dot.classList.add('unknown');
+        dot.title = 'Not configured';
+    }
+}
 
 export function loadStatus() {
     apiFetch('/api/status').then(function(r){return r.json();}).then(function(d) {
@@ -8,6 +24,19 @@ export function loadStatus() {
         if (!d.running) {
             document.getElementById('stat-status').innerHTML = '<span class="badge bg-secondary">Idle</span>';
         }
+
+        // Connection health indicators
+        if (d.connection_health) {
+            setHealthDot('health-docker', d.connection_health.docker ? d.connection_health.docker.ok : null);
+            setHealthDot('health-npm', d.connection_health.npm ? d.connection_health.npm.ok : null);
+            setHealthDot('health-kuma', d.connection_health.kuma ? d.connection_health.kuma.ok : null);
+        } else {
+            // Fallback for older API responses
+            setHealthDot('health-docker', d.docker_error ? false : true);
+            setHealthDot('health-npm', d.npm_error ? false : true);
+            setHealthDot('health-kuma', d.kuma_error ? false : (d.kuma_error === '' ? true : null));
+        }
+
         document.getElementById('btn-docker').disabled = d.running;
         document.getElementById('btn-npm').disabled = d.running;
     });

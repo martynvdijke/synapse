@@ -23,7 +23,7 @@
         <div class="col-md-3">
             <div class="card stat-card border-0 shadow-sm" aria-label="Docker services count">
                 <div class="card-body text-center py-3">
-                    <div class="text-muted small text-uppercase">Docker Services</div>
+                    <div class="text-muted small text-uppercase">Docker Services <span class="health-dot" id="health-docker" title="Connection health"></span></div>
                     <div class="fs-2 fw-bold text-primary" id="stat-docker"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
                 </div>
             </div>
@@ -31,7 +31,7 @@
         <div class="col-md-3">
             <div class="card stat-card border-0 shadow-sm" aria-label="NPM hosts count">
                 <div class="card-body text-center py-3">
-                    <div class="text-muted small text-uppercase">NPM Hosts</div>
+                    <div class="text-muted small text-uppercase">NPM Hosts <span class="health-dot" id="health-npm" title="Connection health"></span></div>
                     <div class="fs-2 fw-bold text-success" id="stat-npm"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
                 </div>
             </div>
@@ -39,7 +39,7 @@
         <div class="col-md-3">
             <div class="card stat-card border-0 shadow-sm" aria-label="Kuma monitors count">
                 <div class="card-body text-center py-3">
-                    <div class="text-muted small text-uppercase">Kuma Monitors</div>
+                    <div class="text-muted small text-uppercase">Kuma Monitors <span class="health-dot" id="health-kuma" title="Connection health"></span></div>
                     <div class="fs-2 fw-bold text-info" id="stat-monitors"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
                 </div>
             </div>
@@ -146,15 +146,16 @@
                         <tr>
                             <th>Service</th>
                             <th>Container</th>
+                            <th>Image</th>
                             <th>Type</th>
                             <th>URL</th>
                             <th>In Kuma</th>
                         </tr>
                     </thead>
                     <tbody id="docker-tbody" aria-live="polite">
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:70%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:70%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -356,7 +357,7 @@
                             <option value="error">ERROR</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label class="form-label mb-0 small">Source</label>
                         <select class="form-select form-select-sm" id="log-filter-source">
                             <option value="">All Sources</option>
@@ -365,6 +366,17 @@
                             <option value="npm">npm</option>
                             <option value="sync">sync</option>
                             <option value="authelia">authelia</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0 small">Error Kind</label>
+                        <select class="form-select form-select-sm" id="log-filter-error-kind">
+                            <option value="">All Errors</option>
+                            <option value="auth">Auth</option>
+                            <option value="network">Network</option>
+                            <option value="server">Server</option>
+                            <option value="parse">Parse</option>
+                            <option value="not_found">Not Found</option>
                         </select>
                     </div>
                     <div class="col-md-4">

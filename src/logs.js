@@ -11,7 +11,8 @@ export function getLogFilters() {
     return {
         level: document.getElementById('log-filter-level').value,
         source: document.getElementById('log-filter-source').value,
-        search: document.getElementById('log-filter-search').value.trim()
+        search: document.getElementById('log-filter-search').value.trim(),
+        error_kind: document.getElementById('log-filter-error-kind').value
     };
 }
 
@@ -60,6 +61,7 @@ var logSearchDebounce = null;
 export function setupLogFilters() {
     document.getElementById('log-filter-level').addEventListener('change', function() { if (logsLoaded) loadLogs(false); });
     document.getElementById('log-filter-source').addEventListener('change', function() { if (logsLoaded) loadLogs(false); });
+    document.getElementById('log-filter-error-kind').addEventListener('change', function() { if (logsLoaded) loadLogs(false); });
     document.getElementById('log-filter-search').addEventListener('input', function() {
         clearTimeout(logSearchDebounce);
         logSearchDebounce = setTimeout(function() { if (logsLoaded) loadLogs(false); }, 300);
@@ -80,6 +82,7 @@ export function loadLogs(append) {
     if (filters.level) params.set('level', filters.level);
     if (filters.source) params.set('source', filters.source);
     if (filters.search) params.set('search', filters.search);
+    if (filters.error_kind) params.set('error_kind', filters.error_kind);
     params.set('limit', logsLimit);
     params.set('offset', logsOffset);
 

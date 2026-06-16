@@ -346,6 +346,13 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 	loginTimer := time.After(20 * time.Second)
 
 	handleEvent := func(ev rawEvent) bool {
+		snippet := func(raw json.RawMessage) string {
+			s := string(raw)
+			if len(s) > 100 {
+				s = s[:100] + "..."
+			}
+			return s
+		}
 		switch ev.Name {
 		case "loginRequired":
 			if !loginSent {
@@ -392,6 +399,12 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 						case "1y":
 							upt1y[id] = val
 						}
+					} else {
+						logging.LogWarn("kuma", "Socket.IO uptime parse error",
+							slog.String("event_type", "uptime"),
+							slog.String("parse_error", "failed to parse duration or value"),
+							slog.String("raw_snippet", snippet(ev.Args[1])+","+snippet(ev.Args[2])),
+						)
 					}
 				}
 			}
@@ -403,6 +416,12 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 						var v float64
 						if json.Unmarshal(ev.Args[1], &v) == nil {
 							pings[id] = v
+						} else {
+							logging.LogWarn("kuma", "Socket.IO avgPing parse error",
+								slog.String("event_type", "avgPing"),
+								slog.String("parse_error", "failed to parse ping value"),
+								slog.String("raw_snippet", snippet(ev.Args[1])),
+							)
 						}
 					}
 				}
@@ -423,6 +442,12 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 						if json.Unmarshal([]byte(certStr), &p) == nil && p.CertInfo.Subject.CN != "" {
 							names[id] = named{name: p.CertInfo.Subject.CN, url: "https://" + p.CertInfo.Subject.CN, mtype: "http"}
 						}
+					} else {
+						logging.LogWarn("kuma", "Socket.IO certInfo parse error",
+							slog.String("event_type", "certInfo"),
+							slog.String("parse_error", "failed to parse cert string"),
+							slog.String("raw_snippet", snippet(ev.Args[1])),
+						)
 					}
 				}
 			}
@@ -439,6 +464,12 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 					if hb.Msg != "" {
 						msgs[hb.MonitorID] = hb.Msg
 					}
+				} else {
+					logging.LogWarn("kuma", "Socket.IO heartbeat parse error",
+						slog.String("event_type", "heartbeat"),
+						slog.String("parse_error", "failed to parse heartbeat struct"),
+						slog.String("raw_snippet", snippet(ev.Args[0])),
+					)
 				}
 			}
 		case "domainInfo":
@@ -481,15 +512,34 @@ loop:
 	// Phase 2: collect data for 20 seconds
 	logging.LogDebug("kuma", "Socket.IO collecting monitor data")
 	dataTimer := time.After(20 * time.Second)
+	eventCounts := make(map[string]int)
 collectLoop:
 	for {
 		select {
 		case ev := <-events:
+			eventCounts[ev.Name]++
 			handleEvent(ev)
 		case <-dataTimer:
 			break collectLoop
 		}
 	}
+
+	// Log event-type counts on completion
+	logging.LogInfo("kuma", "Socket.IO data collection complete",
+		slog.Int("event_count_uptime", eventCounts["uptime"]),
+		slog.Int("event_count_avgPing", eventCounts["avgPing"]),
+		slog.Int("event_count_heartbeat", eventCounts["heartbeat"]),
+		slog.Int("event_count_certInfo", eventCounts["certInfo"]),
+		slog.Int("event_count_domainInfo", eventCounts["domainInfo"]),
+		slog.Int("total_events_received", func() int {
+			total := 0
+			for _, c := range eventCounts {
+				total += c
+			}
+			return total
+		}()),
+		slog.Duration("duration", time.Since(queryStart)),
+	)
 
 	// Build result
 	var out []KumaMonitor

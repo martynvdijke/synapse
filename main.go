@@ -545,12 +545,18 @@ func (app *App) TestKuma(c *gin.Context) {
 
 func (app *App) Status(c *gin.Context) {
 	s := app.settings()
+
+	// Docker health
+	var dockerErr string
 	services, err := synclib.LoadServices(s.ComposePath)
 	dockerCount := 0
 	if err == nil {
 		dockerCount = len(services)
+	} else {
+		dockerErr = err.Error()
 	}
 
+	// NPM health
 	npmCount := 0
 	npmErr := ""
 	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
@@ -560,19 +566,46 @@ func (app *App) Status(c *gin.Context) {
 		npmErr = npmFetchErr.Error()
 	}
 
+	// Kuma health - try a lightweight check via GetMonitors
+	kumaErr := ""
+	if s.KumaURL != "" && s.KumaUser != "" && s.KumaPass != "" {
+		kumaClient := kuma.NewClient(s.KumaURL)
+		if loginErr := kumaClient.Login(s.KumaUser, s.KumaPass); loginErr != nil {
+			kumaErr = loginErr.Error()
+		}
+	}
+
 	monitorCount, _ := app.database.GetMonitorCount()
 
 	lastDocker, _ := app.database.GetLatestSyncRun("docker")
 	lastNPM, _ := app.database.GetLatestSyncRun("npm")
 
+	connectionHealth := gin.H{
+		"docker": gin.H{
+			"ok":         dockerErr == "",
+			"last_error": dockerErr,
+		},
+		"npm": gin.H{
+			"ok":         npmErr == "",
+			"last_error": npmErr,
+		},
+		"kuma": gin.H{
+			"ok":         kumaErr == "",
+			"last_error": kumaErr,
+		},
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"docker_count":  dockerCount,
-		"npm_count":     npmCount,
-		"npm_error":     npmErr,
-		"monitor_count": monitorCount,
-		"last_docker":   lastDocker,
-		"last_npm":      lastNPM,
-		"running":       app.running,
+		"docker_count":       dockerCount,
+		"npm_count":          npmCount,
+		"npm_error":          npmErr,
+		"kuma_error":         kumaErr,
+		"docker_error":       dockerErr,
+		"monitor_count":      monitorCount,
+		"last_docker":        lastDocker,
+		"last_npm":           lastNPM,
+		"running":            app.running,
+		"connection_health":  connectionHealth,
 	})
 }
 
@@ -885,15 +918,17 @@ func (app *App) LogsHandler(c *gin.Context) {
 	level := c.Query("level")
 	source := c.Query("source")
 	search := c.Query("search")
+	errorKind := c.Query("error_kind")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	entries := logging.DefaultBuffer().Filter(logging.FilterParams{
-		Level:  level,
-		Source: source,
-		Search: search,
-		Limit:  limit,
-		Offset: offset,
+		Level:     level,
+		Source:    source,
+		Search:    search,
+		ErrorKind: errorKind,
+		Limit:     limit,
+		Offset:    offset,
 	})
 
 	if entries == nil {

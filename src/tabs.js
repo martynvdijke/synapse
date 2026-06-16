@@ -1,30 +1,106 @@
 // Tab data loaders (Docker, Kuma, NPM, History)
 
+function renderDockerDetailRow(svc) {
+    var fields = [];
+
+    function addField(label, value) {
+        if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0) || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)) {
+            return;
+        }
+        if (Array.isArray(value)) {
+            fields.push('<div class="detail-field"><span class="detail-label">' + label + '</span><span class="detail-value">' + value.map(function(v) { return esc(String(v)); }).join('<br>') + '</span></div>');
+        } else if (typeof value === 'object') {
+            var inner = '';
+            for (var k in value) {
+                if (value.hasOwnProperty(k)) {
+                    inner += '<span class="detail-inline-label">' + esc(k) + ':</span> ' + esc(String(value[k])) + '<br>';
+                }
+            }
+            if (inner) {
+                fields.push('<div class="detail-field"><span class="detail-label">' + label + '</span><span class="detail-value">' + inner + '</span></div>');
+            }
+        } else {
+            fields.push('<div class="detail-field"><span class="detail-label">' + label + '</span><span class="detail-value">' + esc(String(value)) + '</span></div>');
+        }
+    }
+
+    addField('Image', svc.image);
+    addField('Ports', svc.ports);
+    addField('Environment', svc.environment);
+    addField('Volumes', svc.volumes);
+    addField('Depends On', svc.depends_on);
+    addField('Labels', svc.labels);
+    addField('Restart', svc.restart);
+    addField('Command', svc.command);
+    addField('Entrypoint', svc.entrypoint);
+    addField('User', svc.user);
+    addField('Working Dir', svc.working_dir);
+
+    // Healthcheck
+    if (svc.healthcheck) {
+        var hc = svc.healthcheck;
+        var hcHtml = '';
+        if (hc.test) {
+            if (Array.isArray(hc.test)) {
+                hcHtml += '<span class="detail-inline-label">test:</span> ' + esc(hc.test.join(' ')) + '<br>';
+            } else {
+                hcHtml += '<span class="detail-inline-label">test:</span> ' + esc(String(hc.test)) + '<br>';
+            }
+        }
+        if (hc.interval) hcHtml += '<span class="detail-inline-label">interval:</span> ' + esc(hc.interval) + '<br>';
+        if (hc.timeout) hcHtml += '<span class="detail-inline-label">timeout:</span> ' + esc(hc.timeout) + '<br>';
+        if (hc.retries) hcHtml += '<span class="detail-inline-label">retries:</span> ' + hc.retries + '<br>';
+        if (hc.start_period) hcHtml += '<span class="detail-inline-label">start_period:</span> ' + esc(hc.start_period) + '<br>';
+        fields.push('<div class="detail-field"><span class="detail-label">Healthcheck</span><span class="detail-value">' + hcHtml + '</span></div>');
+    } else {
+        fields.push('<div class="detail-field"><span class="detail-label">Healthcheck</span><span class="detail-value text-muted">Not configured</span></div>');
+    }
+
+    return fields.length ? '<div class="detail-container">' + fields.join('') + '</div>' : '';
+}
+
 export function loadDockerServices() {
-    document.getElementById('docker-tbody').innerHTML = loadingRow(5);
+    document.getElementById('docker-tbody').innerHTML = loadingRow(6);
     apiFetch('/api/services').then(function(r){return r.json();}).then(function(services) {
         var tbody = document.getElementById('docker-tbody');
         if (services.error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc(services.error) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">' + esc(services.error) + '</td></tr>';
             return;
         }
         if (!services.length) {
-            tbody.innerHTML = emptyRow(5, 'No services found');
+            tbody.innerHTML = emptyRow(6, 'No services found');
             return;
         }
-        tbody.innerHTML = services.map(function(s) {
-            return '<tr>'
+        var rows = [];
+        services.forEach(function(s, idx) {
+            rows.push('<tr class="docker-service-row" data-idx="' + idx + '" onclick="toggleDockerDetail(this)">'
                 + '<td data-label="Service"><code>' + esc(s.name) + '</code></td>'
                 + '<td data-label="Container">' + esc(s.container_name) + '</td>'
+                + '<td data-label="Image">' + (s.image ? '<code>' + esc(s.image) + '</code>' : '—') + '</td>'
                 + '<td data-label="Type"><span class="badge ' + (s.type === 'http' ? 'bg-info' : 'bg-secondary') + '">' + s.type.toUpperCase() + '</span></td>'
-                + '<td data-label="URL" class="text-truncate" style="max-width:300px">' + (s.url ? '<a href="' + esc(s.url) + '">' + esc(s.url) + '</a>' : '—') + '</td>'
+                + '<td data-label="URL" class="text-truncate" style="max-width:250px">' + (s.url ? '<a href="' + esc(s.url) + '">' + esc(s.url) + '</a>' : '—') + '</td>'
                 + '<td data-label="In Kuma">' + (s.in_kuma
                     ? '<span class="badge bg-success">\u2713 In Kuma</span>'
                     : '<span class="badge bg-secondary">\u2717 Missing</span>') + '</td>'
-                + '</tr>';
-        }).join('');
+                + '</tr>');
+            var detailHtml = renderDockerDetailRow(s);
+            if (detailHtml) {
+                rows.push('<tr class="docker-detail-row" data-idx="' + idx + '" style="display:none"><td colspan="6">' + detailHtml + '</td></tr>');
+            }
+        });
+        tbody.innerHTML = rows.join('');
     });
 }
+
+window.toggleDockerDetail = function(row) {
+    var idx = row.getAttribute('data-idx');
+    var detailRow = row.parentNode.querySelector('.docker-detail-row[data-idx="' + idx + '"]');
+    if (detailRow) {
+        var isVisible = detailRow.style.display !== 'none';
+        detailRow.style.display = isVisible ? 'none' : 'table-row';
+        row.classList.toggle('detail-expanded', !isVisible);
+    }
+};
 
 export function loadKumaMonitors() {
     document.getElementById('kuma-tbody').innerHTML = loadingRow(4);

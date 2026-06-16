@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -69,8 +71,13 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		errKind := logging.ErrorKindNetwork
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "timeout") {
+			errKind = logging.ErrorKindNetwork
+		}
 		logging.LogError("npm", "Failed to fetch proxy hosts from NPM",
 			slog.String("error", err.Error()),
+			slog.String("error_kind", string(errKind)),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return nil, err
@@ -78,9 +85,19 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		errKind := logging.ErrorKindServer
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			errKind = logging.ErrorKindAuth
+		}
+		bodySnippet := ""
+		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
+			bodySnippet = strings.TrimSpace(string(bodyBytes))
+		}
 		err := fmt.Errorf("failed to get proxy hosts: status %d", resp.StatusCode)
 		logging.LogError("npm", "NPM request returned non-OK status",
 			slog.Int("status", resp.StatusCode),
+			slog.String("error_kind", string(errKind)),
+			slog.String("response_body_snippet", bodySnippet),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return nil, err
@@ -90,6 +107,7 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
 		logging.LogError("npm", "Failed to decode NPM proxy hosts response",
 			slog.String("error", err.Error()),
+			slog.String("error_kind", string(logging.ErrorKindParse)),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return nil, err

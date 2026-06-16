@@ -22,14 +22,56 @@ import (
 
 var tracer = otel.Tracer("sync")
 
+// EnvironmentRaw handles both array (["A=b"]) and map ({A: b}) formats.
+type EnvironmentRaw []string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (e *EnvironmentRaw) UnmarshalYAML(value *yaml.Node) error {
+	var slice []string
+	if err := value.Decode(&slice); err == nil {
+		*e = slice
+		return nil
+	}
+	var m map[string]string
+	if err := value.Decode(&m); err == nil {
+		*e = make([]string, 0, len(m))
+		for k, v := range m {
+			*e = append(*e, k+"="+v)
+		}
+		return nil
+	}
+	// Try single string as fallback
+	var s string
+	if err := value.Decode(&s); err == nil {
+		*e = []string{s}
+		return nil
+	}
+	return fmt.Errorf("environment: expected array, map, or string")
+}
+
 type ServiceDef struct {
-	ContainerName string     `yaml:"container_name"`
-	HealthCheck   *HealthDef `yaml:"healthcheck"`
-	NetworkMode   string     `yaml:"network_mode"`
+	ContainerName string         `yaml:"container_name"`
+	HealthCheck   *HealthDef     `yaml:"healthcheck"`
+	NetworkMode   string         `yaml:"network_mode"`
+	Image         string         `yaml:"image,omitempty"`
+	Ports         []string       `yaml:"ports,omitempty"`
+	Environment   EnvironmentRaw `yaml:"environment,omitempty"`
+	Volumes       []string       `yaml:"volumes,omitempty"`
+	DependsOn     []string       `yaml:"depends_on,omitempty"`
+	Labels        map[string]string `yaml:"labels,omitempty"`
+	Restart       string         `yaml:"restart,omitempty"`
+	Command       string         `yaml:"command,omitempty"`
+	Entrypoint    string         `yaml:"entrypoint,omitempty"`
+	User          string         `yaml:"user,omitempty"`
+	WorkingDir    string         `yaml:"working_dir,omitempty"`
 }
 
 type HealthDef struct {
-	Test any `yaml:"test"`
+	Test        any     `yaml:"test"`
+	Interval    string  `yaml:"interval,omitempty"`
+	Timeout     string  `yaml:"timeout,omitempty"`
+	Retries     int     `yaml:"retries,omitempty"`
+	StartPeriod string  `yaml:"start_period,omitempty"`
 }
 
 type Compose struct {
@@ -51,12 +93,32 @@ type Progress struct {
 type ProgressFn func(p Progress)
 
 type ServiceInfo struct {
-	Name          string `json:"name"`
-	ContainerName string `json:"container_name"`
-	MonitorType   string `json:"type"`
-	URL           string `json:"url,omitempty"`
-	InKuma        bool   `json:"in_kuma"`
-	KumaID        int    `json:"kuma_id,omitempty"`
+	Name          string   `json:"name"`
+	ContainerName string   `json:"container_name"`
+	MonitorType   string   `json:"type"`
+	URL           string   `json:"url,omitempty"`
+	InKuma        bool     `json:"in_kuma"`
+	KumaID        int      `json:"kuma_id,omitempty"`
+	Image         string   `json:"image,omitempty"`
+	Ports         []string `json:"ports,omitempty"`
+	Environment   []string `json:"environment,omitempty"`
+	Volumes       []string `json:"volumes,omitempty"`
+	DependsOn     []string `json:"depends_on,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Restart       string   `json:"restart,omitempty"`
+	Command       string   `json:"command,omitempty"`
+	Entrypoint    string   `json:"entrypoint,omitempty"`
+	User          string   `json:"user,omitempty"`
+	WorkingDir    string   `json:"working_dir,omitempty"`
+	HealthCheck   *HealthCheckInfo `json:"healthcheck,omitempty"`
+}
+
+type HealthCheckInfo struct {
+	Test        any    `json:"test,omitempty"`
+	Interval    string `json:"interval,omitempty"`
+	Timeout     string `json:"timeout,omitempty"`
+	Retries     int    `json:"retries,omitempty"`
+	StartPeriod string `json:"start_period,omitempty"`
 }
 
 type ProxyInfo struct {
@@ -160,21 +222,34 @@ func LoadServices(path string) (map[string]ServiceDef, error) {
 		logging.LogError("sync", "Failed to read compose file",
 			slog.String("path", path),
 			slog.String("error", err.Error()),
+			slog.String("error_kind", "not_found"),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return nil, err
 	}
+	fileSize := len(data)
 	var c Compose
 	if err := yaml.Unmarshal(data, &c); err != nil {
+		// Try to extract line number from yaml error
+		errStr := err.Error()
+		errLine := 0
+		if _, serr := fmt.Sscanf(errStr, "yaml: line %d:", &errLine); serr != nil {
+			// Try alternate format
+			fmt.Sscanf(errStr, "line %d:", &errLine)
+		}
 		logging.LogError("sync", "Failed to parse compose file",
 			slog.String("path", path),
-			slog.String("error", err.Error()),
+			slog.Int("file_size_bytes", fileSize),
+			slog.String("error", errStr),
+			slog.Int("yaml_error_line", errLine),
+			slog.String("error_kind", "parse"),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return nil, err
 	}
 	logging.LogInfo("sync", "Loaded compose file",
 		slog.String("path", path),
+		slog.Int("file_size_bytes", fileSize),
 		slog.Int("service_count", len(c.Services)),
 		slog.Duration("duration", time.Since(start)),
 	)
@@ -230,6 +305,27 @@ func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string
 			ContainerName: displayName,
 			MonitorType:   monitorType,
 			URL:           url,
+			Image:         svc.Image,
+			Ports:         svc.Ports,
+			Environment:   svc.Environment,
+			Volumes:       svc.Volumes,
+			DependsOn:     svc.DependsOn,
+			Labels:        svc.Labels,
+			Restart:       svc.Restart,
+			Command:       svc.Command,
+			Entrypoint:    svc.Entrypoint,
+			User:          svc.User,
+			WorkingDir:    svc.WorkingDir,
+		}
+
+		if svc.HealthCheck != nil {
+			info.HealthCheck = &HealthCheckInfo{
+				Test:        svc.HealthCheck.Test,
+				Interval:    svc.HealthCheck.Interval,
+				Timeout:     svc.HealthCheck.Timeout,
+				Retries:     svc.HealthCheck.Retries,
+				StartPeriod: svc.HealthCheck.StartPeriod,
+			}
 		}
 
 		if km, ok := kumaMap[displayName]; ok {

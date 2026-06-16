@@ -1,7 +1,11 @@
 package sync
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 //go:fix inline
@@ -334,6 +338,342 @@ func TestParseHealthcheck_FromFile(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("ParseHealthcheck(%q): expected %q, got %q", tt.name, tt.want, got)
 		}
+	}
+}
+
+// --- EnvironmentRaw tests ---
+
+func TestEnvironmentRaw_UnmarshalYAML_Array(t *testing.T) {
+	yamlContent := `env:
+  - FOO=bar
+  - BAZ=qux`
+	var s struct {
+		Env EnvironmentRaw `yaml:"env"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Env) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(s.Env))
+	}
+	if s.Env[0] != "FOO=bar" {
+		t.Errorf("expected FOO=bar, got %q", s.Env[0])
+	}
+	if s.Env[1] != "BAZ=qux" {
+		t.Errorf("expected BAZ=qux, got %q", s.Env[1])
+	}
+}
+
+func TestEnvironmentRaw_UnmarshalYAML_Map(t *testing.T) {
+	yamlContent := `env:
+  FOO: bar
+  BAZ: qux`
+	var s struct {
+		Env EnvironmentRaw `yaml:"env"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Env) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(s.Env))
+	}
+	// Map order is not guaranteed, so check both values are present
+	vals := make(map[string]bool)
+	for _, v := range s.Env {
+		vals[v] = true
+	}
+	if !vals["FOO=bar"] {
+		t.Error("expected FOO=bar in map output")
+	}
+	if !vals["BAZ=qux"] {
+		t.Error("expected BAZ=qux in map output")
+	}
+}
+
+func TestEnvironmentRaw_UnmarshalYAML_Empty(t *testing.T) {
+	yamlContent := `env:`
+	var s struct {
+		Env EnvironmentRaw `yaml:"env"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Env != nil {
+		t.Errorf("expected nil for empty env, got %v", s.Env)
+	}
+}
+
+// --- ServiceDef new fields tests ---
+
+func TestLoadServices_AllFieldsPopulated(t *testing.T) {
+	services, err := LoadServices("../../testdata/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	web, ok := services["web"]
+	if !ok {
+		t.Fatal("service 'web' not found")
+	}
+
+	// Check image
+	if web.Image != "nginx:alpine" {
+		t.Errorf("expected image 'nginx:alpine', got %q", web.Image)
+	}
+
+	// Check ports
+	if len(web.Ports) != 2 {
+		t.Errorf("expected 2 ports, got %d", len(web.Ports))
+	} else {
+		if web.Ports[0] != "80:80" {
+			t.Errorf("expected port '80:80', got %q", web.Ports[0])
+		}
+		if web.Ports[1] != "443:443/tcp" {
+			t.Errorf("expected port '443:443/tcp', got %q", web.Ports[1])
+		}
+	}
+
+	// Check environment (map format)
+	if len(web.Environment) != 2 {
+		t.Errorf("expected 2 env vars, got %d", len(web.Environment))
+	}
+
+	// Check volumes
+	if len(web.Volumes) != 1 {
+		t.Errorf("expected 1 volume, got %d", len(web.Volumes))
+	} else if web.Volumes[0] != "./html:/usr/share/nginx/html:ro" {
+		t.Errorf("unexpected volume: %q", web.Volumes[0])
+	}
+
+	// Check depends_on
+	if len(web.DependsOn) != 1 || web.DependsOn[0] != "api" {
+		t.Errorf("expected depends_on ['api'], got %v", web.DependsOn)
+	}
+
+	// Check labels
+	if web.Labels == nil || web.Labels["app"] != "web" || web.Labels["tier"] != "frontend" {
+		t.Errorf("unexpected labels: %v", web.Labels)
+	}
+
+	// Check restart
+	if web.Restart != "always" {
+		t.Errorf("expected restart 'always', got %q", web.Restart)
+	}
+
+	// Check healthcheck extended fields
+	if web.HealthCheck == nil {
+		t.Fatal("expected healthcheck on web")
+	}
+	if web.HealthCheck.Interval != "30s" {
+		t.Errorf("expected interval '30s', got %q", web.HealthCheck.Interval)
+	}
+	if web.HealthCheck.Timeout != "10s" {
+		t.Errorf("expected timeout '10s', got %q", web.HealthCheck.Timeout)
+	}
+	if web.HealthCheck.Retries != 3 {
+		t.Errorf("expected retries 3, got %d", web.HealthCheck.Retries)
+	}
+	if web.HealthCheck.StartPeriod != "5s" {
+		t.Errorf("expected start_period '5s', got %q", web.HealthCheck.StartPeriod)
+	}
+
+	// Check api environment (array format)
+	api, ok := services["api"]
+	if !ok {
+		t.Fatal("service 'api' not found")
+	}
+	if len(api.Environment) != 2 {
+		t.Errorf("expected 2 env vars for api, got %d", len(api.Environment))
+	} else {
+		if api.Environment[0] != "DB_HOST=db" {
+			t.Errorf("expected 'DB_HOST=db', got %q", api.Environment[0])
+		}
+		if api.Environment[1] != "DB_PORT=5432" {
+			t.Errorf("expected 'DB_PORT=5432', got %q", api.Environment[1])
+		}
+	}
+
+	// Check api depends_on
+	if len(api.DependsOn) != 2 {
+		t.Errorf("expected 2 depends_on for api, got %d", len(api.DependsOn))
+	}
+
+	// Check worker fields
+	worker, ok := services["worker"]
+	if !ok {
+		t.Fatal("service 'worker' not found")
+	}
+	if worker.Entrypoint != "/entrypoint.sh" {
+		t.Errorf("expected entrypoint '/entrypoint.sh', got %q", worker.Entrypoint)
+	}
+	if worker.User != "nobody" {
+		t.Errorf("expected user 'nobody', got %q", worker.User)
+	}
+	if worker.WorkingDir != "/app" {
+		t.Errorf("expected working_dir '/app', got %q", worker.WorkingDir)
+	}
+
+	// Check redis command
+	redis, ok := services["redis"]
+	if !ok {
+		t.Fatal("service 'redis' not found")
+	}
+	if redis.Command != "redis-server --appendonly yes" {
+		t.Errorf("expected command 'redis-server --appendonly yes', got %q", redis.Command)
+	}
+}
+
+func TestLoadServices_MinimalFields(t *testing.T) {
+	yamlContent := `
+services:
+  minimal:
+    image: alpine:latest
+`
+	var c Compose
+	if err := yaml.Unmarshal([]byte(yamlContent), &c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	svc, ok := c.Services["minimal"]
+	if !ok {
+		t.Fatal("service 'minimal' not found")
+	}
+	if svc.Image != "alpine:latest" {
+		t.Errorf("expected image 'alpine:latest', got %q", svc.Image)
+	}
+	// Optional fields should be zero-valued
+	if svc.Ports != nil {
+		t.Errorf("expected nil ports, got %v", svc.Ports)
+	}
+	if svc.Environment != nil {
+		t.Errorf("expected nil environment, got %v", svc.Environment)
+	}
+	if svc.HealthCheck != nil {
+		t.Errorf("expected nil healthcheck, got %v", svc.HealthCheck)
+	}
+	if svc.Restart != "" {
+		t.Errorf("expected empty restart, got %q", svc.Restart)
+	}
+}
+
+func TestLoadServices_PortsWithProtocols(t *testing.T) {
+	yamlContent := `
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+      - "443:443/tcp"
+      - "3000-3005:3000-3005/udp"
+`
+	var c Compose
+	if err := yaml.Unmarshal([]byte(yamlContent), &c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	svc := c.Services["web"]
+	if len(svc.Ports) != 3 {
+		t.Fatalf("expected 3 ports, got %d", len(svc.Ports))
+	}
+	if svc.Ports[0] != "80:80" {
+		t.Errorf("expected '80:80', got %q", svc.Ports[0])
+	}
+	if svc.Ports[1] != "443:443/tcp" {
+		t.Errorf("expected '443:443/tcp', got %q", svc.Ports[1])
+	}
+	if svc.Ports[2] != "3000-3005:3000-3005/udp" {
+		t.Errorf("expected '3000-3005:3000-3005/udp', got %q", svc.Ports[2])
+	}
+}
+
+func TestLoadServices_InvalidYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := tmpDir + "/invalid.yml"
+	if err := os.WriteFile(tmpFile, []byte("services:\n  web:\n    image: nginx\n  invalid_yaml: ["), 0644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	_, err := LoadServices(tmpFile)
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+// --- ServiceInfo JSON serialization tests ---
+
+func TestServiceInfo_JSON_OmitEmpty(t *testing.T) {
+	info := ServiceInfo{
+		Name:          "test",
+		ContainerName: "test-container",
+		MonitorType:   "docker",
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Optional fields should be omitted
+	if _, ok := decoded["image"]; ok {
+		t.Error("expected image to be omitted")
+	}
+	if _, ok := decoded["ports"]; ok {
+		t.Error("expected ports to be omitted")
+	}
+	if _, ok := decoded["healthcheck"]; ok {
+		t.Error("expected healthcheck to be omitted")
+	}
+	// Required fields should be present
+	if decoded["name"] != "test" {
+		t.Errorf("expected name 'test', got %v", decoded["name"])
+	}
+}
+
+func TestServiceInfo_JSON_AllFields(t *testing.T) {
+	info := ServiceInfo{
+		Name:          "web",
+		ContainerName: "nginx-web",
+		MonitorType:   "http",
+		URL:           "http://nginx-web:80/health",
+		Image:         "nginx:alpine",
+		Ports:         []string{"80:80", "443:443/tcp"},
+		Environment:   []string{"FOO=bar"},
+		Volumes:       []string{"./html:/usr/share/nginx/html:ro"},
+		DependsOn:     []string{"api"},
+		Labels:        map[string]string{"app": "web"},
+		Restart:       "always",
+		Command:       "",
+		Entrypoint:    "",
+		User:          "nobody",
+		WorkingDir:    "/app",
+		HealthCheck: &HealthCheckInfo{
+			Test:        []any{"CMD", "curl", "-f", "http://localhost:80/health"},
+			Interval:    "30s",
+			Timeout:     "10s",
+			Retries:     3,
+			StartPeriod: "5s",
+		},
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded["image"] != "nginx:alpine" {
+		t.Errorf("expected image 'nginx:alpine', got %v", decoded["image"])
+	}
+	ports := decoded["ports"].([]interface{})
+	if len(ports) != 2 || ports[0] != "80:80" {
+		t.Errorf("unexpected ports: %v", ports)
+	}
+	hc := decoded["healthcheck"].(map[string]interface{})
+	if hc["interval"] != "30s" {
+		t.Errorf("expected healthcheck interval '30s', got %v", hc["interval"])
+	}
+	if hc["retries"] != float64(3) {
+		t.Errorf("expected retries 3, got %v", hc["retries"])
 	}
 }
 

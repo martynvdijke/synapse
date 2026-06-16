@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -71,9 +73,14 @@ func (c *Client) Login(username, password string) error {
 
 	resp, err := c.client.Post(fmt.Sprintf("%s/api/login", c.url), "application/json", bytes.NewReader(body))
 	if err != nil {
+		errKind := logging.ErrorKindNetwork
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "timeout") {
+			errKind = logging.ErrorKindNetwork
+		}
 		logging.LogError("kuma", "Kuma login failed",
 			slog.String("kuma_url", c.url),
 			slog.String("error", err.Error()),
+			slog.String("error_kind", string(errKind)),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return err
@@ -81,10 +88,20 @@ func (c *Client) Login(username, password string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		errKind := logging.ErrorKindAuth
+		if resp.StatusCode >= 500 {
+			errKind = logging.ErrorKindServer
+		}
+		bodySnippet := ""
+		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
+			bodySnippet = strings.TrimSpace(string(bodyBytes))
+		}
 		err := fmt.Errorf("login failed: status %d", resp.StatusCode)
 		logging.LogError("kuma", "Kuma login failed",
 			slog.String("kuma_url", c.url),
 			slog.Int("status", resp.StatusCode),
+			slog.String("error_kind", string(errKind)),
+			slog.String("response_body_snippet", bodySnippet),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return err
@@ -94,6 +111,7 @@ func (c *Client) Login(username, password string) error {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		logging.LogError("kuma", "Kuma login response parse failed",
 			slog.String("error", err.Error()),
+			slog.String("error_kind", string(logging.ErrorKindParse)),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return err
@@ -124,14 +142,44 @@ func (c *Client) doRequest(method, path string, body []byte) (*http.Response, er
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		logging.LogDebug("kuma", "HTTP request failed",
+		errKind := logging.ErrorKindNetwork
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "timeout") {
+			errKind = logging.ErrorKindNetwork
+		}
+		logging.LogError("kuma", "HTTP request failed",
 			slog.String("method", method),
 			slog.String("path", path),
 			slog.String("error", err.Error()),
+			slog.String("error_kind", string(errKind)),
 			slog.Duration("duration", time.Since(start)),
 		)
 		return nil, err
 	}
+
+	if resp.StatusCode >= 400 {
+		errKind := logging.ErrorKindServer
+		if resp.StatusCode == 404 {
+			errKind = logging.ErrorKindNotFound
+		} else if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			errKind = logging.ErrorKindAuth
+		}
+		bodySnippet := ""
+		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
+			bodySnippet = strings.TrimSpace(string(bodyBytes))
+			// Re-create the body for the caller
+			resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), resp.Body))
+		}
+		logging.LogError("kuma", "HTTP request failed",
+			slog.String("method", method),
+			slog.String("path", path),
+			slog.Int("status", resp.StatusCode),
+			slog.String("error_kind", string(errKind)),
+			slog.String("response_body_snippet", bodySnippet),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return resp, fmt.Errorf("%s %s: status %d", method, path, resp.StatusCode)
+	}
+
 	logging.LogDebug("kuma", "HTTP request completed",
 		slog.String("method", method),
 		slog.String("path", path),

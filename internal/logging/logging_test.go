@@ -557,3 +557,125 @@ func TestDefaultBuffer(t *testing.T) {
 		t.Error("DefaultBuffer() returned nil")
 	}
 }
+
+// --- ErrorKind tests ---
+
+func TestErrorKindConstants(t *testing.T) {
+	tests := []struct {
+		kind ErrorKind
+		want string
+	}{
+		{ErrorKindAuth, "auth"},
+		{ErrorKindNetwork, "network"},
+		{ErrorKindServer, "server"},
+		{ErrorKindParse, "parse"},
+		{ErrorKindNotFound, "not_found"},
+	}
+	for _, tt := range tests {
+		if string(tt.kind) != tt.want {
+			t.Errorf("ErrorKind %s = %q, want %q", tt.want, string(tt.kind), tt.want)
+		}
+	}
+}
+
+func TestBufferHandlerHandleWithErrorKind(t *testing.T) {
+	buf := NewLogBuffer(10)
+	var out bytes.Buffer
+	h := NewBufferHandler(&out, buf, slog.LevelInfo)
+
+	r := slog.NewRecord(time.Now(), slog.LevelError, "connection refused", 0)
+	r.AddAttrs(
+		slog.String("source", "kuma"),
+		slog.String("error", "dial tcp: connection refused"),
+		slog.String("error_kind", "network"),
+	)
+	h.Handle(context.Background(), r)
+
+	snap := buf.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(snap))
+	}
+	if snap[0].ErrorKind != "network" {
+		t.Errorf("expected error_kind 'network', got %q", snap[0].ErrorKind)
+	}
+	if snap[0].Error != "dial tcp: connection refused" {
+		t.Errorf("expected error message, got %q", snap[0].Error)
+	}
+}
+
+func TestBufferHandlerHandleWithoutErrorKind(t *testing.T) {
+	buf := NewLogBuffer(10)
+	h := NewBufferHandler(nil, buf, slog.LevelInfo)
+
+	r := slog.NewRecord(time.Now(), slog.LevelError, "generic error", 0)
+	r.AddAttrs(slog.String("source", "app"), slog.String("error", "something went wrong"))
+	h.Handle(context.Background(), r)
+
+	snap := buf.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(snap))
+	}
+	if snap[0].ErrorKind != "" {
+		t.Errorf("expected empty error_kind, got %q", snap[0].ErrorKind)
+	}
+	if snap[0].Error != "something went wrong" {
+		t.Errorf("expected 'something went wrong', got %q", snap[0].Error)
+	}
+}
+
+func TestFilterByErrorKind(t *testing.T) {
+	b := NewLogBuffer(50)
+	b.Append(Entry{Level: "ERROR", Source: "kuma", Message: "auth failed", ErrorKind: "auth"})
+	b.Append(Entry{Level: "ERROR", Source: "kuma", Message: "connection failed", ErrorKind: "network"})
+	b.Append(Entry{Level: "ERROR", Source: "npm", Message: "parse error", ErrorKind: "parse"})
+	b.Append(Entry{Level: "ERROR", Source: "app", Message: "generic"})
+
+	entries := b.Filter(FilterParams{ErrorKind: "auth", Limit: 200})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 auth entry, got %d", len(entries))
+	}
+	if entries[0].Message != "auth failed" {
+		t.Errorf("expected 'auth failed', got %s", entries[0].Message)
+	}
+
+	entries = b.Filter(FilterParams{ErrorKind: "network", Limit: 200})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 network entry, got %d", len(entries))
+	}
+
+	entries = b.Filter(FilterParams{ErrorKind: "not_found", Limit: 200})
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for not_found, got %d", len(entries))
+	}
+}
+
+func TestFilterByErrorKindCaseInsensitive(t *testing.T) {
+	b := NewLogBuffer(10)
+	b.Append(Entry{Level: "ERROR", Source: "kuma", Message: "auth", ErrorKind: "Auth"})
+	entries := b.Filter(FilterParams{ErrorKind: "auth", Limit: 200})
+	if len(entries) != 1 {
+		t.Errorf("expected 1 entry (case insensitive), got %d", len(entries))
+	}
+}
+
+func TestFilterByErrorKindCombined(t *testing.T) {
+	b := NewLogBuffer(50)
+	b.Append(Entry{Level: "ERROR", Source: "kuma", Message: "auth fail", ErrorKind: "auth"})
+	b.Append(Entry{Level: "WARN", Source: "kuma", Message: "auth warning", ErrorKind: "auth"})
+	b.Append(Entry{Level: "ERROR", Source: "npm", Message: "network fail", ErrorKind: "network"})
+
+	// Combined filter: error_kind=auth + level=ERROR
+	entries := b.Filter(FilterParams{ErrorKind: "auth", Level: "error", Limit: 200})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry (auth+ERROR), got %d", len(entries))
+	}
+	if entries[0].Message != "auth fail" {
+		t.Errorf("expected 'auth fail', got %s", entries[0].Message)
+	}
+
+	// Combined filter: error_kind=auth + source=kuma
+	entries = b.Filter(FilterParams{ErrorKind: "auth", Source: "npm", Limit: 200})
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries (auth+npm), got %d", len(entries))
+	}
+}

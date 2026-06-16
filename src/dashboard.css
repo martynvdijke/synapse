@@ -2,6 +2,13 @@ body { background: #f8f9fa; }
 .navbar { margin-bottom: 1.5rem; }
 .stat-card { transition: transform .15s; cursor: pointer; }
 .stat-card:hover { transform: translateY(-2px); }
+.health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; }
+.health-dot.healthy { background-color: #198754; }
+.health-dot.error { background-color: #dc3545; }
+.health-dot.unknown { background-color: #6c757d; }
+.health-tooltip { display: none; position: absolute; background: #212529; color: #fff; font-size: .75rem; padding: .25rem .5rem; border-radius: .25rem; white-space: nowrap; z-index: 100; }
+.stat-card { position: relative; }
+.stat-card:hover .health-tooltip { display: block; }
 .progress { height: 0.5rem; }
 .sync-section, .settings-section { background: #fff; border-radius: .5rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .table { font-size: .875rem; margin-bottom: 0; }
@@ -62,6 +69,72 @@ body { background: #f8f9fa; }
 .skeleton-row { display: table-row; }
 .skeleton-row td { padding: 0.75rem 0.5rem; }
 .skeleton-row .skeleton { vertical-align: middle; }
+
+/* ─── Docker Expandable Detail Rows ────────────────────────── */
+.docker-service-row { cursor: pointer; }
+.docker-service-row:hover { background-color: #f0f7ff; }
+.docker-service-row.detail-expanded { background-color: #e8f4e8; }
+.docker-detail-row td { padding: 0.5rem 1rem !important; background: #f8fdf8; border-top: none !important; }
+.docker-detail-row.show { display: table-row; }
+.detail-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+.detail-field {
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+}
+.detail-label {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #6c757d;
+    margin-bottom: 0.15rem;
+    letter-spacing: 0.5px;
+}
+.detail-value {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.8rem;
+    color: #212529;
+    word-break: break-all;
+    line-height: 1.5;
+}
+.detail-inline-label {
+    font-weight: 600;
+    color: #495057;
+}
+.detail-container .text-muted { font-style: italic; }
+
+/* Mobile stacked layout for detail content */
+@media (max-width: 767px) {
+    .detail-container {
+        grid-template-columns: 1fr;
+    }
+    .docker-detail-row td {
+        padding: 0.5rem !important;
+    }
+    .detail-field {
+        padding: 0.4rem 0.6rem;
+    }
+    .docker-service-row td {
+        cursor: pointer;
+    }
+    .docker-service-row td:first-child::after {
+        content: '\25BC';
+        float: right;
+        font-size: 0.7rem;
+        color: #6c757d;
+        transition: transform 0.2s;
+    }
+    .docker-service-row.detail-expanded td:first-child::after {
+        transform: rotate(180deg);
+    }
+}
 
 /* ─── Mobile-Responsive Tables ─────────────────────────────── */
 @media (max-width: 767px) {

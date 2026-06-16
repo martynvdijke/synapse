@@ -15,6 +15,17 @@ import (
 	"time"
 )
 
+// ErrorKind represents a category of error for filtering and diagnostics.
+type ErrorKind string
+
+const (
+	ErrorKindAuth     ErrorKind = "auth"
+	ErrorKindNetwork  ErrorKind = "network"
+	ErrorKindServer   ErrorKind = "server"
+	ErrorKindParse    ErrorKind = "parse"
+	ErrorKindNotFound ErrorKind = "not_found"
+)
+
 // Level aliases for convenience.
 const (
 	LevelDebug = slog.LevelDebug
@@ -31,16 +42,18 @@ type Entry struct {
 	Message   string            `json:"message"`
 	Duration  int64             `json:"duration,omitempty"` // nanoseconds
 	Error     string            `json:"error,omitempty"`
+	ErrorKind string            `json:"error_kind,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 // FilterParams for querying log entries.
 type FilterParams struct {
-	Level  string `form:"level"`
-	Source string `form:"source"`
-	Search string `form:"search"`
-	Limit  int    `form:"limit"`
-	Offset int    `form:"offset"`
+	Level     string `form:"level"`
+	Source    string `form:"source"`
+	Search    string `form:"search"`
+	ErrorKind string `form:"error_kind"`
+	Limit     int    `form:"limit"`
+	Offset    int    `form:"offset"`
 }
 
 // LogBuffer is a concurrency-safe ring buffer of log entries.
@@ -184,6 +197,9 @@ func (b *LogBuffer) Filter(f FilterParams) []Entry {
 		if f.Search != "" && !strings.Contains(strings.ToLower(e.Message), strings.ToLower(f.Search)) {
 			continue
 		}
+		if f.ErrorKind != "" && !strings.EqualFold(e.ErrorKind, f.ErrorKind) {
+			continue
+		}
 		result = append(result, e)
 	}
 
@@ -272,6 +288,7 @@ func (h *BufferHandler) Handle(_ context.Context, r slog.Record) error {
 	source := "app"
 	metadata := make(map[string]string)
 	var errStr string
+	var errKind string
 	var durationNs int64
 
 	r.Attrs(func(a slog.Attr) bool {
@@ -282,6 +299,8 @@ func (h *BufferHandler) Handle(_ context.Context, r slog.Record) error {
 			source = val
 		case "error":
 			errStr = val
+		case "error_kind":
+			errKind = val
 		case "duration":
 			if d, err := time.ParseDuration(val); err == nil {
 				durationNs = d.Nanoseconds()
@@ -321,6 +340,7 @@ func (h *BufferHandler) Handle(_ context.Context, r slog.Record) error {
 		Message:   msg,
 		Duration:  durationNs,
 		Error:     errStr,
+		ErrorKind: errKind,
 		Metadata:  metadata,
 	}
 	if len(metadata) == 0 {
