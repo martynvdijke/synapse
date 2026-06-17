@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/martynvdijke/synapse/compare/v1.4.1...v1.5.0) (2026-06-17)
+
+
+### Features
+
+* support multiple Uptime Kuma instances and clickable Docker card ([d77b092](https://github.com/martynvdijke/synapse/commit/d77b09218aef598fc0420bd35160b09177f79714))
+
 ## [1.4.1](https://github.com/martynvdijke/synapse/compare/v1.4.0...v1.4.1) (2026-06-17)
 
 
