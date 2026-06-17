@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/martynvdijke/synapse/compare/v1.4.0...v1.4.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* handle all Docker Compose YAML format variants in ServiceDef parsing ([97e905c](https://github.com/martynvdijke/synapse/commit/97e905c60c2c5ec3c72499eeb184e460abae4c04))
+
 # [1.4.0](https://github.com/martynvdijke/synapse/compare/v1.3.3...v1.4.0) (2026-06-16)
 
 
