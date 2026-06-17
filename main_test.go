@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"synapse/internal/db"
+	"synapse/internal/kuma"
 )
 
 func setupTest(t *testing.T) (*App, *gin.Engine) {
@@ -33,7 +34,8 @@ func setupTest(t *testing.T) (*App, *gin.Engine) {
 	t.Cleanup(func() { database.Close() })
 
 	app := &App{
-		database: database,
+		database:     database,
+		kumaRegistry: kuma.NewRegistry(database),
 	}
 	r := setupRouter(app)
 	return app, r
@@ -307,14 +309,13 @@ func TestSettingsEndpoint(t *testing.T) {
 	}
 	var settings map[string]any
 	json.NewDecoder(w.Body).Decode(&settings)
-	if settings["kuma_url"] != "http://localhost:3001" {
-		t.Errorf("unexpected kuma_url: %v", settings["kuma_url"])
+	// kuma_* settings moved to the /api/kuma-instances endpoints and are
+	// no longer part of the settings response.
+	if _, ok := settings["kuma_url"]; ok {
+		t.Errorf("kuma_url should not be in settings response, got %v", settings["kuma_url"])
 	}
 	if settings["npm_pass"] != "" {
 		t.Errorf("expected empty npm_pass, got %v", settings["npm_pass"])
-	}
-	if settings["kuma_pass"] != "" {
-		t.Errorf("expected empty kuma_pass, got %v", settings["kuma_pass"])
 	}
 }
 
@@ -322,8 +323,8 @@ func TestSettingsSaveAndLoad(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
 
-	// POST new settings
-	body := `{"kuma_url":"http://new-kuma:4000","npm_host":"http://npm:81"}`
+	// POST new settings (kuma_* is now managed via /api/kuma-instances)
+	body := `{"npm_host":"http://npm:81","compose_path":"/data/compose.yml"}`
 	req := authRequest(t, "POST", "/api/settings", body, sessionID)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -337,11 +338,11 @@ func TestSettingsSaveAndLoad(t *testing.T) {
 	r.ServeHTTP(w2, req2)
 	var s2 map[string]any
 	json.NewDecoder(w2.Body).Decode(&s2)
-	if s2["kuma_url"] != "http://new-kuma:4000" {
-		t.Errorf("expected saved kuma_url, got %v", s2["kuma_url"])
-	}
 	if s2["npm_host"] != "http://npm:81" {
 		t.Errorf("expected saved npm_host, got %v", s2["npm_host"])
+	}
+	if s2["compose_path"] != "/data/compose.yml" {
+		t.Errorf("expected saved compose_path, got %v", s2["compose_path"])
 	}
 }
 
@@ -356,8 +357,8 @@ func TestSaveSettingsOnlySentFields(t *testing.T) {
 		t.Fatalf("seed compose_path: %v", err)
 	}
 
-	// POST settings with ONLY kuma_url — compose_path should NOT be affected
-	body := `{"kuma_url":"http://updated-kuma:4000"}`
+	// POST settings with ONLY npm_host — compose_path should NOT be affected
+	body := `{"npm_host":"http://updated-npm:81"}`
 	req := authRequest(t, "POST", "/api/settings", body, sessionID)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -375,8 +376,8 @@ func TestSaveSettingsOnlySentFields(t *testing.T) {
 	if s["compose_path"] != "/docker/compose.yml" {
 		t.Errorf("compose_path should be preserved: expected %q, got %v", "/docker/compose.yml", s["compose_path"])
 	}
-	if s["kuma_url"] != "http://updated-kuma:4000" {
-		t.Errorf("kuma_url should be updated: expected %q, got %v", "http://updated-kuma:4000", s["kuma_url"])
+	if s["npm_host"] != "http://updated-npm:81" {
+		t.Errorf("npm_host should be updated: expected %q, got %v", "http://updated-npm:81", s["npm_host"])
 	}
 	// otel_enabled was never sent or saved — should still be env default (false)
 	if s["otel_enabled"] != false {
@@ -388,15 +389,15 @@ func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
 
-	// Set initial password in DB
+	// Set initial npm password in DB (kuma_pass is now managed via instances)
 	if err := app.database.SaveSettingsMap(map[string]string{
-		"kuma_pass": "secret123",
+		"npm_pass": "secret123",
 	}); err != nil {
-		t.Fatalf("seed kuma_pass: %v", err)
+		t.Fatalf("seed npm_pass: %v", err)
 	}
 
 	// Save with empty password (frontend sends "" to mean "keep current")
-	body := `{"kuma_pass":"","kuma_url":"http://test:3001"}`
+	body := `{"npm_pass":"","npm_host":"http://test:81"}`
 	req := authRequest(t, "POST", "/api/settings", body, sessionID)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -411,11 +412,11 @@ func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	var s map[string]any
 	json.NewDecoder(w2.Body).Decode(&s)
 
-	if s["kuma_pass"] != "****" {
-		t.Errorf("kuma_pass should be masked and non-empty: got %v", s["kuma_pass"])
+	if s["npm_pass"] != "****" {
+		t.Errorf("npm_pass should be masked and non-empty: got %v", s["npm_pass"])
 	}
-	if s["kuma_url"] != "http://test:3001" {
-		t.Errorf("kuma_url should be updated: expected %q, got %v", "http://test:3001", s["kuma_url"])
+	if s["npm_host"] != "http://test:81" {
+		t.Errorf("npm_host should be updated: expected %q, got %v", "http://test:81", s["npm_host"])
 	}
 }
 

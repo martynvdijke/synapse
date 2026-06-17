@@ -12,12 +12,18 @@ import (
 // Tx is a transactional client that is created by calling Client.Tx().
 type Tx struct {
 	config
+	// AutheliaAlert is the client for interacting with the AutheliaAlert builders.
+	AutheliaAlert *AutheliaAlertClient
+	// KumaInstance is the client for interacting with the KumaInstance builders.
+	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
 	Monitor *MonitorClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
 	// SyncRun is the client for interacting with the SyncRun builders.
 	SyncRun *SyncRunClient
+	// TempAccess is the client for interacting with the TempAccess builders.
+	TempAccess *TempAccessClient
 
 	// lazily loaded.
 	client     *Client
@@ -149,9 +155,12 @@ func (tx *Tx) Client() *Client {
 }
 
 func (tx *Tx) init() {
+	tx.AutheliaAlert = NewAutheliaAlertClient(tx.config)
+	tx.KumaInstance = NewKumaInstanceClient(tx.config)
 	tx.Monitor = NewMonitorClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)
 	tx.SyncRun = NewSyncRunClient(tx.config)
+	tx.TempAccess = NewTempAccessClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.
@@ -161,7 +170,7 @@ func (tx *Tx) init() {
 // of them in order to commit or rollback the transaction.
 //
 // If a closed transaction is embedded in one of the generated entities, and the entity
-// applies a query, for example: Monitor.QueryXXX(), the query will be executed
+// applies a query, for example: AutheliaAlert.QueryXXX(), the query will be executed
 // through the driver which created this transaction.
 //
 // Note that txDriver is not goroutine safe.

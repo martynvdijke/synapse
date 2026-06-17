@@ -8,6 +8,37 @@ import (
 )
 
 var (
+	// AutheliaAlertsColumns holds the columns for the "authelia_alerts" table.
+	AutheliaAlertsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "cname", Type: field.TypeString},
+		{Name: "message", Type: field.TypeString},
+		{Name: "severity", Type: field.TypeString, Default: "warning"},
+		{Name: "status", Type: field.TypeString, Default: "open"},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// AutheliaAlertsTable holds the schema information for the "authelia_alerts" table.
+	AutheliaAlertsTable = &schema.Table{
+		Name:       "authelia_alerts",
+		Columns:    AutheliaAlertsColumns,
+		PrimaryKey: []*schema.Column{AutheliaAlertsColumns[0]},
+	}
+	// KumaInstancesColumns holds the columns for the "kuma_instances" table.
+	KumaInstancesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "name", Type: field.TypeString},
+		{Name: "url", Type: field.TypeString},
+		{Name: "username", Type: field.TypeString},
+		{Name: "password", Type: field.TypeString},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// KumaInstancesTable holds the schema information for the "kuma_instances" table.
+	KumaInstancesTable = &schema.Table{
+		Name:       "kuma_instances",
+		Columns:    KumaInstancesColumns,
+		PrimaryKey: []*schema.Column{KumaInstancesColumns[0]},
+	}
 	// MonitorsColumns holds the columns for the "monitors" table.
 	MonitorsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -17,6 +48,7 @@ var (
 		{Name: "url", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "docker_container", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "kuma_id", Type: field.TypeInt, Default: 0},
+		{Name: "kuma_instance_id", Type: field.TypeInt, Default: 0},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// MonitorsTable holds the schema information for the "monitors" table.
@@ -26,9 +58,9 @@ var (
 		PrimaryKey: []*schema.Column{MonitorsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "monitor_name_monitor_type",
+				Name:    "monitor_name_monitor_type_kuma_instance_id",
 				Unique:  true,
-				Columns: []*schema.Column{MonitorsColumns[1], MonitorsColumns[3]},
+				Columns: []*schema.Column{MonitorsColumns[1], MonitorsColumns[3], MonitorsColumns[7]},
 			},
 		},
 	}
@@ -70,11 +102,29 @@ var (
 		Columns:    SyncRunsColumns,
 		PrimaryKey: []*schema.Column{SyncRunsColumns[0]},
 	}
+	// TempAccessesColumns holds the columns for the "temp_accesses" table.
+	TempAccessesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "ip", Type: field.TypeString},
+		{Name: "reason", Type: field.TypeString, Default: ""},
+		{Name: "expires_at", Type: field.TypeTime},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "status", Type: field.TypeString, Default: "active"},
+	}
+	// TempAccessesTable holds the schema information for the "temp_accesses" table.
+	TempAccessesTable = &schema.Table{
+		Name:       "temp_accesses",
+		Columns:    TempAccessesColumns,
+		PrimaryKey: []*schema.Column{TempAccessesColumns[0]},
+	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		AutheliaAlertsTable,
+		KumaInstancesTable,
 		MonitorsTable,
 		SettingsTable,
 		SyncRunsTable,
+		TempAccessesTable,
 	}
 )
 

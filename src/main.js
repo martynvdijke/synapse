@@ -5,7 +5,7 @@ import { toast, setLoading } from './toast.js';
 import { connectSSE, setRefreshAll } from './sse.js';
 import { loadStatus, refreshAll } from './stats.js';
 import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory } from './tabs.js';
-import { loadSettings, saveSettings, testConnection } from './settings.js';
+import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance } from './settings.js';
 import { loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia.js';
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs.js';
 
@@ -75,8 +75,25 @@ document.getElementById('btn-ta-submit').addEventListener('click', function() {
 
 document.getElementById('btn-logout').addEventListener('click', logout);
 document.getElementById('settings-form').addEventListener('submit', saveSettings);
-document.getElementById('btn-test-kuma').addEventListener('click', function() { testConnection('kuma'); });
 document.getElementById('btn-test-npm').addEventListener('click', function() { testConnection('npm'); });
+
+// Kuma instance management
+document.getElementById('btn-kuma-add').addEventListener('click', function() { showKumaInstanceForm(null); });
+document.getElementById('btn-kuma-save').addEventListener('click', saveKumaInstance);
+document.getElementById('btn-kuma-cancel').addEventListener('click', hideKumaInstanceForm);
+
+// Clickable Docker stat card → switch to Docker tab
+function activateDockerTab() {
+    var tabBtn = document.getElementById('tab-btn-docker');
+    if (tabBtn) {
+        var tab = bootstrap.Tab.getInstance(tabBtn) || new bootstrap.Tab(tabBtn);
+        tab.show();
+    }
+}
+document.getElementById('stat-docker-card').addEventListener('click', activateDockerTab);
+document.getElementById('stat-docker-card').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateDockerTab(); }
+});
 
 // Tab switching with focus management
 function setupTabPanel(target) {
@@ -95,7 +112,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-npm') loadNPMProxies();
         else if (target === '#tab-kuma') loadKumaMonitors();
         else if (target === '#tab-history') loadHistory();
-        else if (target === '#tab-settings') loadSettings();
+        else if (target === '#tab-settings') { loadSettings(); loadKumaInstances(); }
         else if (target === '#tab-authelia') loadAutheliaDashboard();
         else if (target === '#tab-logs') {
             setupLogFilters();
@@ -140,6 +157,7 @@ document.querySelector('.nav-tabs').addEventListener('keydown', function(e) {
 apiFetch('/api/status').then(function() { refreshAll(); }).catch(function(err) {
     if (err.message === 'not authenticated') return;
 });
+loadKumaInstances();
 
 // Start SSE
 connectSSE();

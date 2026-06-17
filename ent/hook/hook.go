@@ -8,6 +8,30 @@ import (
 	"synapse/ent"
 )
 
+// The AutheliaAlertFunc type is an adapter to allow the use of ordinary
+// function as AutheliaAlert mutator.
+type AutheliaAlertFunc func(context.Context, *ent.AutheliaAlertMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AutheliaAlertFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AutheliaAlertMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AutheliaAlertMutation", m)
+}
+
+// The KumaInstanceFunc type is an adapter to allow the use of ordinary
+// function as KumaInstance mutator.
+type KumaInstanceFunc func(context.Context, *ent.KumaInstanceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f KumaInstanceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.KumaInstanceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.KumaInstanceMutation", m)
+}
+
 // The MonitorFunc type is an adapter to allow the use of ordinary
 // function as Monitor mutator.
 type MonitorFunc func(context.Context, *ent.MonitorMutation) (ent.Value, error)
@@ -42,6 +66,18 @@ func (f SyncRunFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, err
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SyncRunMutation", m)
+}
+
+// The TempAccessFunc type is an adapter to allow the use of ordinary
+// function as TempAccess mutator.
+type TempAccessFunc func(context.Context, *ent.TempAccessMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f TempAccessFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.TempAccessMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TempAccessMutation", m)
 }
 
 // Condition is a hook condition function.

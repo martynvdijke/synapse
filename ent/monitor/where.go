@@ -84,6 +84,11 @@ func KumaID(v int) predicate.Monitor {
 	return predicate.Monitor(sql.FieldEQ(FieldKumaID, v))
 }
 
+// KumaInstanceID applies equality check predicate on the "kuma_instance_id" field. It's identical to KumaInstanceIDEQ.
+func KumaInstanceID(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldEQ(FieldKumaInstanceID, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Monitor {
 	return predicate.Monitor(sql.FieldEQ(FieldCreatedAt, v))
@@ -472,6 +477,46 @@ func KumaIDLT(v int) predicate.Monitor {
 // KumaIDLTE applies the LTE predicate on the "kuma_id" field.
 func KumaIDLTE(v int) predicate.Monitor {
 	return predicate.Monitor(sql.FieldLTE(FieldKumaID, v))
+}
+
+// KumaInstanceIDEQ applies the EQ predicate on the "kuma_instance_id" field.
+func KumaInstanceIDEQ(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldEQ(FieldKumaInstanceID, v))
+}
+
+// KumaInstanceIDNEQ applies the NEQ predicate on the "kuma_instance_id" field.
+func KumaInstanceIDNEQ(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldNEQ(FieldKumaInstanceID, v))
+}
+
+// KumaInstanceIDIn applies the In predicate on the "kuma_instance_id" field.
+func KumaInstanceIDIn(vs ...int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldIn(FieldKumaInstanceID, vs...))
+}
+
+// KumaInstanceIDNotIn applies the NotIn predicate on the "kuma_instance_id" field.
+func KumaInstanceIDNotIn(vs ...int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldNotIn(FieldKumaInstanceID, vs...))
+}
+
+// KumaInstanceIDGT applies the GT predicate on the "kuma_instance_id" field.
+func KumaInstanceIDGT(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldGT(FieldKumaInstanceID, v))
+}
+
+// KumaInstanceIDGTE applies the GTE predicate on the "kuma_instance_id" field.
+func KumaInstanceIDGTE(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldGTE(FieldKumaInstanceID, v))
+}
+
+// KumaInstanceIDLT applies the LT predicate on the "kuma_instance_id" field.
+func KumaInstanceIDLT(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldLT(FieldKumaInstanceID, v))
+}
+
+// KumaInstanceIDLTE applies the LTE predicate on the "kuma_instance_id" field.
+func KumaInstanceIDLTE(v int) predicate.Monitor {
+	return predicate.Monitor(sql.FieldLTE(FieldKumaInstanceID, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

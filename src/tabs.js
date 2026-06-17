@@ -103,21 +103,22 @@ window.toggleDockerDetail = function(row) {
 };
 
 export function loadKumaMonitors() {
-    document.getElementById('kuma-tbody').innerHTML = loadingRow(4);
+    document.getElementById('kuma-tbody').innerHTML = loadingRow(5);
     apiFetch('/api/monitors').then(function(r){return r.json();}).then(function(monitors) {
         var tbody = document.getElementById('kuma-tbody');
         if (monitors.error) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc(monitors.error) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc(monitors.error) + '</td></tr>';
             return;
         }
         if (!monitors.length) {
-            tbody.innerHTML = emptyRow(4, 'No monitors in Uptime Kuma');
+            tbody.innerHTML = emptyRow(5, 'No monitors in Uptime Kuma');
             return;
         }
         tbody.innerHTML = monitors.map(function(m) {
             return '<tr>'
                 + '<td data-label="ID">#' + m.id + '</td>'
                 + '<td data-label="Name">' + esc(m.name) + '</td>'
+                + '<td data-label="Instance"><span class="badge bg-primary">' + esc(m.instance_name || '—') + '</span></td>'
                 + '<td data-label="Type"><span class="badge ' + (m.type === 'http' ? 'bg-info' : m.type === 'docker' ? 'bg-warning text-dark' : 'bg-secondary') + '">' + (m.type === 'http' ? '\u25CB ' : m.type === 'docker' ? '\u25A3 ' : '') + m.type.toUpperCase() + '</span></td>'
                 + '<td data-label="URL / Container" class="text-truncate" style="max-width:300px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
                 + '</tr>';

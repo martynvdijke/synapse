@@ -21,7 +21,7 @@
 <div class="container-fluid px-4" id="main-content">
     <div class="row g-3 mb-4" aria-label="Service statistics">
         <div class="col-md-3">
-            <div class="card stat-card border-0 shadow-sm" aria-label="Docker services count">
+            <div class="card stat-card border-0 shadow-sm" id="stat-docker-card" style="cursor:pointer" role="button" tabindex="0" aria-label="Docker services count — click to view services" title="Click to view Docker services">
                 <div class="card-body text-center py-3">
                     <div class="text-muted small text-uppercase">Docker Services <span class="health-dot" id="health-docker" title="Connection health"></span></div>
                     <div class="fs-2 fw-bold text-primary" id="stat-docker"><span class="skeleton skeleton-lg" style="width:50px">&nbsp;</span></div>
@@ -168,14 +168,15 @@
                         <tr>
                             <th>ID</th>
                             <th>Name</th>
+                            <th>Instance</th>
                             <th>Type</th>
                             <th>URL / Container</th>
                         </tr>
                     </thead>
                     <tbody id="kuma-tbody" aria-live="polite">
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -415,23 +416,45 @@
             <div class="bg-white rounded shadow-sm p-4">
                 <form id="settings-form">
                     <div class="row g-3">
-                        <div class="col-md-6">
-                            <h6 class="mb-3 text-primary">Uptime Kuma</h6>
-                            <div class="mb-2">
-                                <label class="form-label">URL</label>
-                                <input class="form-control form-control-sm" id="s-kuma-url" placeholder="http://uptime-kuma:3001">
+                        <div class="col-12">
+                            <div class="d-flex align-items-center justify-content-between mb-3">
+                                <h6 class="mb-0 text-primary">Uptime Kuma Instances</h6>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="btn-kuma-add">+ Add Instance</button>
                             </div>
-                            <div class="mb-2">
-                                <label class="form-label">Username</label>
-                                <input class="form-control form-control-sm" id="s-kuma-user" placeholder="admin">
+                            <div id="kuma-instances-list" class="mb-3">
+                                <div class="text-center text-muted py-3">Loading instances...</div>
                             </div>
-                            <div class="mb-2">
-                                <label class="form-label">Password</label>
-                                <input class="form-control form-control-sm" type="password" id="s-kuma-pass" placeholder="Leave blank to keep current">
-                            </div>
-                            <div class="d-flex align-items-center gap-2">
-                                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-test-kuma">Test Kuma</button>
-                                <span class="test-result" id="test-kuma-result"></span>
+                            <div id="kuma-instance-form" class="card card-body bg-light p-3 d-none">
+                                <h6 class="mb-3" id="kuma-form-title">Add Instance</h6>
+                                <input type="hidden" id="ki-edit-id" value="">
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small">Name</label>
+                                        <input class="form-control form-control-sm" id="ki-name" placeholder="prod-kuma">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label small">URL</label>
+                                        <input class="form-control form-control-sm" id="ki-url" placeholder="http://uptime-kuma:3001">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small">Username</label>
+                                        <input class="form-control form-control-sm" id="ki-user" placeholder="admin">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small">Password</label>
+                                        <input class="form-control form-control-sm" type="password" id="ki-pass" placeholder="Leave blank to keep">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="ki-enabled" checked>
+                                            <label class="form-check-label small" for="ki-enabled">Enabled (included in syncs)</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 d-flex justify-content-end gap-2">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-kuma-cancel">Cancel</button>
+                                        <button type="button" class="btn btn-primary btn-sm" id="btn-kuma-save">Save Instance</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-6">

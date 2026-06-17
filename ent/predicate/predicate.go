@@ -6,6 +6,12 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// AutheliaAlert is the predicate function for autheliaalert builders.
+type AutheliaAlert func(*sql.Selector)
+
+// KumaInstance is the predicate function for kumainstance builders.
+type KumaInstance func(*sql.Selector)
+
 // Monitor is the predicate function for monitor builders.
 type Monitor func(*sql.Selector)
 
@@ -14,3 +20,6 @@ type Settings func(*sql.Selector)
 
 // SyncRun is the predicate function for syncrun builders.
 type SyncRun func(*sql.Selector)
+
+// TempAccess is the predicate function for tempaccess builders.
+type TempAccess func(*sql.Selector)

@@ -80,6 +80,20 @@ func (_c *MonitorCreate) SetNillableKumaID(v *int) *MonitorCreate {
 	return _c
 }
 
+// SetKumaInstanceID sets the "kuma_instance_id" field.
+func (_c *MonitorCreate) SetKumaInstanceID(v int) *MonitorCreate {
+	_c.mutation.SetKumaInstanceID(v)
+	return _c
+}
+
+// SetNillableKumaInstanceID sets the "kuma_instance_id" field if the given value is not nil.
+func (_c *MonitorCreate) SetNillableKumaInstanceID(v *int) *MonitorCreate {
+	if v != nil {
+		_c.SetKumaInstanceID(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *MonitorCreate) SetCreatedAt(v time.Time) *MonitorCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -133,6 +147,10 @@ func (_c *MonitorCreate) defaults() {
 		v := monitor.DefaultKumaID
 		_c.mutation.SetKumaID(v)
 	}
+	if _, ok := _c.mutation.KumaInstanceID(); !ok {
+		v := monitor.DefaultKumaInstanceID
+		_c.mutation.SetKumaInstanceID(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -148,6 +166,9 @@ func (_c *MonitorCreate) check() error {
 	}
 	if _, ok := _c.mutation.KumaID(); !ok {
 		return &ValidationError{Name: "kuma_id", err: errors.New(`ent: missing required field "Monitor.kuma_id"`)}
+	}
+	if _, ok := _c.mutation.KumaInstanceID(); !ok {
+		return &ValidationError{Name: "kuma_instance_id", err: errors.New(`ent: missing required field "Monitor.kuma_instance_id"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Monitor.created_at"`)}
@@ -201,6 +222,10 @@ func (_c *MonitorCreate) createSpec() (*Monitor, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.KumaID(); ok {
 		_spec.SetField(monitor.FieldKumaID, field.TypeInt, value)
 		_node.KumaID = value
+	}
+	if value, ok := _c.mutation.KumaInstanceID(); ok {
+		_spec.SetField(monitor.FieldKumaInstanceID, field.TypeInt, value)
+		_node.KumaInstanceID = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(monitor.FieldCreatedAt, field.TypeTime, value)

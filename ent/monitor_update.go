@@ -131,6 +131,27 @@ func (_u *MonitorUpdate) AddKumaID(v int) *MonitorUpdate {
 	return _u
 }
 
+// SetKumaInstanceID sets the "kuma_instance_id" field.
+func (_u *MonitorUpdate) SetKumaInstanceID(v int) *MonitorUpdate {
+	_u.mutation.ResetKumaInstanceID()
+	_u.mutation.SetKumaInstanceID(v)
+	return _u
+}
+
+// SetNillableKumaInstanceID sets the "kuma_instance_id" field if the given value is not nil.
+func (_u *MonitorUpdate) SetNillableKumaInstanceID(v *int) *MonitorUpdate {
+	if v != nil {
+		_u.SetKumaInstanceID(*v)
+	}
+	return _u
+}
+
+// AddKumaInstanceID adds value to the "kuma_instance_id" field.
+func (_u *MonitorUpdate) AddKumaInstanceID(v int) *MonitorUpdate {
+	_u.mutation.AddKumaInstanceID(v)
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *MonitorUpdate) SetCreatedAt(v time.Time) *MonitorUpdate {
 	_u.mutation.SetCreatedAt(v)
@@ -212,6 +233,12 @@ func (_u *MonitorUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedKumaID(); ok {
 		_spec.AddField(monitor.FieldKumaID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.KumaInstanceID(); ok {
+		_spec.SetField(monitor.FieldKumaInstanceID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedKumaInstanceID(); ok {
+		_spec.AddField(monitor.FieldKumaInstanceID, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(monitor.FieldCreatedAt, field.TypeTime, value)
@@ -339,6 +366,27 @@ func (_u *MonitorUpdateOne) AddKumaID(v int) *MonitorUpdateOne {
 	return _u
 }
 
+// SetKumaInstanceID sets the "kuma_instance_id" field.
+func (_u *MonitorUpdateOne) SetKumaInstanceID(v int) *MonitorUpdateOne {
+	_u.mutation.ResetKumaInstanceID()
+	_u.mutation.SetKumaInstanceID(v)
+	return _u
+}
+
+// SetNillableKumaInstanceID sets the "kuma_instance_id" field if the given value is not nil.
+func (_u *MonitorUpdateOne) SetNillableKumaInstanceID(v *int) *MonitorUpdateOne {
+	if v != nil {
+		_u.SetKumaInstanceID(*v)
+	}
+	return _u
+}
+
+// AddKumaInstanceID adds value to the "kuma_instance_id" field.
+func (_u *MonitorUpdateOne) AddKumaInstanceID(v int) *MonitorUpdateOne {
+	_u.mutation.AddKumaInstanceID(v)
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *MonitorUpdateOne) SetCreatedAt(v time.Time) *MonitorUpdateOne {
 	_u.mutation.SetCreatedAt(v)
@@ -450,6 +498,12 @@ func (_u *MonitorUpdateOne) sqlSave(ctx context.Context) (_node *Monitor, err er
 	}
 	if value, ok := _u.mutation.AddedKumaID(); ok {
 		_spec.AddField(monitor.FieldKumaID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.KumaInstanceID(); ok {
+		_spec.SetField(monitor.FieldKumaInstanceID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedKumaInstanceID(); ok {
+		_spec.AddField(monitor.FieldKumaInstanceID, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(monitor.FieldCreatedAt, field.TypeTime, value)

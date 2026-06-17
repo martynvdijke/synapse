@@ -87,7 +87,8 @@ func authMiddleware() gin.HandlerFunc {
 }
 
 type App struct {
-	database *db.DB
+	database     *db.DB
+	kumaRegistry *kuma.Registry
 
 	mu            sync.Mutex
 	running       bool
@@ -147,8 +148,24 @@ func main() {
 	}
 	defer database.Close()
 
+	// Migrate legacy single-instance kuma_* settings into KumaInstance rows.
+	legacySettings := db.Settings{
+		KumaURL:  getEnv("KUMA_URL", "http://uptime-kuma:3001"),
+		KumaUser: getEnv("KUMA_USER", "admin"),
+		KumaPass: getEnv("KUMA_PASS", ""),
+	}
+	// Read persisted legacy settings (override env defaults if present).
+	persisted := database.GetSettings(legacySettings)
+	legacySettings.KumaURL = persisted.KumaURL
+	legacySettings.KumaUser = persisted.KumaUser
+	legacySettings.KumaPass = persisted.KumaPass
+	if err := database.MigrateKumaInstances(legacySettings); err != nil {
+		slog.Warn("kuma instance migration failed", "error", err)
+	}
+
 	app := &App{
-		database: database,
+		database:     database,
+		kumaRegistry: kuma.NewRegistry(database),
 	}
 
 	// Read OTel endpoint from database settings, fall back to env var
@@ -218,7 +235,11 @@ func main() {
 		api.GET("/settings", app.GetSettings)
 		api.POST("/settings", app.SaveSettings)
 		api.POST("/test/npm", app.TestNPM)
-		api.POST("/test/kuma", app.TestKuma)
+		api.GET("/kuma-instances", app.ListKumaInstances)
+		api.POST("/kuma-instances", app.CreateKumaInstance)
+		api.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
+		api.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
+		api.POST("/kuma-instances/:id/test", app.TestKumaInstance)
 		api.POST("/sync/docker", app.DockerSync)
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/sync/progress", app.ProgressSSE)
@@ -367,9 +388,6 @@ func (app *App) GetSettings(c *gin.Context) {
 		"npm_host":                s.NPMHost,
 		"npm_user":                s.NPMUser,
 		"npm_pass":                mask(s.NPMPass),
-		"kuma_url":                s.KumaURL,
-		"kuma_user":               s.KumaUser,
-		"kuma_pass":               mask(s.KumaPass),
 		"authelia_config_path":    s.AutheliaConfigPath,
 		"authelia_db_path":        s.AutheliaDBPath,
 		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
@@ -393,21 +411,6 @@ func (app *App) SaveSettings(c *gin.Context) {
 	// Only save fields that were explicitly sent in the request body
 	pairs := make(map[string]string)
 
-	if v, ok := raw["kuma_url"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["kuma_url"] = val
-	}
-	if v, ok := raw["kuma_user"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["kuma_user"] = val
-	}
-	if v, ok := raw["kuma_pass"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		if val == "" {
-			val = current.KumaPass
-		}
-		pairs["kuma_pass"] = val
-	}
 	if v, ok := raw["npm_host"]; ok {
 		var val string; json.Unmarshal(v, &val)
 		pairs["npm_host"] = val
@@ -481,7 +484,8 @@ func (app *App) TestNPM(c *gin.Context) {
 			s.NPMPass = input.NPMPass
 		}
 	}
-	_, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
+	clients, _ := app.kumaRegistry.All()
+	_, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
 	if err != nil {
 		logging.LogError("app", "NPM connection test failed",
 			slog.String("npm_host", s.NPMHost),
@@ -498,46 +502,173 @@ func (app *App) TestNPM(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "NPM connection successful"})
 }
 
-func (app *App) TestKuma(c *gin.Context) {
-	start := time.Now()
-	logging.LogDebug("app", "Testing Kuma connection",
-		slog.String("kuma_url", app.settings().KumaURL),
-	)
+// ─── Kuma Instance Handlers ──────────────────────────────────────────────────
 
-	s := app.settings()
-	var input db.Settings
-	if err := c.ShouldBindJSON(&input); err == nil {
-		if input.KumaURL != "" {
-			s.KumaURL = input.KumaURL
-		}
-		if input.KumaUser != "" {
-			s.KumaUser = input.KumaUser
-		}
-		if input.KumaPass != "" && input.KumaPass != "****" {
-			s.KumaPass = input.KumaPass
-		}
+// kumaInstanceJSON is the JSON representation of a Kuma instance, with the
+// password masked in responses.
+type kumaInstanceJSON struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toKumaInstanceJSON(k *db.KumaInstance) kumaInstanceJSON {
+	return kumaInstanceJSON{
+		ID:        k.ID,
+		Name:      k.Name,
+		URL:       k.URL,
+		Username:  k.Username,
+		Password:  mask(k.Password),
+		Enabled:   k.Enabled,
+		CreatedAt: k.CreatedAt.Format(time.RFC3339),
 	}
-	client := kuma.NewClient(s.KumaURL)
-	if err := client.Login(s.KumaUser, s.KumaPass); err != nil {
-		logging.LogError("app", "Kuma connection test failed",
-			slog.String("kuma_url", s.KumaURL),
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
-		return
-	}
-	_, err := client.GetMonitors()
+}
+
+func (app *App) ListKumaInstances(c *gin.Context) {
+	instances, err := app.database.GetKumaInstances()
 	if err != nil {
-		logging.LogError("app", "Kuma connection test failed on GetMonitors",
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	result := make([]kumaInstanceJSON, 0, len(instances))
+	for i := range instances {
+		result = append(result, toKumaInstanceJSON(&instances[i]))
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (app *App) CreateKumaInstance(c *gin.Context) {
+	var input struct {
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Enabled  *bool  `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if input.Name == "" || input.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and url are required"})
+		return
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	created, err := app.database.CreateKumaInstance(&db.KumaInstance{
+		Name:     input.Name,
+		URL:      input.URL,
+		Username: input.Username,
+		Password: input.Password,
+		Enabled:  enabled,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, toKumaInstanceJSON(created))
+}
+
+func (app *App) UpdateKumaInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var input struct {
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Enabled  *bool  `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	existing, err := app.database.GetKumaInstance(id)
+	if err != nil || existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+	enabled := existing.Enabled
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	if err := app.database.UpdateKumaInstance(id, &db.KumaInstance{
+		Name:     input.Name,
+		URL:      input.URL,
+		Username: input.Username,
+		Password: input.Password, // empty = keep existing
+		Enabled:  enabled,
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	app.kumaRegistry.Invalidate(int(id))
+	updated, _ := app.database.GetKumaInstance(id)
+	c.JSON(http.StatusOK, toKumaInstanceJSON(updated))
+}
+
+func (app *App) DeleteKumaInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	app.kumaRegistry.Invalidate(int(id))
+	if err := app.database.DeleteKumaInstance(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func (app *App) TestKumaInstance(c *gin.Context) {
+	start := time.Now()
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	inst, err := app.database.GetKumaInstance(id)
+	if err != nil || inst == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+	logging.LogDebug("app", "Testing Kuma instance connection",
+		slog.String("instance", inst.Name),
+		slog.String("kuma_url", inst.URL),
+	)
+	client := kuma.NewClient(inst.URL)
+	if err := client.Login(inst.Username, inst.Password); err != nil {
+		logging.LogError("app", "Kuma instance connection test failed",
+			slog.String("instance", inst.Name),
+			slog.String("kuma_url", inst.URL),
 			slog.String("error", err.Error()),
 			slog.Duration("duration", time.Since(start)),
 		)
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
 		return
 	}
-	logging.LogInfo("app", "Kuma connection test successful",
-		slog.String("kuma_url", s.KumaURL),
+	if _, err := client.GetMonitors(); err != nil {
+		logging.LogError("app", "Kuma instance connection test failed on GetMonitors",
+			slog.String("instance", inst.Name),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
+		return
+	}
+	logging.LogInfo("app", "Kuma instance connection test successful",
+		slog.String("instance", inst.Name),
+		slog.String("kuma_url", inst.URL),
 		slog.Duration("duration", time.Since(start)),
 	)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Uptime Kuma connection successful"})
@@ -556,23 +687,45 @@ func (app *App) Status(c *gin.Context) {
 		dockerErr = err.Error()
 	}
 
+	// Kuma clients (used for NPM status + kuma health)
+	clients, _ := app.kumaRegistry.All()
+
 	// NPM health
 	npmCount := 0
 	npmErr := ""
-	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
+	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
 	if npmFetchErr == nil {
 		npmCount = len(npmProxies)
 	} else {
 		npmErr = npmFetchErr.Error()
 	}
 
-	// Kuma health - try a lightweight check via GetMonitors
+	// Kuma health — check each enabled instance. Health is ok only if ALL
+	// enabled instances are reachable.
 	kumaErr := ""
-	if s.KumaURL != "" && s.KumaUser != "" && s.KumaPass != "" {
-		kumaClient := kuma.NewClient(s.KumaURL)
-		if loginErr := kumaClient.Login(s.KumaUser, s.KumaPass); loginErr != nil {
-			kumaErr = loginErr.Error()
+	kumaInstances, _ := app.database.GetEnabledKumaInstances()
+	kumaHealthList := make([]gin.H, 0, len(kumaInstances))
+	for _, inst := range kumaInstances {
+		instErr := ""
+		if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
+			instErr = err.Error()
 		}
+		kumaHealthList = append(kumaHealthList, gin.H{
+			"id":         inst.ID,
+			"name":       inst.Name,
+			"ok":         instErr == "",
+			"last_error": instErr,
+		})
+		if instErr != "" {
+			if kumaErr == "" {
+				kumaErr = instErr
+			} else {
+				kumaErr = inst.Name + ": " + instErr
+			}
+		}
+	}
+	if len(kumaInstances) == 0 {
+		kumaErr = "no Kuma instances configured"
 	}
 
 	monitorCount, _ := app.database.GetMonitorCount()
@@ -592,6 +745,7 @@ func (app *App) Status(c *gin.Context) {
 		"kuma": gin.H{
 			"ok":         kumaErr == "",
 			"last_error": kumaErr,
+			"instances":  kumaHealthList,
 		},
 	}
 
@@ -611,7 +765,8 @@ func (app *App) Status(c *gin.Context) {
 
 func (app *App) Services(c *gin.Context) {
 	s := app.settings()
-	result, err := synclib.GetDockerServicesWithStatus(s.ComposePath, s.KumaURL, s.KumaUser, s.KumaPass)
+	clients, _ := app.kumaRegistry.All()
+	result, err := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -624,7 +779,8 @@ func (app *App) Services(c *gin.Context) {
 
 func (app *App) Proxies(c *gin.Context) {
 	s := app.settings()
-	result, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
+	clients, _ := app.kumaRegistry.All()
+	result, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -647,54 +803,73 @@ type KumaMonitorSummary struct {
 	Uptime1y        float64 `json:"uptime_1y,omitempty"`
 	AvgPing         float64 `json:"ping,omitempty"`
 	LastMsg         string  `json:"last_msg,omitempty"`
+	InstanceID      int     `json:"instance_id"`
+	InstanceName    string  `json:"instance_name"`
 }
 
 func (app *App) KumaMonitors(c *gin.Context) {
-	s := app.settings()
+	instances, err := app.database.GetKumaInstances()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(instances) == 0 {
+		c.JSON(http.StatusOK, []KumaMonitorSummary{})
+		return
+	}
 
-	// Try Socket.IO first (supports newer Kuma versions without REST API).
-	monitors, err := kuma.QueryMonitorsViaSocketIO(s.KumaURL, s.KumaUser, s.KumaPass)
-	if err == nil {
-		result := make([]KumaMonitorSummary, 0, len(monitors))
-		for _, m := range monitors {
+	result := make([]KumaMonitorSummary, 0)
+	for _, inst := range instances {
+		// Try Socket.IO first (supports newer Kuma versions without REST API).
+		monitors, sioErr := kuma.QueryMonitorsViaSocketIO(inst.URL, inst.Username, inst.Password)
+		if sioErr == nil {
+			for _, m := range monitors {
+				result = append(result, KumaMonitorSummary{
+					ID:           m.ID,
+					Name:         m.Name,
+					Type:         m.Type,
+					URL:          m.URL,
+					Status:       m.Status,
+					Uptime24h:    m.Uptime24h,
+					Uptime7d:     m.Uptime7d,
+					Uptime1y:     m.Uptime1y,
+					AvgPing:      m.Ping,
+					LastMsg:      m.LastMsg,
+					InstanceID:   int(inst.ID),
+					InstanceName: inst.Name,
+				})
+			}
+			continue
+		}
+
+		// Fall back to REST API for older Kuma versions.
+		client := kuma.NewClient(inst.URL)
+		if err := client.Login(inst.Username, inst.Password); err != nil {
+			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
+				slog.String("instance", inst.Name),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		kumaMonitors, err := client.GetMonitors()
+		if err != nil {
+			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
+				slog.String("instance", inst.Name),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		for _, m := range kumaMonitors {
 			result = append(result, KumaMonitorSummary{
-				ID:        m.ID,
-				Name:      m.Name,
-				Type:      m.Type,
-				URL:       m.URL,
-				Status:    m.Status,
-				Uptime24h: m.Uptime24h,
-				Uptime7d:  m.Uptime7d,
-				Uptime1y:  m.Uptime1y,
-				AvgPing:   m.Ping,
-				LastMsg:   m.LastMsg,
+				ID:              m.ID,
+				Name:            m.Name,
+				Type:            m.Type,
+				URL:             m.URL,
+				DockerContainer: m.DockerContainer,
+				InstanceID:      int(inst.ID),
+				InstanceName:    inst.Name,
 			})
 		}
-		c.JSON(http.StatusOK, result)
-		return
-	}
-
-	// Fall back to REST API for older Kuma versions.
-	client := kuma.NewClient(s.KumaURL)
-	if err := client.Login(s.KumaUser, s.KumaPass); err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error()})
-		return
-	}
-	kumaMonitors, err := client.GetMonitors()
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error()})
-		return
-	}
-
-	result := make([]KumaMonitorSummary, 0, len(kumaMonitors))
-	for _, m := range kumaMonitors {
-		result = append(result, KumaMonitorSummary{
-			ID:              m.ID,
-			Name:            m.Name,
-			Type:            m.Type,
-			URL:             m.URL,
-			DockerContainer: m.DockerContainer,
-		})
 	}
 	c.JSON(http.StatusOK, result)
 }
@@ -743,7 +918,8 @@ func (app *App) DockerSync(c *gin.Context) {
 			app.mu.Unlock()
 		}()
 
-		synclib.RunDockerSync(s.ComposePath, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
+		clients, _ := app.kumaRegistry.All()
+		synclib.RunDockerSync(s.ComposePath, clients, app.database, func(p synclib.Progress) {
 			app.mu.Lock()
 			for _, ch := range app.progressChans {
 				select {
@@ -778,7 +954,8 @@ func (app *App) NPMSync(c *gin.Context) {
 			app.mu.Unlock()
 		}()
 
-		synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
+		clients, _ := app.kumaRegistry.All()
+		synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, clients, app.database, func(p synclib.Progress) {
 			app.mu.Lock()
 			for _, ch := range app.progressChans {
 				select {
@@ -834,11 +1011,13 @@ func (app *App) runScheduledSync() {
 	}()
 
 	s := app.settings()
+	clients, _ := app.kumaRegistry.All()
 	logging.LogInfo("app", "Starting scheduled Docker sync",
 		slog.String("compose_path", s.ComposePath),
+		slog.Int("kuma_instances", len(clients)),
 	)
 
-	synclib.RunDockerSync(s.ComposePath, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
+	synclib.RunDockerSync(s.ComposePath, clients, app.database, func(p synclib.Progress) {
 		logging.LogDebug("app", "Docker sync progress",
 			slog.Int("current", p.Current),
 			slog.Int("total", p.Total),
@@ -849,7 +1028,7 @@ func (app *App) runScheduledSync() {
 
 	log.Println("scheduler: starting periodic npm sync")
 
-	synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass, app.database, func(p synclib.Progress) {
+	synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, clients, app.database, func(p synclib.Progress) {
 		log.Printf("[scheduler] npm sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
 	})
 
@@ -1011,7 +1190,8 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 
 	// Get NPM CNAMEs for comparison
 	var npmCNAMEs []string
-	proxies, npmErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, s.KumaURL, s.KumaUser, s.KumaPass)
+	clients, _ := app.kumaRegistry.All()
+	proxies, npmErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
 	if npmErr == nil {
 		for _, p := range proxies {
 			npmCNAMEs = append(npmCNAMEs, p.CNAME)

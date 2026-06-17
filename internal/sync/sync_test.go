@@ -2,10 +2,16 @@ package sync
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"synapse/internal/db"
+	"synapse/internal/kuma"
 )
 
 //go:fix inline
@@ -1062,5 +1068,183 @@ services:
 
 	if string(api.Entrypoint) != "" {
 		t.Errorf("expected empty entrypoint, got %q", string(api.Entrypoint))
+	}
+}
+
+// --- multi-Kuma fan-out tests ---
+
+// setupTestDB mirrors the helper in internal/db/db_test.go.
+func setupTestDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
+
+// mockKumaClient starts an httptest server emulating a Kuma instance and
+// returns an InstanceClient with a logged-in client. addCalls counts
+// AddMonitor (POST /api/monitors) calls. existingMonitors is the list
+// returned by GET /api/monitors (so callers can simulate pre-existing
+// monitors). The server always reports one docker host.
+func mockKumaClient(t *testing.T, instanceID int, addCalls *int32, existingMonitors []kuma.Monitor) kuma.InstanceClient {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(kuma.LoginResult{Token: "tok"})
+	})
+	mux.HandleFunc("/api/monitors", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string][]kuma.Monitor{"monitors": existingMonitors})
+			return
+		}
+		// POST — AddMonitor
+		if addCalls != nil {
+			atomic.AddInt32(addCalls, 1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(kuma.Monitor{ID: 1, Name: "added", Type: "http"})
+	})
+	mux.HandleFunc("/api/docker-hosts", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]kuma.DockerHost{{ID: 1, Name: "host1"}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := kuma.NewClient(srv.URL)
+	if err := c.Login("user", "pass"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	return kuma.InstanceClient{InstanceID: instanceID, Client: c}
+}
+
+func TestRunDockerSyncFanOut(t *testing.T) {
+	d := setupTestDB(t)
+
+	var add1, add2 int32
+	c1 := mockKumaClient(t, 1, &add1, nil)
+	c2 := mockKumaClient(t, 2, &add2, nil)
+
+	run := RunDockerSync("../../testdata/docker-compose.yml", []kuma.InstanceClient{c1, c2}, d, func(p Progress) {})
+
+	if run.Status != "completed" {
+		t.Errorf("expected status completed, got %q (err=%q)", run.Status, run.ErrorMessage)
+	}
+	if run.Added == 0 {
+		t.Error("expected some monitors added")
+	}
+	// Both instances should have received AddMonitor calls.
+	if atomic.LoadInt32(&add1) == 0 {
+		t.Error("instance 1 received no AddMonitor calls")
+	}
+	if atomic.LoadInt32(&add2) == 0 {
+		t.Error("instance 2 received no AddMonitor calls")
+	}
+	if atomic.LoadInt32(&add1) != atomic.LoadInt32(&add2) {
+		t.Errorf("fan-out should add equally to both instances: %d vs %d", add1, add2)
+	}
+
+	// DB should have monitors for both instance ids.
+	mons, _ := d.GetMonitors()
+	var inst1, inst2 int
+	for _, m := range mons {
+		if m.KumaInstanceID == 1 {
+			inst1++
+		}
+		if m.KumaInstanceID == 2 {
+			inst2++
+		}
+	}
+	if inst1 == 0 || inst2 == 0 {
+		t.Errorf("expected monitors for both instances, got inst1=%d inst2=%d", inst1, inst2)
+	}
+	if inst1 != inst2 {
+		t.Errorf("expected equal monitors per instance, got %d vs %d", inst1, inst2)
+	}
+}
+
+func TestRunDockerSyncEmptyClients(t *testing.T) {
+	d := setupTestDB(t)
+
+	run := RunDockerSync("../../testdata/docker-compose.yml", nil, d, func(p Progress) {})
+
+	if run.Status != "error" {
+		t.Errorf("expected status error, got %q", run.Status)
+	}
+	if run.ErrorMessage == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestRunDockerSyncSkipsExisting(t *testing.T) {
+	d := setupTestDB(t)
+
+	// Pre-populate the mock with an existing monitor named "nginx-web"
+	// (the displayName of the "web" service in testdata/docker-compose.yml).
+	existing := []kuma.Monitor{{ID: 100, Name: "nginx-web", Type: "http"}}
+	var addCalls int32
+	c := mockKumaClient(t, 1, &addCalls, existing)
+
+	run := RunDockerSync("../../testdata/docker-compose.yml", []kuma.InstanceClient{c}, d, func(p Progress) {})
+
+	if run.Status != "completed" {
+		t.Errorf("expected completed, got %q (err=%q)", run.Status, run.ErrorMessage)
+	}
+	if run.Skipped < 1 {
+		t.Errorf("expected at least 1 skipped (nginx-web), got %d", run.Skipped)
+	}
+	// 5 services total, 1 skipped → 4 added.
+	if atomic.LoadInt32(&addCalls) != 4 {
+		t.Errorf("expected 4 AddMonitor calls (5 services - 1 existing), got %d", addCalls)
+	}
+}
+
+func TestGetDockerServicesWithStatusMultiInstance(t *testing.T) {
+	// Client 1 has "nginx-web" in Kuma; client 2 has nothing.
+	c1 := mockKumaClient(t, 1, nil, []kuma.Monitor{{ID: 100, Name: "nginx-web", Type: "http"}})
+	c2 := mockKumaClient(t, 2, nil, nil)
+
+	services, err := GetDockerServicesWithStatus("../../testdata/docker-compose.yml", []kuma.InstanceClient{c1, c2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(services) == 0 {
+		t.Fatal("expected services, got none")
+	}
+
+	foundNginx := false
+	for _, s := range services {
+		if s.ContainerName == "nginx-web" {
+			foundNginx = true
+			if !s.InKuma {
+				t.Errorf("nginx-web should be InKuma (present in instance 1)")
+			}
+		} else {
+			if s.InKuma {
+				t.Errorf("service %q should not be InKuma", s.ContainerName)
+			}
+		}
+	}
+	if !foundNginx {
+		t.Fatal("nginx-web service not found in result")
+	}
+}
+
+func TestGetDockerServicesWithStatusEmptyClients(t *testing.T) {
+	services, err := GetDockerServicesWithStatus("../../testdata/docker-compose.yml", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(services) == 0 {
+		t.Fatal("expected services, got none")
+	}
+	for _, s := range services {
+		if s.InKuma {
+			t.Errorf("service %q should not be InKuma with no clients", s.ContainerName)
+		}
 	}
 }

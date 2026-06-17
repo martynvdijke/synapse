@@ -29,6 +29,8 @@ type Monitor struct {
 	DockerContainer string `json:"docker_container,omitempty"`
 	// KumaID holds the value of the "kuma_id" field.
 	KumaID int `json:"kuma_id,omitempty"`
+	// KumaInstanceID holds the value of the "kuma_instance_id" field.
+	KumaInstanceID int `json:"kuma_instance_id,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
@@ -39,7 +41,7 @@ func (*Monitor) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case monitor.FieldID, monitor.FieldKumaID:
+		case monitor.FieldID, monitor.FieldKumaID, monitor.FieldKumaInstanceID:
 			values[i] = new(sql.NullInt64)
 		case monitor.FieldName, monitor.FieldServiceName, monitor.FieldMonitorType, monitor.FieldURL, monitor.FieldDockerContainer:
 			values[i] = new(sql.NullString)
@@ -102,6 +104,12 @@ func (_m *Monitor) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.KumaID = int(value.Int64)
 			}
+		case monitor.FieldKumaInstanceID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field kuma_instance_id", values[i])
+			} else if value.Valid {
+				_m.KumaInstanceID = int(value.Int64)
+			}
 		case monitor.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
@@ -161,6 +169,9 @@ func (_m *Monitor) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("kuma_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.KumaID))
+	builder.WriteString(", ")
+	builder.WriteString("kuma_instance_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.KumaInstanceID))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

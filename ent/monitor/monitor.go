@@ -23,6 +23,8 @@ const (
 	FieldDockerContainer = "docker_container"
 	// FieldKumaID holds the string denoting the kuma_id field in the database.
 	FieldKumaID = "kuma_id"
+	// FieldKumaInstanceID holds the string denoting the kuma_instance_id field in the database.
+	FieldKumaInstanceID = "kuma_instance_id"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the monitor in the database.
@@ -38,6 +40,7 @@ var Columns = []string{
 	FieldURL,
 	FieldDockerContainer,
 	FieldKumaID,
+	FieldKumaInstanceID,
 	FieldCreatedAt,
 }
 
@@ -58,6 +61,8 @@ var (
 	DefaultDockerContainer string
 	// DefaultKumaID holds the default value on creation for the "kuma_id" field.
 	DefaultKumaID int
+	// DefaultKumaInstanceID holds the default value on creation for the "kuma_instance_id" field.
+	DefaultKumaInstanceID int
 )
 
 // OrderOption defines the ordering options for the Monitor queries.
@@ -96,6 +101,11 @@ func ByDockerContainer(opts ...sql.OrderTermOption) OrderOption {
 // ByKumaID orders the results by the kuma_id field.
 func ByKumaID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldKumaID, opts...).ToFunc()
+}
+
+// ByKumaInstanceID orders the results by the kuma_instance_id field.
+func ByKumaInstanceID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKumaInstanceID, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

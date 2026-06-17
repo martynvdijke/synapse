@@ -333,6 +333,210 @@ func TestSaveSettingsMapBoolRoundTrip(t *testing.T) {
 	}
 }
 
+func TestKumaInstanceCRUD(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create two instances: one enabled, one disabled.
+	prod, err := db.CreateKumaInstance(&KumaInstance{
+		Name: "prod", URL: "http://kuma-prod:3001",
+		Username: "admin", Password: "secret", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create prod: %v", err)
+	}
+	if prod.ID <= 0 {
+		t.Fatalf("expected positive id, got %d", prod.ID)
+	}
+	if prod.Name != "prod" || prod.URL != "http://kuma-prod:3001" || prod.Password != "secret" || !prod.Enabled {
+		t.Errorf("prod fields mismatch: %+v", prod)
+	}
+
+	staging, err := db.CreateKumaInstance(&KumaInstance{
+		Name: "staging", URL: "http://kuma-staging:3001",
+		Username: "admin", Password: "stgpass", Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("create staging: %v", err)
+	}
+
+	all, err := db.GetKumaInstances()
+	if err != nil {
+		t.Fatalf("get all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(all))
+	}
+
+	enabled, err := db.GetEnabledKumaInstances()
+	if err != nil {
+		t.Fatalf("get enabled: %v", err)
+	}
+	if len(enabled) != 1 || enabled[0].Name != "prod" {
+		t.Fatalf("expected 1 enabled (prod), got %+v", enabled)
+	}
+
+	got, err := db.GetKumaInstance(prod.ID)
+	if err != nil {
+		t.Fatalf("get prod: %v", err)
+	}
+	if got.Password != "secret" {
+		t.Errorf("expected password secret, got %q", got.Password)
+	}
+
+	// Update with empty password must keep existing password.
+	if err := db.UpdateKumaInstance(prod.ID, &KumaInstance{
+		Name: "prod2", URL: "http://new", Username: "user2", Password: "", Enabled: true,
+	}); err != nil {
+		t.Fatalf("update keep pass: %v", err)
+	}
+	got, err = db.GetKumaInstance(prod.ID)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if got.Name != "prod2" || got.URL != "http://new" || got.Username != "user2" {
+		t.Errorf("fields not updated: %+v", got)
+	}
+	if got.Password != "secret" {
+		t.Errorf("password should be preserved, got %q", got.Password)
+	}
+
+	// Update with a new password.
+	if err := db.UpdateKumaInstance(prod.ID, &KumaInstance{
+		Name: "prod3", URL: "http://new", Username: "u", Password: "newpass", Enabled: true,
+	}); err != nil {
+		t.Fatalf("update new pass: %v", err)
+	}
+	got, _ = db.GetKumaInstance(prod.ID)
+	if got.Password != "newpass" {
+		t.Errorf("password should be newpass, got %q", got.Password)
+	}
+
+	// Delete staging.
+	if err := db.DeleteKumaInstance(staging.ID); err != nil {
+		t.Fatalf("delete staging: %v", err)
+	}
+	all, _ = db.GetKumaInstances()
+	if len(all) != 1 || all[0].Name != "prod3" {
+		t.Fatalf("expected 1 instance (prod3) after delete, got %+v", all)
+	}
+}
+
+func TestDeleteKumaInstanceCascadesMonitors(t *testing.T) {
+	db := setupTestDB(t)
+
+	inst, err := db.CreateKumaInstance(&KumaInstance{
+		Name: "main", URL: "http://kuma:3001", Username: "admin", Password: "p", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Two monitors belonging to the instance, one orphan with a different instance id.
+	if err := db.AddMonitor(&Monitor{Name: "svc-a", ServiceName: "a", MonitorType: "http", KumaInstanceID: int(inst.ID), CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("add a: %v", err)
+	}
+	if err := db.AddMonitor(&Monitor{Name: "svc-b", ServiceName: "b", MonitorType: "docker", KumaInstanceID: int(inst.ID), CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("add b: %v", err)
+	}
+	if err := db.AddMonitor(&Monitor{Name: "orphan", ServiceName: "o", MonitorType: "http", KumaInstanceID: 999, CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("add orphan: %v", err)
+	}
+
+	mons, _ := db.GetMonitors()
+	if len(mons) != 3 {
+		t.Fatalf("expected 3 monitors, got %d", len(mons))
+	}
+
+	if err := db.DeleteKumaInstance(inst.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	mons, _ = db.GetMonitors()
+	if len(mons) != 1 {
+		t.Fatalf("expected 1 monitor (orphan) after cascade delete, got %d", len(mons))
+	}
+	if mons[0].Name != "orphan" {
+		t.Errorf("expected orphan to remain, got %q", mons[0].Name)
+	}
+}
+
+func TestMonitorUniqueConstraintWithInstanceID(t *testing.T) {
+	db := setupTestDB(t)
+
+	a, _ := db.CreateKumaInstance(&KumaInstance{Name: "a", URL: "http://a", Username: "u", Password: "p", Enabled: true})
+	b, _ := db.CreateKumaInstance(&KumaInstance{Name: "b", URL: "http://b", Username: "u", Password: "p", Enabled: true})
+
+	// Same name/type on instance A — first succeeds.
+	if err := db.AddMonitor(&Monitor{Name: "svc", ServiceName: "svc", MonitorType: "http", KumaInstanceID: int(a.ID), CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("add svc/a: %v", err)
+	}
+	// Duplicate on same instance A — silently dropped (constraint error returns nil).
+	if err := db.AddMonitor(&Monitor{Name: "svc", ServiceName: "svc", MonitorType: "http", KumaInstanceID: int(a.ID), CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("dup add should not return error: %v", err)
+	}
+	// Same name/type on instance B — allowed (different instance).
+	if err := db.AddMonitor(&Monitor{Name: "svc", ServiceName: "svc", MonitorType: "http", KumaInstanceID: int(b.ID), CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("add svc/b: %v", err)
+	}
+
+	mons, _ := db.GetMonitors()
+	if len(mons) != 2 {
+		t.Fatalf("expected 2 monitors (one per instance), got %d", len(mons))
+	}
+}
+
+func TestMigrateKumaInstances(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Add an orphan monitor (kuma_instance_id=0) before migration.
+	if err := db.AddMonitor(&Monitor{Name: "orphan", ServiceName: "o", MonitorType: "http", KumaInstanceID: 0, CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("add orphan: %v", err)
+	}
+
+	// Migrate from legacy settings.
+	if err := db.MigrateKumaInstances(Settings{KumaURL: "http://kuma:3001", KumaUser: "admin", KumaPass: "secret"}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	insts, _ := db.GetKumaInstances()
+	if len(insts) != 1 {
+		t.Fatalf("expected 1 instance after migrate, got %d", len(insts))
+	}
+	if insts[0].Name != "default" || insts[0].URL != "http://kuma:3001" || insts[0].Username != "admin" || insts[0].Password != "secret" || !insts[0].Enabled {
+		t.Errorf("default instance fields mismatch: %+v", insts[0])
+	}
+
+	// Orphan monitor should be backfilled to the default instance id.
+	mons, _ := db.GetMonitors()
+	if len(mons) != 1 {
+		t.Fatalf("expected 1 monitor, got %d", len(mons))
+	}
+	if mons[0].KumaInstanceID != int(insts[0].ID) {
+		t.Errorf("orphan not backfilled: expected instance id %d, got %d", insts[0].ID, mons[0].KumaInstanceID)
+	}
+
+	// Idempotent: second migrate must not create another instance.
+	if err := db.MigrateKumaInstances(Settings{KumaURL: "http://other:3001", KumaUser: "x", KumaPass: "y"}); err != nil {
+		t.Fatalf("migrate again: %v", err)
+	}
+	insts, _ = db.GetKumaInstances()
+	if len(insts) != 1 || insts[0].URL != "http://kuma:3001" {
+		t.Errorf("migrate not idempotent: %+v", insts)
+	}
+}
+
+func TestMigrateKumaInstancesEmptyURL(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.MigrateKumaInstances(Settings{KumaURL: ""}); err != nil {
+		t.Fatalf("migrate empty: %v", err)
+	}
+	insts, _ := db.GetKumaInstances()
+	if len(insts) != 0 {
+		t.Fatalf("expected 0 instances for empty url, got %d", len(insts))
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

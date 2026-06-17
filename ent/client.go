@@ -11,9 +11,12 @@ import (
 
 	"synapse/ent/migrate"
 
+	"synapse/ent/autheliaalert"
+	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
+	"synapse/ent/tempaccess"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
@@ -25,12 +28,18 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
+	// AutheliaAlert is the client for interacting with the AutheliaAlert builders.
+	AutheliaAlert *AutheliaAlertClient
+	// KumaInstance is the client for interacting with the KumaInstance builders.
+	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
 	Monitor *MonitorClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
 	// SyncRun is the client for interacting with the SyncRun builders.
 	SyncRun *SyncRunClient
+	// TempAccess is the client for interacting with the TempAccess builders.
+	TempAccess *TempAccessClient
 }
 
 // NewClient creates a new client configured with the given options.
@@ -42,9 +51,12 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
+	c.AutheliaAlert = NewAutheliaAlertClient(c.config)
+	c.KumaInstance = NewKumaInstanceClient(c.config)
 	c.Monitor = NewMonitorClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
 	c.SyncRun = NewSyncRunClient(c.config)
+	c.TempAccess = NewTempAccessClient(c.config)
 }
 
 type (
@@ -135,11 +147,14 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:      ctx,
-		config:   cfg,
-		Monitor:  NewMonitorClient(cfg),
-		Settings: NewSettingsClient(cfg),
-		SyncRun:  NewSyncRunClient(cfg),
+		ctx:           ctx,
+		config:        cfg,
+		AutheliaAlert: NewAutheliaAlertClient(cfg),
+		KumaInstance:  NewKumaInstanceClient(cfg),
+		Monitor:       NewMonitorClient(cfg),
+		Settings:      NewSettingsClient(cfg),
+		SyncRun:       NewSyncRunClient(cfg),
+		TempAccess:    NewTempAccessClient(cfg),
 	}, nil
 }
 
@@ -157,18 +172,21 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:      ctx,
-		config:   cfg,
-		Monitor:  NewMonitorClient(cfg),
-		Settings: NewSettingsClient(cfg),
-		SyncRun:  NewSyncRunClient(cfg),
+		ctx:           ctx,
+		config:        cfg,
+		AutheliaAlert: NewAutheliaAlertClient(cfg),
+		KumaInstance:  NewKumaInstanceClient(cfg),
+		Monitor:       NewMonitorClient(cfg),
+		Settings:      NewSettingsClient(cfg),
+		SyncRun:       NewSyncRunClient(cfg),
+		TempAccess:    NewTempAccessClient(cfg),
 	}, nil
 }
 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		Monitor.
+//		AutheliaAlert.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -190,30 +208,306 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
-	c.Monitor.Use(hooks...)
-	c.Settings.Use(hooks...)
-	c.SyncRun.Use(hooks...)
+	for _, n := range []interface{ Use(...Hook) }{
+		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.Settings, c.SyncRun, c.TempAccess,
+	} {
+		n.Use(hooks...)
+	}
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
-	c.Monitor.Intercept(interceptors...)
-	c.Settings.Intercept(interceptors...)
-	c.SyncRun.Intercept(interceptors...)
+	for _, n := range []interface{ Intercept(...Interceptor) }{
+		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.Settings, c.SyncRun, c.TempAccess,
+	} {
+		n.Intercept(interceptors...)
+	}
 }
 
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
+	case *AutheliaAlertMutation:
+		return c.AutheliaAlert.mutate(ctx, m)
+	case *KumaInstanceMutation:
+		return c.KumaInstance.mutate(ctx, m)
 	case *MonitorMutation:
 		return c.Monitor.mutate(ctx, m)
 	case *SettingsMutation:
 		return c.Settings.mutate(ctx, m)
 	case *SyncRunMutation:
 		return c.SyncRun.mutate(ctx, m)
+	case *TempAccessMutation:
+		return c.TempAccess.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
+	}
+}
+
+// AutheliaAlertClient is a client for the AutheliaAlert schema.
+type AutheliaAlertClient struct {
+	config
+}
+
+// NewAutheliaAlertClient returns a client for the AutheliaAlert from the given config.
+func NewAutheliaAlertClient(c config) *AutheliaAlertClient {
+	return &AutheliaAlertClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `autheliaalert.Hooks(f(g(h())))`.
+func (c *AutheliaAlertClient) Use(hooks ...Hook) {
+	c.hooks.AutheliaAlert = append(c.hooks.AutheliaAlert, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `autheliaalert.Intercept(f(g(h())))`.
+func (c *AutheliaAlertClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AutheliaAlert = append(c.inters.AutheliaAlert, interceptors...)
+}
+
+// Create returns a builder for creating a AutheliaAlert entity.
+func (c *AutheliaAlertClient) Create() *AutheliaAlertCreate {
+	mutation := newAutheliaAlertMutation(c.config, OpCreate)
+	return &AutheliaAlertCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AutheliaAlert entities.
+func (c *AutheliaAlertClient) CreateBulk(builders ...*AutheliaAlertCreate) *AutheliaAlertCreateBulk {
+	return &AutheliaAlertCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AutheliaAlertClient) MapCreateBulk(slice any, setFunc func(*AutheliaAlertCreate, int)) *AutheliaAlertCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AutheliaAlertCreateBulk{err: fmt.Errorf("calling to AutheliaAlertClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AutheliaAlertCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AutheliaAlertCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AutheliaAlert.
+func (c *AutheliaAlertClient) Update() *AutheliaAlertUpdate {
+	mutation := newAutheliaAlertMutation(c.config, OpUpdate)
+	return &AutheliaAlertUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AutheliaAlertClient) UpdateOne(_m *AutheliaAlert) *AutheliaAlertUpdateOne {
+	mutation := newAutheliaAlertMutation(c.config, OpUpdateOne, withAutheliaAlert(_m))
+	return &AutheliaAlertUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AutheliaAlertClient) UpdateOneID(id int) *AutheliaAlertUpdateOne {
+	mutation := newAutheliaAlertMutation(c.config, OpUpdateOne, withAutheliaAlertID(id))
+	return &AutheliaAlertUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AutheliaAlert.
+func (c *AutheliaAlertClient) Delete() *AutheliaAlertDelete {
+	mutation := newAutheliaAlertMutation(c.config, OpDelete)
+	return &AutheliaAlertDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AutheliaAlertClient) DeleteOne(_m *AutheliaAlert) *AutheliaAlertDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AutheliaAlertClient) DeleteOneID(id int) *AutheliaAlertDeleteOne {
+	builder := c.Delete().Where(autheliaalert.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AutheliaAlertDeleteOne{builder}
+}
+
+// Query returns a query builder for AutheliaAlert.
+func (c *AutheliaAlertClient) Query() *AutheliaAlertQuery {
+	return &AutheliaAlertQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAutheliaAlert},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AutheliaAlert entity by its id.
+func (c *AutheliaAlertClient) Get(ctx context.Context, id int) (*AutheliaAlert, error) {
+	return c.Query().Where(autheliaalert.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AutheliaAlertClient) GetX(ctx context.Context, id int) *AutheliaAlert {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *AutheliaAlertClient) Hooks() []Hook {
+	return c.hooks.AutheliaAlert
+}
+
+// Interceptors returns the client interceptors.
+func (c *AutheliaAlertClient) Interceptors() []Interceptor {
+	return c.inters.AutheliaAlert
+}
+
+func (c *AutheliaAlertClient) mutate(ctx context.Context, m *AutheliaAlertMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AutheliaAlertCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AutheliaAlertUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AutheliaAlertUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AutheliaAlertDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AutheliaAlert mutation op: %q", m.Op())
+	}
+}
+
+// KumaInstanceClient is a client for the KumaInstance schema.
+type KumaInstanceClient struct {
+	config
+}
+
+// NewKumaInstanceClient returns a client for the KumaInstance from the given config.
+func NewKumaInstanceClient(c config) *KumaInstanceClient {
+	return &KumaInstanceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `kumainstance.Hooks(f(g(h())))`.
+func (c *KumaInstanceClient) Use(hooks ...Hook) {
+	c.hooks.KumaInstance = append(c.hooks.KumaInstance, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `kumainstance.Intercept(f(g(h())))`.
+func (c *KumaInstanceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.KumaInstance = append(c.inters.KumaInstance, interceptors...)
+}
+
+// Create returns a builder for creating a KumaInstance entity.
+func (c *KumaInstanceClient) Create() *KumaInstanceCreate {
+	mutation := newKumaInstanceMutation(c.config, OpCreate)
+	return &KumaInstanceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of KumaInstance entities.
+func (c *KumaInstanceClient) CreateBulk(builders ...*KumaInstanceCreate) *KumaInstanceCreateBulk {
+	return &KumaInstanceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *KumaInstanceClient) MapCreateBulk(slice any, setFunc func(*KumaInstanceCreate, int)) *KumaInstanceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &KumaInstanceCreateBulk{err: fmt.Errorf("calling to KumaInstanceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*KumaInstanceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &KumaInstanceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for KumaInstance.
+func (c *KumaInstanceClient) Update() *KumaInstanceUpdate {
+	mutation := newKumaInstanceMutation(c.config, OpUpdate)
+	return &KumaInstanceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *KumaInstanceClient) UpdateOne(_m *KumaInstance) *KumaInstanceUpdateOne {
+	mutation := newKumaInstanceMutation(c.config, OpUpdateOne, withKumaInstance(_m))
+	return &KumaInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *KumaInstanceClient) UpdateOneID(id int) *KumaInstanceUpdateOne {
+	mutation := newKumaInstanceMutation(c.config, OpUpdateOne, withKumaInstanceID(id))
+	return &KumaInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for KumaInstance.
+func (c *KumaInstanceClient) Delete() *KumaInstanceDelete {
+	mutation := newKumaInstanceMutation(c.config, OpDelete)
+	return &KumaInstanceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *KumaInstanceClient) DeleteOne(_m *KumaInstance) *KumaInstanceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *KumaInstanceClient) DeleteOneID(id int) *KumaInstanceDeleteOne {
+	builder := c.Delete().Where(kumainstance.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &KumaInstanceDeleteOne{builder}
+}
+
+// Query returns a query builder for KumaInstance.
+func (c *KumaInstanceClient) Query() *KumaInstanceQuery {
+	return &KumaInstanceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeKumaInstance},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a KumaInstance entity by its id.
+func (c *KumaInstanceClient) Get(ctx context.Context, id int) (*KumaInstance, error) {
+	return c.Query().Where(kumainstance.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *KumaInstanceClient) GetX(ctx context.Context, id int) *KumaInstance {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *KumaInstanceClient) Hooks() []Hook {
+	return c.hooks.KumaInstance
+}
+
+// Interceptors returns the client interceptors.
+func (c *KumaInstanceClient) Interceptors() []Interceptor {
+	return c.inters.KumaInstance
+}
+
+func (c *KumaInstanceClient) mutate(ctx context.Context, m *KumaInstanceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&KumaInstanceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&KumaInstanceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&KumaInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&KumaInstanceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown KumaInstance mutation op: %q", m.Op())
 	}
 }
 
@@ -616,12 +910,146 @@ func (c *SyncRunClient) mutate(ctx context.Context, m *SyncRunMutation) (Value, 
 	}
 }
 
+// TempAccessClient is a client for the TempAccess schema.
+type TempAccessClient struct {
+	config
+}
+
+// NewTempAccessClient returns a client for the TempAccess from the given config.
+func NewTempAccessClient(c config) *TempAccessClient {
+	return &TempAccessClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `tempaccess.Hooks(f(g(h())))`.
+func (c *TempAccessClient) Use(hooks ...Hook) {
+	c.hooks.TempAccess = append(c.hooks.TempAccess, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `tempaccess.Intercept(f(g(h())))`.
+func (c *TempAccessClient) Intercept(interceptors ...Interceptor) {
+	c.inters.TempAccess = append(c.inters.TempAccess, interceptors...)
+}
+
+// Create returns a builder for creating a TempAccess entity.
+func (c *TempAccessClient) Create() *TempAccessCreate {
+	mutation := newTempAccessMutation(c.config, OpCreate)
+	return &TempAccessCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of TempAccess entities.
+func (c *TempAccessClient) CreateBulk(builders ...*TempAccessCreate) *TempAccessCreateBulk {
+	return &TempAccessCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *TempAccessClient) MapCreateBulk(slice any, setFunc func(*TempAccessCreate, int)) *TempAccessCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &TempAccessCreateBulk{err: fmt.Errorf("calling to TempAccessClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*TempAccessCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &TempAccessCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for TempAccess.
+func (c *TempAccessClient) Update() *TempAccessUpdate {
+	mutation := newTempAccessMutation(c.config, OpUpdate)
+	return &TempAccessUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *TempAccessClient) UpdateOne(_m *TempAccess) *TempAccessUpdateOne {
+	mutation := newTempAccessMutation(c.config, OpUpdateOne, withTempAccess(_m))
+	return &TempAccessUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *TempAccessClient) UpdateOneID(id int) *TempAccessUpdateOne {
+	mutation := newTempAccessMutation(c.config, OpUpdateOne, withTempAccessID(id))
+	return &TempAccessUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for TempAccess.
+func (c *TempAccessClient) Delete() *TempAccessDelete {
+	mutation := newTempAccessMutation(c.config, OpDelete)
+	return &TempAccessDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *TempAccessClient) DeleteOne(_m *TempAccess) *TempAccessDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *TempAccessClient) DeleteOneID(id int) *TempAccessDeleteOne {
+	builder := c.Delete().Where(tempaccess.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &TempAccessDeleteOne{builder}
+}
+
+// Query returns a query builder for TempAccess.
+func (c *TempAccessClient) Query() *TempAccessQuery {
+	return &TempAccessQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeTempAccess},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a TempAccess entity by its id.
+func (c *TempAccessClient) Get(ctx context.Context, id int) (*TempAccess, error) {
+	return c.Query().Where(tempaccess.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *TempAccessClient) GetX(ctx context.Context, id int) *TempAccess {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *TempAccessClient) Hooks() []Hook {
+	return c.hooks.TempAccess
+}
+
+// Interceptors returns the client interceptors.
+func (c *TempAccessClient) Interceptors() []Interceptor {
+	return c.inters.TempAccess
+}
+
+func (c *TempAccessClient) mutate(ctx context.Context, m *TempAccessMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&TempAccessCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&TempAccessUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&TempAccessUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&TempAccessDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown TempAccess mutation op: %q", m.Op())
+	}
+}
+
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Monitor, Settings, SyncRun []ent.Hook
+		AutheliaAlert, KumaInstance, Monitor, Settings, SyncRun, TempAccess []ent.Hook
 	}
 	inters struct {
-		Monitor, Settings, SyncRun []ent.Interceptor
+		AutheliaAlert, KumaInstance, Monitor, Settings, SyncRun,
+		TempAccess []ent.Interceptor
 	}
 )

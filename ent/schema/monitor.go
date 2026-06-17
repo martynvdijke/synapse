@@ -18,6 +18,11 @@ func (Monitor) Fields() []ent.Field {
 		field.String("url").Optional().Default(""),
 		field.String("docker_container").Optional().Default(""),
 		field.Int("kuma_id").Default(0),
+		// kuma_instance_id references the KumaInstance this monitor belongs
+		// to. Managed at the application level (no ent edge) to keep the
+		// generated code simple. The same service can exist in multiple
+		// instances, each with its own kuma_id within that instance.
+		field.Int("kuma_instance_id").Default(0),
 		field.Time("created_at"),
 	}
 }
@@ -28,6 +33,6 @@ func (Monitor) Edges() []ent.Edge {
 
 func (Monitor) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("name", "monitor_type").Unique(),
+		index.Fields("name", "monitor_type", "kuma_instance_id").Unique(),
 	}
 }

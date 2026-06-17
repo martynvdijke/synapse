@@ -3,15 +3,34 @@
 package ent
 
 import (
+	"synapse/ent/autheliaalert"
+	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/schema"
 	"synapse/ent/syncrun"
+	"synapse/ent/tempaccess"
 )
 
 // The init function reads all schema descriptors with runtime code
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	autheliaalertFields := schema.AutheliaAlert{}.Fields()
+	_ = autheliaalertFields
+	// autheliaalertDescSeverity is the schema descriptor for severity field.
+	autheliaalertDescSeverity := autheliaalertFields[2].Descriptor()
+	// autheliaalert.DefaultSeverity holds the default value on creation for the severity field.
+	autheliaalert.DefaultSeverity = autheliaalertDescSeverity.Default.(string)
+	// autheliaalertDescStatus is the schema descriptor for status field.
+	autheliaalertDescStatus := autheliaalertFields[3].Descriptor()
+	// autheliaalert.DefaultStatus holds the default value on creation for the status field.
+	autheliaalert.DefaultStatus = autheliaalertDescStatus.Default.(string)
+	kumainstanceFields := schema.KumaInstance{}.Fields()
+	_ = kumainstanceFields
+	// kumainstanceDescEnabled is the schema descriptor for enabled field.
+	kumainstanceDescEnabled := kumainstanceFields[4].Descriptor()
+	// kumainstance.DefaultEnabled holds the default value on creation for the enabled field.
+	kumainstance.DefaultEnabled = kumainstanceDescEnabled.Default.(bool)
 	monitorFields := schema.Monitor{}.Fields()
 	_ = monitorFields
 	// monitorDescURL is the schema descriptor for url field.
@@ -26,6 +45,10 @@ func init() {
 	monitorDescKumaID := monitorFields[5].Descriptor()
 	// monitor.DefaultKumaID holds the default value on creation for the kuma_id field.
 	monitor.DefaultKumaID = monitorDescKumaID.Default.(int)
+	// monitorDescKumaInstanceID is the schema descriptor for kuma_instance_id field.
+	monitorDescKumaInstanceID := monitorFields[6].Descriptor()
+	// monitor.DefaultKumaInstanceID holds the default value on creation for the kuma_instance_id field.
+	monitor.DefaultKumaInstanceID = monitorDescKumaInstanceID.Default.(int)
 	syncrunFields := schema.SyncRun{}.Fields()
 	_ = syncrunFields
 	// syncrunDescSource is the schema descriptor for source field.
@@ -56,4 +79,14 @@ func init() {
 	syncrunDescErrorMessage := syncrunFields[8].Descriptor()
 	// syncrun.DefaultErrorMessage holds the default value on creation for the error_message field.
 	syncrun.DefaultErrorMessage = syncrunDescErrorMessage.Default.(string)
+	tempaccessFields := schema.TempAccess{}.Fields()
+	_ = tempaccessFields
+	// tempaccessDescReason is the schema descriptor for reason field.
+	tempaccessDescReason := tempaccessFields[1].Descriptor()
+	// tempaccess.DefaultReason holds the default value on creation for the reason field.
+	tempaccess.DefaultReason = tempaccessDescReason.Default.(string)
+	// tempaccessDescStatus is the schema descriptor for status field.
+	tempaccessDescStatus := tempaccessFields[4].Descriptor()
+	// tempaccess.DefaultStatus holds the default value on creation for the status field.
+	tempaccess.DefaultStatus = tempaccessDescStatus.Default.(string)
 }

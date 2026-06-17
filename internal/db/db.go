@@ -8,6 +8,7 @@ import (
 
 	"synapse/ent"
 	"synapse/ent/migrate"
+	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
@@ -37,7 +38,21 @@ type Monitor struct {
 	URL             string    `json:"url,omitempty"`
 	DockerContainer string    `json:"docker_container,omitempty"`
 	KumaID          int       `json:"kuma_id"`
+	KumaInstanceID  int       `json:"kuma_instance_id"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// KumaInstance holds the connection details for a single Uptime Kuma
+// instance. Multiple instances may be configured; syncs fan out to all
+// enabled instances.
+type KumaInstance struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Username  string    `json:"username"`
+	Password  string    `json:"password,omitempty"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type AdminUser struct {
@@ -199,7 +214,20 @@ func toMonitor(e *ent.Monitor) Monitor {
 		URL:             e.URL,
 		DockerContainer: e.DockerContainer,
 		KumaID:          e.KumaID,
+		KumaInstanceID:  e.KumaInstanceID,
 		CreatedAt:       e.CreatedAt,
+	}
+}
+
+func toKumaInstance(e *ent.KumaInstance) KumaInstance {
+	return KumaInstance{
+		ID:        int64(e.ID),
+		Name:      e.Name,
+		URL:       e.URL,
+		Username:  e.Username,
+		Password:  e.Password,
+		Enabled:   e.Enabled,
+		CreatedAt: e.CreatedAt,
 	}
 }
 
@@ -273,6 +301,7 @@ func (db *DB) AddMonitor(m *Monitor) error {
 		SetURL(m.URL).
 		SetDockerContainer(m.DockerContainer).
 		SetKumaID(m.KumaID).
+		SetKumaInstanceID(m.KumaInstanceID).
 		SetCreatedAt(m.CreatedAt).
 		Save(context.Background())
 	if err != nil {
@@ -300,6 +329,137 @@ func (db *DB) GetMonitors() ([]Monitor, error) {
 
 func (db *DB) GetMonitorCount() (int, error) {
 	return db.client.Monitor.Query().Count(context.Background())
+}
+
+// --- KumaInstance CRUD ---
+
+// CreateKumaInstance inserts a new Kuma instance row and returns it.
+func (db *DB) CreateKumaInstance(k *KumaInstance) (*KumaInstance, error) {
+	e, err := db.client.KumaInstance.Create().
+		SetName(k.Name).
+		SetURL(k.URL).
+		SetUsername(k.Username).
+		SetPassword(k.Password).
+		SetEnabled(k.Enabled).
+		SetCreatedAt(time.Now()).
+		Save(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	r := toKumaInstance(e)
+	return &r, nil
+}
+
+// GetKumaInstances returns all configured Kuma instances ordered by id.
+func (db *DB) GetKumaInstances() ([]KumaInstance, error) {
+	entries, err := db.client.KumaInstance.Query().
+		Order(kumainstance.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]KumaInstance, len(entries))
+	for i, e := range entries {
+		result[i] = toKumaInstance(e)
+	}
+	return result, nil
+}
+
+// GetKumaInstance returns a single instance by id.
+func (db *DB) GetKumaInstance(id int64) (*KumaInstance, error) {
+	e, err := db.client.KumaInstance.Query().
+		Where(kumainstance.IDEQ(int(id))).
+		Only(context.Background())
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r := toKumaInstance(e)
+	return &r, nil
+}
+
+// GetEnabledKumaInstances returns all enabled instances ordered by id.
+func (db *DB) GetEnabledKumaInstances() ([]KumaInstance, error) {
+	entries, err := db.client.KumaInstance.Query().
+		Where(kumainstance.Enabled(true)).
+		Order(kumainstance.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]KumaInstance, len(entries))
+	for i, e := range entries {
+		result[i] = toKumaInstance(e)
+	}
+	return result, nil
+}
+
+// UpdateKumaInstance updates an existing instance. If password is empty the
+// existing password is preserved.
+func (db *DB) UpdateKumaInstance(id int64, k *KumaInstance) error {
+	q := db.client.KumaInstance.UpdateOneID(int(id)).
+		SetName(k.Name).
+		SetURL(k.URL).
+		SetUsername(k.Username).
+		SetEnabled(k.Enabled)
+	if k.Password != "" {
+		q.SetPassword(k.Password)
+	}
+	_, err := q.Save(context.Background())
+	return err
+}
+
+// DeleteKumaInstance removes an instance and cascades its monitors.
+func (db *DB) DeleteKumaInstance(id int64) error {
+	// Delete monitors belonging to this instance first.
+	_, err := db.client.Monitor.Delete().
+		Where(monitor.KumaInstanceIDEQ(int(id))).
+		Exec(context.Background())
+	if err != nil && !ent.IsNotFound(err) {
+		return err
+	}
+	return db.client.KumaInstance.DeleteOneID(int(id)).Exec(context.Background())
+}
+
+// MigrateKumaInstances migrates the legacy single-instance kuma_* settings
+// into KumaInstance rows. It is idempotent: if instances already exist it
+// does nothing. When instances are created, existing Monitor rows are
+// backfilled with the default instance's id.
+//
+// The legacy settings are read from the provided Settings value (which the
+// caller populates from the Settings KV table and/or env-var defaults).
+func (db *DB) MigrateKumaInstances(legacy Settings) error {
+	existing, err := db.GetKumaInstances()
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	if legacy.KumaURL == "" {
+		// No legacy config to migrate; leave empty. The user can add
+		// instances via the UI.
+		return nil
+	}
+	inst, err := db.CreateKumaInstance(&KumaInstance{
+		Name:     "default",
+		URL:      legacy.KumaURL,
+		Username: legacy.KumaUser,
+		Password: legacy.KumaPass,
+		Enabled:  true,
+	})
+	if err != nil {
+		return err
+	}
+	// Backfill existing monitors (created before multi-instance) to the
+	// default instance.
+	_, err = db.client.Monitor.Update().
+		Where(monitor.KumaInstanceIDEQ(0)).
+		SetKumaInstanceID(int(inst.ID)).
+		Save(context.Background())
+	return err
 }
 
 func (db *DB) GetSettings(defaults Settings) Settings {
