@@ -49,19 +49,163 @@ func (e *EnvironmentRaw) UnmarshalYAML(value *yaml.Node) error {
 	return fmt.Errorf("environment: expected array, map, or string")
 }
 
+// LabelsRaw handles both map ({key: value}) and array (["KEY=VALUE"]) formats.
+type LabelsRaw map[string]string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (l *LabelsRaw) UnmarshalYAML(value *yaml.Node) error {
+	var m map[string]string
+	if err := value.Decode(&m); err == nil {
+		*l = LabelsRaw(m)
+		return nil
+	}
+	var slice []string
+	if err := value.Decode(&slice); err == nil {
+		*l = make(LabelsRaw)
+		for _, item := range slice {
+			if k, v, ok := strings.Cut(item, "="); ok {
+				(*l)[k] = v
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("labels: expected map or array of KEY=VALUE strings")
+}
+
+// PortsRaw handles both short syntax (["80:80"]) and long syntax ([{published: 80, target: 80}]) formats.
+type PortsRaw []string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (p *PortsRaw) UnmarshalYAML(value *yaml.Node) error {
+	var ss []string
+	if err := value.Decode(&ss); err == nil {
+		*p = PortsRaw(ss)
+		return nil
+	}
+	var maps []map[string]any
+	if err := value.Decode(&maps); err == nil {
+		*p = make(PortsRaw, 0, len(maps))
+		for _, m := range maps {
+			var s string
+			if published, ok := m["published"]; ok {
+				s = fmt.Sprintf("%v", published)
+			}
+			if target, ok := m["target"]; ok {
+				if s != "" {
+					s += ":"
+				}
+				s += fmt.Sprintf("%v", target)
+			}
+			if protocol, ok := m["protocol"]; ok {
+				s += "/" + fmt.Sprintf("%v", protocol)
+			}
+			if s == "" {
+				s = fmt.Sprintf("%v", m)
+			}
+			*p = append(*p, s)
+		}
+		return nil
+	}
+	return fmt.Errorf("ports: expected array of strings or array of maps")
+}
+
+// VolumesRaw handles both short syntax (["/host:/container"]) and long syntax ([{type: bind, source: ..., target: ...}]) formats.
+type VolumesRaw []string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (v *VolumesRaw) UnmarshalYAML(value *yaml.Node) error {
+	var ss []string
+	if err := value.Decode(&ss); err == nil {
+		*v = VolumesRaw(ss)
+		return nil
+	}
+	var maps []map[string]any
+	if err := value.Decode(&maps); err == nil {
+		*v = make(VolumesRaw, 0, len(maps))
+		for _, m := range maps {
+			source, _ := m["source"].(string)
+			target, _ := m["target"].(string)
+			if source != "" && target != "" {
+				*v = append(*v, source+":"+target)
+			} else {
+				*v = append(*v, fmt.Sprintf("%v", m))
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("volumes: expected array of strings or array of maps")
+}
+
+// DependsOnRaw handles both array (["service"]) and map ({service: {condition: ...}}) formats.
+type DependsOnRaw []string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (d *DependsOnRaw) UnmarshalYAML(value *yaml.Node) error {
+	var ss []string
+	if err := value.Decode(&ss); err == nil {
+		*d = DependsOnRaw(ss)
+		return nil
+	}
+	var m map[string]any
+	if err := value.Decode(&m); err == nil {
+		*d = make(DependsOnRaw, 0, len(m))
+		for k := range m {
+			*d = append(*d, k)
+		}
+		return nil
+	}
+	return fmt.Errorf("depends_on: expected array or map")
+}
+
+// CommandRaw handles both string and array (["executable", "arg"]) formats.
+type CommandRaw string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (c *CommandRaw) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err == nil {
+		*c = CommandRaw(s)
+		return nil
+	}
+	var ss []string
+	if err := value.Decode(&ss); err == nil {
+		*c = CommandRaw(strings.Join(ss, " "))
+		return nil
+	}
+	return fmt.Errorf("command: expected string or array of strings")
+}
+
+// EntrypointRaw handles both string and array (["executable", "arg"]) formats.
+type EntrypointRaw string
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (e *EntrypointRaw) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err == nil {
+		*e = EntrypointRaw(s)
+		return nil
+	}
+	var ss []string
+	if err := value.Decode(&ss); err == nil {
+		*e = EntrypointRaw(strings.Join(ss, " "))
+		return nil
+	}
+	return fmt.Errorf("entrypoint: expected string or array of strings")
+}
+
 type ServiceDef struct {
 	ContainerName string         `yaml:"container_name"`
 	HealthCheck   *HealthDef     `yaml:"healthcheck"`
 	NetworkMode   string         `yaml:"network_mode"`
 	Image         string         `yaml:"image,omitempty"`
-	Ports         []string       `yaml:"ports,omitempty"`
+	Ports         PortsRaw       `yaml:"ports,omitempty"`
 	Environment   EnvironmentRaw `yaml:"environment,omitempty"`
-	Volumes       []string       `yaml:"volumes,omitempty"`
-	DependsOn     []string       `yaml:"depends_on,omitempty"`
-	Labels        map[string]string `yaml:"labels,omitempty"`
+	Volumes       VolumesRaw     `yaml:"volumes,omitempty"`
+	DependsOn     DependsOnRaw   `yaml:"depends_on,omitempty"`
+	Labels        LabelsRaw      `yaml:"labels,omitempty"`
 	Restart       string         `yaml:"restart,omitempty"`
-	Command       string         `yaml:"command,omitempty"`
-	Entrypoint    string         `yaml:"entrypoint,omitempty"`
+	Command       CommandRaw     `yaml:"command,omitempty"`
+	Entrypoint    EntrypointRaw  `yaml:"entrypoint,omitempty"`
 	User          string         `yaml:"user,omitempty"`
 	WorkingDir    string         `yaml:"working_dir,omitempty"`
 }
@@ -312,8 +456,8 @@ func GetDockerServicesWithStatus(composePath, kumaURL, kumaUser, kumaPass string
 			DependsOn:     svc.DependsOn,
 			Labels:        svc.Labels,
 			Restart:       svc.Restart,
-			Command:       svc.Command,
-			Entrypoint:    svc.Entrypoint,
+			Command:       string(svc.Command),
+			Entrypoint:    string(svc.Entrypoint),
 			User:          svc.User,
 			WorkingDir:    svc.WorkingDir,
 		}

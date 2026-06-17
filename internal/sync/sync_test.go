@@ -697,3 +697,370 @@ func TestExtractTestString(t *testing.T) {
 		}
 	}
 }
+
+// --- LabelsRaw tests ---
+
+func TestLabelsRaw_UnmarshalYAML_Map(t *testing.T) {
+	yamlContent := `labels:
+  app: web
+  tier: frontend`
+	var s struct {
+		Labels LabelsRaw `yaml:"labels"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Labels) != 2 {
+		t.Fatalf("expected 2 labels, got %d", len(s.Labels))
+	}
+	if s.Labels["app"] != "web" {
+		t.Errorf("expected app=web, got %q", s.Labels["app"])
+	}
+	if s.Labels["tier"] != "frontend" {
+		t.Errorf("expected tier=frontend, got %q", s.Labels["tier"])
+	}
+}
+
+func TestLabelsRaw_UnmarshalYAML_Array(t *testing.T) {
+	yamlContent := `labels:
+  - app=web
+  - tier=frontend`
+	var s struct {
+		Labels LabelsRaw `yaml:"labels"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Labels) != 2 {
+		t.Fatalf("expected 2 labels, got %d", len(s.Labels))
+	}
+	if s.Labels["app"] != "web" {
+		t.Errorf("expected app=web, got %q", s.Labels["app"])
+	}
+	if s.Labels["tier"] != "frontend" {
+		t.Errorf("expected tier=frontend, got %q", s.Labels["tier"])
+	}
+}
+
+// --- PortsRaw tests ---
+
+func TestPortsRaw_UnmarshalYAML_ShortSyntax(t *testing.T) {
+	yamlContent := `ports:
+  - "80:80"
+  - "443:443/tcp"`
+	var s struct {
+		Ports PortsRaw `yaml:"ports"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Ports) != 2 {
+		t.Fatalf("expected 2 ports, got %d", len(s.Ports))
+	}
+	if s.Ports[0] != "80:80" {
+		t.Errorf("expected '80:80', got %q", s.Ports[0])
+	}
+	if s.Ports[1] != "443:443/tcp" {
+		t.Errorf("expected '443:443/tcp', got %q", s.Ports[1])
+	}
+}
+
+func TestPortsRaw_UnmarshalYAML_LongSyntax(t *testing.T) {
+	yamlContent := `ports:
+  - published: 8080
+    target: 8080
+  - published: 443
+    target: 8443
+    protocol: tcp`
+	var s struct {
+		Ports PortsRaw `yaml:"ports"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Ports) != 2 {
+		t.Fatalf("expected 2 ports, got %d", len(s.Ports))
+	}
+	if s.Ports[0] != "8080:8080" {
+		t.Errorf("expected '8080:8080', got %q", s.Ports[0])
+	}
+	if s.Ports[1] != "443:8443/tcp" {
+		t.Errorf("expected '443:8443/tcp', got %q", s.Ports[1])
+	}
+}
+
+// --- VolumesRaw tests ---
+
+func TestVolumesRaw_UnmarshalYAML_ShortSyntax(t *testing.T) {
+	yamlContent := `volumes:
+  - ./html:/usr/share/nginx/html:ro
+  - pgdata:/var/lib/postgresql/data`
+	var s struct {
+		Volumes VolumesRaw `yaml:"volumes"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Volumes) != 2 {
+		t.Fatalf("expected 2 volumes, got %d", len(s.Volumes))
+	}
+	if s.Volumes[0] != "./html:/usr/share/nginx/html:ro" {
+		t.Errorf("expected './html:/usr/share/nginx/html:ro', got %q", s.Volumes[0])
+	}
+	if s.Volumes[1] != "pgdata:/var/lib/postgresql/data" {
+		t.Errorf("expected 'pgdata:/var/lib/postgresql/data', got %q", s.Volumes[1])
+	}
+}
+
+func TestVolumesRaw_UnmarshalYAML_LongSyntax(t *testing.T) {
+	yamlContent := `volumes:
+  - type: bind
+    source: ./html
+    target: /usr/share/nginx/html
+  - type: volume
+    source: pgdata
+    target: /var/lib/postgresql/data`
+	var s struct {
+		Volumes VolumesRaw `yaml:"volumes"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Volumes) != 2 {
+		t.Fatalf("expected 2 volumes, got %d", len(s.Volumes))
+	}
+	if s.Volumes[0] != "./html:/usr/share/nginx/html" {
+		t.Errorf("expected './html:/usr/share/nginx/html', got %q", s.Volumes[0])
+	}
+	if s.Volumes[1] != "pgdata:/var/lib/postgresql/data" {
+		t.Errorf("expected 'pgdata:/var/lib/postgresql/data', got %q", s.Volumes[1])
+	}
+}
+
+// --- DependsOnRaw tests ---
+
+func TestDependsOnRaw_UnmarshalYAML_Array(t *testing.T) {
+	yamlContent := `depends_on:
+  - db
+  - redis`
+	var s struct {
+		DependsOn DependsOnRaw `yaml:"depends_on"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.DependsOn) != 2 {
+		t.Fatalf("expected 2 depends_on, got %d", len(s.DependsOn))
+	}
+	if s.DependsOn[0] != "db" {
+		t.Errorf("expected 'db', got %q", s.DependsOn[0])
+	}
+	if s.DependsOn[1] != "redis" {
+		t.Errorf("expected 'redis', got %q", s.DependsOn[1])
+	}
+}
+
+func TestDependsOnRaw_UnmarshalYAML_Map(t *testing.T) {
+	yamlContent := `depends_on:
+  db:
+    condition: service_healthy
+  redis:
+    condition: service_started`
+	var s struct {
+		DependsOn DependsOnRaw `yaml:"depends_on"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.DependsOn) != 2 {
+		t.Fatalf("expected 2 depends_on, got %d", len(s.DependsOn))
+	}
+	// Map keys are extracted; order is not guaranteed
+	depMap := make(map[string]bool)
+	for _, d := range s.DependsOn {
+		depMap[d] = true
+	}
+	if !depMap["db"] {
+		t.Error("expected 'db' in depends_on")
+	}
+	if !depMap["redis"] {
+		t.Error("expected 'redis' in depends_on")
+	}
+}
+
+// --- CommandRaw tests ---
+
+func TestCommandRaw_UnmarshalYAML_String(t *testing.T) {
+	yamlContent := `command: redis-server --appendonly yes`
+	var s struct {
+		Command CommandRaw `yaml:"command"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(s.Command) != "redis-server --appendonly yes" {
+		t.Errorf("expected 'redis-server --appendonly yes', got %q", string(s.Command))
+	}
+}
+
+func TestCommandRaw_UnmarshalYAML_Array(t *testing.T) {
+	yamlContent := `command: ["redis-server", "--appendonly", "yes"]`
+	var s struct {
+		Command CommandRaw `yaml:"command"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(s.Command) != "redis-server --appendonly yes" {
+		t.Errorf("expected 'redis-server --appendonly yes', got %q", string(s.Command))
+	}
+}
+
+func TestCommandRaw_UnmarshalYAML_Empty(t *testing.T) {
+	yamlContent := `command: []`
+	var s struct {
+		Command CommandRaw `yaml:"command"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(s.Command) != "" {
+		t.Errorf("expected empty string, got %q", string(s.Command))
+	}
+}
+
+// --- EntrypointRaw tests ---
+
+func TestEntrypointRaw_UnmarshalYAML_String(t *testing.T) {
+	yamlContent := `entrypoint: /entrypoint.sh`
+	var s struct {
+		Entrypoint EntrypointRaw `yaml:"entrypoint"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(s.Entrypoint) != "/entrypoint.sh" {
+		t.Errorf("expected '/entrypoint.sh', got %q", string(s.Entrypoint))
+	}
+}
+
+func TestEntrypointRaw_UnmarshalYAML_Array(t *testing.T) {
+	yamlContent := `entrypoint: ["/entrypoint.sh", "--flag"]`
+	var s struct {
+		Entrypoint EntrypointRaw `yaml:"entrypoint"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &s); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(s.Entrypoint) != "/entrypoint.sh --flag" {
+		t.Errorf("expected '/entrypoint.sh --flag', got %q", string(s.Entrypoint))
+	}
+}
+
+// --- Integration: Full compose with alternate formats ---
+
+func TestLoadServices_AlternateFormats(t *testing.T) {
+	yamlContent := `
+services:
+  web:
+    image: nginx
+    ports:
+      - published: 8080
+        target: 80
+    volumes:
+      - type: bind
+        source: ./html
+        target: /usr/share/nginx/html
+    depends_on:
+      api:
+        condition: service_healthy
+    labels:
+      - app=web
+      - tier=frontend
+    command: ["nginx", "-g", "daemon off;"]
+    entrypoint: ["/docker-entrypoint.sh"]
+
+  api:
+    image: myapp
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - db
+    labels:
+      app: api
+      tier: backend
+    command: npm start
+    entrypoint: ""
+`
+	var c Compose
+	if err := yaml.Unmarshal([]byte(yamlContent), &c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	web, ok := c.Services["web"]
+	if !ok {
+		t.Fatal("service 'web' not found")
+	}
+
+	// Check web ports (long syntax)
+	if len(web.Ports) != 1 || web.Ports[0] != "8080:80" {
+		t.Errorf("expected ['8080:80'], got %v", web.Ports)
+	}
+
+	// Check web volumes (long syntax)
+	if len(web.Volumes) != 1 || web.Volumes[0] != "./html:/usr/share/nginx/html" {
+		t.Errorf("expected ['./html:/usr/share/nginx/html'], got %v", web.Volumes)
+	}
+
+	// Check web depends_on (map syntax)
+	if len(web.DependsOn) != 1 || web.DependsOn[0] != "api" {
+		t.Errorf("expected depends_on ['api'], got %v", web.DependsOn)
+	}
+
+	// Check web labels (array syntax)
+	if web.Labels == nil || web.Labels["app"] != "web" {
+		t.Errorf("expected labels {app: web}, got %v", web.Labels)
+	}
+
+	// Check web command (array syntax)
+	if string(web.Command) != "nginx -g daemon off;" {
+		t.Errorf("expected 'nginx -g daemon off;', got %q", string(web.Command))
+	}
+
+	// Check web entrypoint (array syntax)
+	if string(web.Entrypoint) != "/docker-entrypoint.sh" {
+		t.Errorf("expected '/docker-entrypoint.sh', got %q", string(web.Entrypoint))
+	}
+
+	// Check api fields (mix of traditional and alternate)
+	api, ok := c.Services["api"]
+	if !ok {
+		t.Fatal("service 'api' not found")
+	}
+
+	if len(api.Ports) != 1 || api.Ports[0] != "8080:8080" {
+		t.Errorf("expected ['8080:8080'], got %v", api.Ports)
+	}
+
+	if len(api.Volumes) != 1 || api.Volumes[0] != "./data:/app/data" {
+		t.Errorf("expected ['./data:/app/data'], got %v", api.Volumes)
+	}
+
+	if len(api.DependsOn) != 1 || api.DependsOn[0] != "db" {
+		t.Errorf("expected depends_on ['db'], got %v", api.DependsOn)
+	}
+
+	if api.Labels == nil || api.Labels["app"] != "api" {
+		t.Errorf("expected labels {app: api}, got %v", api.Labels)
+	}
+
+	if string(api.Command) != "npm start" {
+		t.Errorf("expected 'npm start', got %q", string(api.Command))
+	}
+
+	if string(api.Entrypoint) != "" {
+		t.Errorf("expected empty entrypoint, got %q", string(api.Entrypoint))
+	}
+}
