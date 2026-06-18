@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/martynvdijke/synapse/compare/v1.5.0...v1.5.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **deps:** update all non-major dependencies to v1.14.46 ([#14](https://github.com/martynvdijke/synapse/issues/14)) ([2bc5399](https://github.com/martynvdijke/synapse/commit/2bc5399947b3fcfba8684100b4584b9d5dfc4975))
+
 # [1.5.0](https://github.com/martynvdijke/synapse/compare/v1.4.1...v1.5.0) (2026-06-17)
 
 
