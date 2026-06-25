@@ -1,3 +1,10 @@
+## [1.5.6](https://github.com/martynvdijke/synapse/compare/v1.5.5...v1.5.6) (2026-06-25)
+
+
+### Bug Fixes
+
+* refactor KumaMonitors handler to use kumaRegistry + REST, add on-demand stats endpoint ([4959539](https://github.com/martynvdijke/synapse/commit/49595399b45ae443e80a42a1de4e06dd2bd6c48f))
+
 ## [1.5.5](https://github.com/martynvdijke/synapse/compare/v1.5.4...v1.5.5) (2026-06-24)
 
 ## [1.5.4](https://github.com/martynvdijke/synapse/compare/v1.5.3...v1.5.4) (2026-06-23)
