@@ -200,6 +200,7 @@ func TestAPI_RequiresAuth(t *testing.T) {
 		"/api/settings",
 		"/api/sync/history",
 		"/api/monitors",
+		"/api/monitors/1/stats",
 		"/api/authelia/status",
 		"/api/authelia/alerts",
 		"/api/authelia/temp-access",
@@ -420,6 +421,62 @@ func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	}
 }
 
+func TestKumaMonitorsHandler_Empty(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "GET", "/api/monitors", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body == nil || len(body) != 0 {
+		t.Errorf("expected empty array, got %v", body)
+	}
+}
+
+func TestKumaMonitorStatsHandler_InvalidID(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "GET", "/api/monitors/abc/stats?instance=1", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid id, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestKumaMonitorStatsHandler_NoInstanceParam(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "GET", "/api/monitors/1/stats", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing instance param, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestKumaMonitorStatsHandler_NotFoundInstance(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "GET", "/api/monitors/1/stats?instance=999", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-existent instance, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSaveSettingsDoesNotOverwriteUnsentOtelFields(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
@@ -479,6 +536,7 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/sync/docker", app.DockerSync)
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/monitors", app.KumaMonitors)
+		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
 		api.GET("/authelia/status", app.AutheliaStatus)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
 		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)

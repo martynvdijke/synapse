@@ -82,6 +82,9 @@ export async function setupBaseMocks(page: Page) {
   await page.route('**/api/authelia/sync', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dry_run: true, added: 0, skipped: 0, actions: [] }) });
   });
+  await page.route('**/api/monitors/*/stats', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, status: 1, uptime_24h: 99.9, uptime_7d: 99.5, uptime_1y: 99.0, avg_ping: 45.2, last_msg: 'OK', cert_info: '' }) });
+  });
 }
 
 export async function setupSyncMocks(page: Page) {

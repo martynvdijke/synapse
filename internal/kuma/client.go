@@ -20,10 +20,12 @@ import (
 )
 
 type Client struct {
-	url    string
-	token  string
-	client *http.Client
-	tracer trace.Tracer
+	url      string
+	token    string
+	username string // stored for Socket.IO re-use
+	password string // stored for Socket.IO re-use
+	client   *http.Client
+	tracer   trace.Tracer
 }
 
 type Monitor struct {
@@ -56,6 +58,8 @@ func NewClient(url string) *Client {
 }
 
 func (c *Client) Login(username, password string) error {
+	c.username = username
+	c.password = password
 	_, span := c.tracer.Start(context.Background(), "Login",
 		trace.WithAttributes(attribute.String("kuma_url", c.url)),
 	)

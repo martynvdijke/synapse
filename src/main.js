@@ -82,6 +82,11 @@ document.getElementById('btn-kuma-add').addEventListener('click', function() { s
 document.getElementById('btn-kuma-save').addEventListener('click', saveKumaInstance);
 document.getElementById('btn-kuma-cancel').addEventListener('click', hideKumaInstanceForm);
 
+// Monitor detail panel close
+document.getElementById('monitor-detail-close').addEventListener('click', function() {
+    document.getElementById('monitor-detail-panel').classList.add('d-none');
+});
+
 // Clickable Docker stat card → switch to Docker tab
 function activateDockerTab() {
     var tabBtn = document.getElementById('tab-btn-docker');

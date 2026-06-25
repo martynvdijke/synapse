@@ -180,6 +180,19 @@
                     </tbody>
                 </table>
             </div>
+
+            <!-- Monitor detail stats panel (hidden by default) -->
+            <div id="monitor-detail-panel" class="card mt-3 d-none">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 id="monitor-detail-title" class="mb-0">Monitor Details</h6>
+                    <button type="button" class="btn-close" id="monitor-detail-close" aria-label="Close detail panel"></button>
+                </div>
+                <div class="card-body" id="monitor-detail-body">
+                    <div class="text-center text-muted py-3">
+                        <span class="spinner-border spinner-border-sm" role="status"></span> Loading stats...
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="tab-pane fade" id="tab-npm" role="tabpanel" aria-labelledby="tab-btn-npm">

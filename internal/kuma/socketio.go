@@ -282,6 +282,17 @@ func (c *sioClient) close() {
 
 // --- Kuma-specific query ---
 
+type MonitorStats struct {
+	ID       int     `json:"id"`
+	Status   int     `json:"status"`
+	Uptime24h float64 `json:"uptime_24h"`
+	Uptime7d  float64 `json:"uptime_7d"`
+	Uptime1y  float64 `json:"uptime_1y"`
+	AvgPing   float64 `json:"avg_ping"`
+	LastMsg   string  `json:"last_msg,omitempty"`
+	CertInfo  string  `json:"cert_info,omitempty"`
+}
+
 type KumaMonitor struct {
 	ID        int     `json:"id"`
 	Name      string  `json:"name"`
@@ -293,6 +304,21 @@ type KumaMonitor struct {
 	Uptime1y  float64 `json:"uptime_1y"`
 	Ping      float64 `json:"ping"`
 	LastMsg   string  `json:"last_msg,omitempty"`
+}
+
+func parseID(raw json.RawMessage) (int, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil {
+			return n, true
+		}
+	}
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		return n, true
+	}
+	return 0, false
 }
 
 func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
@@ -314,21 +340,6 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 		seen     = make(map[int]bool)
 		loginErr = make(chan error, 1)
 	)
-
-	parseID := func(raw json.RawMessage) (int, bool) {
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			var n int
-			if _, err := fmt.Sscanf(s, "%d", &n); err == nil {
-				return n, true
-			}
-		}
-		var n int
-		if json.Unmarshal(raw, &n) == nil {
-			return n, true
-		}
-		return 0, false
-	}
 
 	events := make(chan rawEvent, 256)
 	cli, err := dialSIO(kumaURL)
@@ -579,4 +590,188 @@ collectLoop:
 	)
 
 	return out, nil
+}
+
+func GetMonitorStats(client *Client, monitorID int) (*MonitorStats, error) {
+	queryStart := time.Now()
+	logging.LogInfo("kuma", "Getting monitor stats via Socket.IO",
+		slog.Int("monitor_id", monitorID),
+		slog.String("kuma_url", client.url),
+	)
+
+	var (
+		upt24    float64
+		upt7d    float64
+		upt1y    float64
+		ping     float64
+		status   int
+		lastMsg  string
+		certInfo string
+		loginErr = make(chan error, 1)
+		loginSent bool
+	)
+
+	events := make(chan rawEvent, 256)
+	cli, err := dialSIO(client.url)
+	if err != nil {
+		return nil, fmt.Errorf("socket.io dial: %w", err)
+	}
+	defer cli.close()
+
+	cli.onEvent = func(ev rawEvent) {
+		events <- ev
+	}
+
+	loginTimer := time.After(20 * time.Second)
+
+	handleEvent := func(ev rawEvent) {
+		switch ev.Name {
+		case "loginRequired":
+			if !loginSent {
+				loginSent = true
+				ackCh := cli.emitWithAck("login", map[string]string{
+					"username": client.username,
+					"password": client.password,
+				})
+				go func() {
+					select {
+					case resp := <-ackCh:
+						if len(resp) > 0 {
+							var r struct {
+								Ok bool `json:"ok"`
+							}
+							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
+								loginErr <- nil
+								return
+							}
+						}
+						loginErr <- fmt.Errorf("login rejected")
+					case <-time.After(15 * time.Second):
+						loginErr <- fmt.Errorf("login timeout")
+					}
+				}()
+			}
+		case "uptime":
+			if len(ev.Args) >= 3 {
+				if id, ok := parseID(ev.Args[0]); ok && id == monitorID {
+					var dur string
+					var val float64
+					if json.Unmarshal(ev.Args[1], &dur) == nil && json.Unmarshal(ev.Args[2], &val) == nil {
+						switch dur {
+						case "24":
+							upt24 = val
+							if val > 0.5 {
+								status = 1
+							} else if val == 0 {
+								status = 0
+							}
+						case "720":
+							upt7d = val
+						case "1y":
+							upt1y = val
+						}
+					}
+				}
+			}
+		case "avgPing":
+			if len(ev.Args) >= 2 {
+				if id, ok := parseID(ev.Args[0]); ok && id == monitorID {
+					if string(ev.Args[1]) != "null" {
+						var v float64
+						if json.Unmarshal(ev.Args[1], &v) == nil {
+							ping = v
+						}
+					}
+				}
+			}
+		case "certInfo":
+			if len(ev.Args) >= 2 {
+				if id, ok := parseID(ev.Args[0]); ok && id == monitorID {
+					var certStr string
+					if json.Unmarshal(ev.Args[1], &certStr) == nil {
+						var p struct {
+							CertInfo struct {
+								Subject struct {
+									CN string `json:"CN"`
+								} `json:"subject"`
+							} `json:"certInfo"`
+						}
+						if json.Unmarshal([]byte(certStr), &p) == nil && p.CertInfo.Subject.CN != "" {
+							certInfo = p.CertInfo.Subject.CN
+						}
+					}
+				}
+			}
+		case "heartbeat":
+			if len(ev.Args) >= 1 {
+				var hb struct {
+					MonitorID int    `json:"monitorID"`
+					Stat      int    `json:"status"`
+					Msg       string `json:"msg"`
+				}
+				if json.Unmarshal(ev.Args[0], &hb) == nil && hb.MonitorID == monitorID {
+					status = hb.Stat
+					if hb.Msg != "" {
+						lastMsg = hb.Msg
+					}
+				}
+			}
+		}
+	}
+
+	// Phase 1: wait for login
+	logging.LogDebug("kuma", "Socket.IO waiting for loginRequired event")
+loop:
+	for {
+		select {
+		case ev := <-events:
+			handleEvent(ev)
+		case err := <-loginErr:
+			if err != nil {
+				logging.LogError("kuma", "Socket.IO login failed",
+					slog.String("error", err.Error()),
+					slog.Duration("duration", time.Since(queryStart)),
+				)
+				return nil, fmt.Errorf("login: %w", err)
+			}
+			logging.LogInfo("kuma", "Socket.IO login successful",
+				slog.Duration("duration", time.Since(queryStart)),
+			)
+			break loop
+		case <-loginTimer:
+			logging.LogError("kuma", "Socket.IO login timeout",
+				slog.Duration("duration", time.Since(queryStart)),
+			)
+			return nil, fmt.Errorf("login timeout")
+		}
+	}
+
+	// Phase 2: collect data for 20 seconds
+	logging.LogDebug("kuma", "Socket.IO collecting monitor stats")
+	dataTimer := time.After(20 * time.Second)
+collectLoop:
+	for {
+		select {
+		case ev := <-events:
+			handleEvent(ev)
+		case <-dataTimer:
+			break collectLoop
+		}
+	}
+
+	logging.LogInfo("kuma", "Socket.IO monitor stats collection complete",
+		slog.Int("monitor_id", monitorID),
+		slog.Duration("duration", time.Since(queryStart)),
+	)
+
+	return &MonitorStats{
+		ID:       monitorID,
+		Status:   status,
+		Uptime24h: upt24,
+		Uptime7d:  upt7d,
+		Uptime1y:  upt1y,
+		AvgPing:   ping,
+		LastMsg:   lastMsg,
+		CertInfo:  certInfo,
+	}, nil
 }

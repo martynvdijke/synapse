@@ -102,6 +102,67 @@ window.toggleDockerDetail = function(row) {
     }
 };
 
+// ─── Monitor detail stats cache ────────────────────────────────
+var monitorStatsCache = new Map();
+var STATS_CACHE_TTL = 60000; // 60 seconds
+
+function getCachedStats(instanceId, monitorId) {
+    var key = instanceId + ':' + monitorId;
+    var entry = monitorStatsCache.get(key);
+    if (entry && Date.now() - entry.timestamp < STATS_CACHE_TTL) return entry.stats;
+    return null;
+}
+
+function renderMonitorStats(stats) {
+    var statusBadge = stats.status === 1
+        ? '<span class="badge bg-success">UP</span>'
+        : stats.status === 0
+        ? '<span class="badge bg-danger">DOWN</span>'
+        : '<span class="badge bg-secondary">UNKNOWN</span>';
+
+    return '<div class="row g-3">'
+        + '<div class="col-md-4"><div class="small text-muted">Status</div><div>' + statusBadge + '</div></div>'
+        + '<div class="col-md-4"><div class="small text-muted">Uptime 24h</div><div class="fs-5 fw-bold">' + (stats.uptime_24h != null ? stats.uptime_24h.toFixed(1) + '%' : '—') + '</div></div>'
+        + '<div class="col-md-4"><div class="small text-muted">Uptime 7d</div><div class="fs-5 fw-bold">' + (stats.uptime_7d != null ? stats.uptime_7d.toFixed(1) + '%' : '—') + '</div></div>'
+        + '<div class="col-md-4"><div class="small text-muted">Uptime 1y</div><div class="fs-5 fw-bold">' + (stats.uptime_1y != null ? stats.uptime_1y.toFixed(1) + '%' : '—') + '</div></div>'
+        + '<div class="col-md-4"><div class="small text-muted">Avg Ping</div><div class="fs-5 fw-bold">' + (stats.avg_ping != null ? stats.avg_ping.toFixed(1) + 'ms' : '—') + '</div></div>'
+        + '<div class="col-md-4"><div class="small text-muted">Last Message</div><div class="text-truncate">' + (stats.last_msg ? esc(stats.last_msg) : '—') + '</div></div>'
+        + (stats.cert_info ? '<div class="col-12"><div class="small text-muted">Certificate</div><div><code>' + esc(stats.cert_info) + '</code></div></div>' : '')
+        + '</div>';
+}
+
+function loadMonitorStats(monitorId, instanceId) {
+    var cacheKey = instanceId + ':' + monitorId;
+    var cached = getCachedStats(instanceId, monitorId);
+    if (cached) {
+        document.getElementById('monitor-detail-title').textContent = 'Monitor #' + monitorId;
+        document.getElementById('monitor-detail-body').innerHTML = renderMonitorStats(cached);
+        document.getElementById('monitor-detail-panel').classList.remove('d-none');
+        return;
+    }
+
+    document.getElementById('monitor-detail-title').textContent = 'Monitor #' + monitorId;
+    document.getElementById('monitor-detail-body').innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm" role="status"></span> Loading stats...</div>';
+    document.getElementById('monitor-detail-panel').classList.remove('d-none');
+
+    apiFetch('/api/monitors/' + monitorId + '/stats?instance=' + instanceId)
+        .then(function(r) {
+            if (!r.ok) { throw new Error(r.status); }
+            return r.json();
+        })
+        .then(function(stats) {
+            monitorStatsCache.set(cacheKey, { stats: stats, timestamp: Date.now() });
+            document.getElementById('monitor-detail-body').innerHTML = renderMonitorStats(stats);
+        })
+        .catch(function(err) {
+            if (err.message === 'not authenticated') return;
+            var msg = 'Stats unavailable';
+            if (err.message === '404') msg = 'Instance not found';
+            else if (err.message === '502') msg = 'Stats unavailable (Socket.IO connection failed)';
+            document.getElementById('monitor-detail-body').innerHTML = '<div class="text-center text-danger py-3">' + msg + '</div>';
+        });
+}
+
 export function loadKumaMonitors() {
     document.getElementById('kuma-tbody').innerHTML = loadingRow(5);
     apiFetch('/api/monitors').then(function(r){return r.json();}).then(function(monitors) {
@@ -115,7 +176,7 @@ export function loadKumaMonitors() {
             return;
         }
         tbody.innerHTML = monitors.map(function(m) {
-            return '<tr>'
+            return '<tr style="cursor:pointer" data-monitor-id="' + m.id + '" data-instance-id="' + m.instance_id + '">'
                 + '<td data-label="ID">#' + m.id + '</td>'
                 + '<td data-label="Name">' + esc(m.name) + '</td>'
                 + '<td data-label="Instance"><span class="badge bg-primary">' + esc(m.instance_name || '—') + '</span></td>'
@@ -123,6 +184,13 @@ export function loadKumaMonitors() {
                 + '<td data-label="URL / Container" class="text-truncate" style="max-width:300px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
                 + '</tr>';
         }).join('');
+
+        // Wire click handlers for detail stats
+        tbody.querySelectorAll('tr[data-monitor-id]').forEach(function(row) {
+            row.addEventListener('click', function() {
+                loadMonitorStats(row.getAttribute('data-monitor-id'), row.getAttribute('data-instance-id'));
+            });
+        });
     });
 }
 

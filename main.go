@@ -247,6 +247,7 @@ func main() {
 		api.GET("/services", app.Services)
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
+		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
 		api.GET("/status", app.Status)
 
 		// Logs endpoints
@@ -808,70 +809,83 @@ type KumaMonitorSummary struct {
 }
 
 func (app *App) KumaMonitors(c *gin.Context) {
-	instances, err := app.database.GetKumaInstances()
+	clients, err := app.kumaRegistry.All()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if len(instances) == 0 {
-		c.JSON(http.StatusOK, []KumaMonitorSummary{})
-		return
+		logging.LogWarn("app", "KumaRegistry returned partial results",
+			slog.String("error", err.Error()),
+		)
 	}
 
-	result := make([]KumaMonitorSummary, 0)
+	// Build instance name map from DB (lightweight — ent caches internally).
+	instances, _ := app.database.GetKumaInstances()
+	nameMap := make(map[int]string)
 	for _, inst := range instances {
-		// Try Socket.IO first (supports newer Kuma versions without REST API).
-		monitors, sioErr := kuma.QueryMonitorsViaSocketIO(inst.URL, inst.Username, inst.Password)
-		if sioErr == nil {
-			for _, m := range monitors {
-				result = append(result, KumaMonitorSummary{
-					ID:           m.ID,
-					Name:         m.Name,
-					Type:         m.Type,
-					URL:          m.URL,
-					Status:       m.Status,
-					Uptime24h:    m.Uptime24h,
-					Uptime7d:     m.Uptime7d,
-					Uptime1y:     m.Uptime1y,
-					AvgPing:      m.Ping,
-					LastMsg:      m.LastMsg,
-					InstanceID:   int(inst.ID),
-					InstanceName: inst.Name,
-				})
-			}
-			continue
-		}
+		nameMap[int(inst.ID)] = inst.Name
+	}
 
-		// Fall back to REST API for older Kuma versions.
-		client := kuma.NewClient(inst.URL)
-		if err := client.Login(inst.Username, inst.Password); err != nil {
-			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
-				slog.String("instance", inst.Name),
-				slog.String("error", err.Error()),
-			)
-			continue
-		}
-		kumaMonitors, err := client.GetMonitors()
+	result := make([]KumaMonitorSummary, 0, len(clients)*10)
+	for _, ic := range clients {
+		monitors, err := ic.Client.GetMonitors()
 		if err != nil {
 			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
-				slog.String("instance", inst.Name),
+				slog.Int("instance_id", ic.InstanceID),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
-		for _, m := range kumaMonitors {
+		instanceName, _ := nameMap[ic.InstanceID]
+		for _, m := range monitors {
 			result = append(result, KumaMonitorSummary{
 				ID:              m.ID,
 				Name:            m.Name,
 				Type:            m.Type,
 				URL:             m.URL,
 				DockerContainer: m.DockerContainer,
-				InstanceID:      int(inst.ID),
-				InstanceName:    inst.Name,
+				// Status/uptime/ping require Socket.IO detail stats.
+				// The summary endpoint uses REST for speed.
+				InstanceID:   ic.InstanceID,
+				InstanceName: instanceName,
 			})
 		}
 	}
+
+	if result == nil {
+		result = []KumaMonitorSummary{}
+	}
+
 	c.JSON(http.StatusOK, result)
+}
+
+func (app *App) KumaMonitorStats(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid monitor id"})
+		return
+	}
+	instanceID, err := strconv.Atoi(c.Query("instance"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
+		return
+	}
+
+	client, err := app.kumaRegistry.Get(instanceID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
+		return
+	}
+
+	stats, err := kuma.GetMonitorStats(client, id)
+	if err != nil {
+		logging.LogWarn("app", "Socket.IO monitor stats failed",
+			slog.Int("monitor_id", id),
+			slog.Int("instance_id", instanceID),
+			slog.String("error", err.Error()),
+		)
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
 }
 
 func (app *App) SyncHistory(c *gin.Context) {
