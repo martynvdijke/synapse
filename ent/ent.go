@@ -10,6 +10,7 @@ import (
 	"synapse/ent/autheliaalert"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
+	"synapse/ent/npminstance"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 	"synapse/ent/tempaccess"
@@ -81,6 +82,7 @@ func checkColumn(t, c string) error {
 			autheliaalert.Table: autheliaalert.ValidColumn,
 			kumainstance.Table:  kumainstance.ValidColumn,
 			monitor.Table:       monitor.ValidColumn,
+			npminstance.Table:   npminstance.ValidColumn,
 			settings.Table:      settings.ValidColumn,
 			syncrun.Table:       syncrun.ValidColumn,
 			tempaccess.Table:    tempaccess.ValidColumn,

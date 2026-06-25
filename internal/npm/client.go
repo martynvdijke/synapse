@@ -37,24 +37,40 @@ type ProxyEntry struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	Protocol  string `json:"protocol"`
+	SourceInstanceID int `json:"source_instance_id,omitempty"`
 }
 
-var npmTracer = otel.Tracer("npm")
+type Client struct {
+	url      string
+	user     string
+	pass     string
+	client   *http.Client
+	tracer   trace.Tracer
+}
 
-func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
-	_, span := npmTracer.Start(context.Background(), "GetProxyHosts",
-		trace.WithAttributes(
-			attribute.String("npm_host", npmHost),
-		),
+func NewClient(url, user, pass string) *Client {
+	return &Client{
+		url: url, user: user, pass: pass,
+		client: &http.Client{
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   30 * time.Second,
+		},
+		tracer: otel.Tracer("npm"),
+	}
+}
+
+func (c *Client) GetProxyHosts() ([]ProxyEntry, error) {
+	_, span := c.tracer.Start(context.Background(), "GetProxyHosts",
+		trace.WithAttributes(attribute.String("npm_url", c.url)),
 	)
 	defer span.End()
 
 	start := time.Now()
 	logging.LogDebug("npm", "Fetching proxy hosts from NPM",
-		slog.String("npm_host", npmHost),
+		slog.String("npm_url", c.url),
 	)
 
-	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", npmHost)
+	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", c.url)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		logging.LogError("npm", "Failed to create NPM request",
@@ -63,13 +79,9 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 		)
 		return nil, err
 	}
-	req.SetBasicAuth(npmUser, npmPass)
+	req.SetBasicAuth(c.user, c.pass)
 
-	client := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		Timeout:   30 * time.Second,
-	}
-	resp, err := client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		errKind := logging.ErrorKindNetwork
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "timeout") {
@@ -138,4 +150,11 @@ func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
 	)
 
 	return entries, nil
+}
+
+var npmTracer = otel.Tracer("npm")
+
+// GetProxyHosts is the legacy free function wrapper for backward compat.
+func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
+	return NewClient(npmHost, npmUser, npmPass).GetProxyHosts()
 }

@@ -6,6 +6,7 @@ import (
 	"synapse/ent/autheliaalert"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
+	"synapse/ent/npminstance"
 	"synapse/ent/schema"
 	"synapse/ent/syncrun"
 	"synapse/ent/tempaccess"
@@ -49,6 +50,12 @@ func init() {
 	monitorDescKumaInstanceID := monitorFields[6].Descriptor()
 	// monitor.DefaultKumaInstanceID holds the default value on creation for the kuma_instance_id field.
 	monitor.DefaultKumaInstanceID = monitorDescKumaInstanceID.Default.(int)
+	npminstanceFields := schema.NPMInstance{}.Fields()
+	_ = npminstanceFields
+	// npminstanceDescEnabled is the schema descriptor for enabled field.
+	npminstanceDescEnabled := npminstanceFields[4].Descriptor()
+	// npminstance.DefaultEnabled holds the default value on creation for the enabled field.
+	npminstance.DefaultEnabled = npminstanceDescEnabled.Default.(bool)
 	syncrunFields := schema.SyncRun{}.Fields()
 	_ = syncrunFields
 	// syncrunDescSource is the schema descriptor for source field.

@@ -18,6 +18,8 @@ type Tx struct {
 	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
 	Monitor *MonitorClient
+	// NPMInstance is the client for interacting with the NPMInstance builders.
+	NPMInstance *NPMInstanceClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
 	// SyncRun is the client for interacting with the SyncRun builders.
@@ -158,6 +160,7 @@ func (tx *Tx) init() {
 	tx.AutheliaAlert = NewAutheliaAlertClient(tx.config)
 	tx.KumaInstance = NewKumaInstanceClient(tx.config)
 	tx.Monitor = NewMonitorClient(tx.config)
+	tx.NPMInstance = NewNPMInstanceClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)
 	tx.SyncRun = NewSyncRunClient(tx.config)
 	tx.TempAccess = NewTempAccessClient(tx.config)

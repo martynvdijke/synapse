@@ -24,6 +24,7 @@ import (
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	"synapse/internal/logging"
+	"synapse/internal/npm"
 	synclib "synapse/internal/sync"
 	"synapse/internal/telemetry"
 	"log/slog"
@@ -89,6 +90,7 @@ func authMiddleware() gin.HandlerFunc {
 type App struct {
 	database     *db.DB
 	kumaRegistry *kuma.Registry
+	npmRegistry  *npm.Registry
 
 	mu            sync.Mutex
 	running       bool
@@ -162,10 +164,14 @@ func main() {
 	if err := database.MigrateKumaInstances(legacySettings); err != nil {
 		slog.Warn("kuma instance migration failed", "error", err)
 	}
+	if err := database.MigrateNPMInstances(legacySettings); err != nil {
+		slog.Warn("npm instance migration failed", "error", err)
+	}
 
 	app := &App{
 		database:     database,
 		kumaRegistry: kuma.NewRegistry(database),
+		npmRegistry:  npm.NewRegistry(database),
 	}
 
 	// Read OTel endpoint from database settings, fall back to env var
@@ -240,6 +246,11 @@ func main() {
 		api.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
 		api.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
 		api.POST("/kuma-instances/:id/test", app.TestKumaInstance)
+		api.GET("/npm-instances", app.ListNPMInstances)
+		api.POST("/npm-instances", app.CreateNPMInstance)
+		api.PUT("/npm-instances/:id", app.UpdateNPMInstance)
+		api.DELETE("/npm-instances/:id", app.DeleteNPMInstance)
+		api.POST("/npm-instances/:id/test", app.TestNPMInstance)
 		api.POST("/sync/docker", app.DockerSync)
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/sync/progress", app.ProgressSSE)
@@ -384,11 +395,15 @@ func (app *App) Dashboard(c *gin.Context) {
 
 func (app *App) GetSettings(c *gin.Context) {
 	s := app.settings()
+	// Check if NPM instances have been migrated (multi-instance exists)
+	npmInstances, _ := app.database.GetNPMInstances()
+	npmMigrated := len(npmInstances) > 0
 	c.JSON(http.StatusOK, gin.H{
 		"compose_path":            s.ComposePath,
 		"npm_host":                s.NPMHost,
 		"npm_user":                s.NPMUser,
 		"npm_pass":                mask(s.NPMPass),
+		"npm_migrated":            npmMigrated,
 		"authelia_config_path":    s.AutheliaConfigPath,
 		"authelia_db_path":        s.AutheliaDBPath,
 		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
@@ -407,25 +422,18 @@ func (app *App) SaveSettings(c *gin.Context) {
 		return
 	}
 
-	current := app.settings()
-
 	// Only save fields that were explicitly sent in the request body
 	pairs := make(map[string]string)
 
-	if v, ok := raw["npm_host"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["npm_host"] = val
+	// Legacy npm_host/user/pass are deprecated — log warning if sent, ignore.
+	if _, ok := raw["npm_host"]; ok {
+		logging.LogWarn("app", "Legacy npm_host setting is deprecated, use NPM API instead")
 	}
-	if v, ok := raw["npm_user"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["npm_user"] = val
+	if _, ok := raw["npm_user"]; ok {
+		logging.LogWarn("app", "Legacy npm_user setting is deprecated, use NPM API instead")
 	}
-	if v, ok := raw["npm_pass"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		if val == "" {
-			val = current.NPMPass
-		}
-		pairs["npm_pass"] = val
+	if _, ok := raw["npm_pass"]; ok {
+		logging.LogWarn("app", "Legacy npm_pass setting is deprecated, use NPM API instead")
 	}
 	if v, ok := raw["compose_path"]; ok {
 		var val string; json.Unmarshal(v, &val)
@@ -486,7 +494,8 @@ func (app *App) TestNPM(c *gin.Context) {
 		}
 	}
 	clients, _ := app.kumaRegistry.All()
-	_, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
+	npmClients, _ := app.npmRegistry.All()
+	_, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
 	if err != nil {
 		logging.LogError("app", "NPM connection test failed",
 			slog.String("npm_host", s.NPMHost),
@@ -526,6 +535,28 @@ func toKumaInstanceJSON(k *db.KumaInstance) kumaInstanceJSON {
 		Password:  mask(k.Password),
 		Enabled:   k.Enabled,
 		CreatedAt: k.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+type npmInstanceJSON struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toNPMInstanceJSON(n *db.NPMInstance) npmInstanceJSON {
+	return npmInstanceJSON{
+		ID:        n.ID,
+		Name:      n.Name,
+		URL:       n.URL,
+		Username:  n.Username,
+		Password:  mask(n.Password),
+		Enabled:   n.Enabled,
+		CreatedAt: n.CreatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -675,6 +706,130 @@ func (app *App) TestKumaInstance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Uptime Kuma connection successful"})
 }
 
+// --- NPM instance handlers ---
+
+func (app *App) ListNPMInstances(c *gin.Context) {
+	instances, err := app.database.GetNPMInstances()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	result := make([]npmInstanceJSON, 0, len(instances))
+	for i := range instances {
+		result = append(result, toNPMInstanceJSON(&instances[i]))
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (app *App) CreateNPMInstance(c *gin.Context) {
+	var input struct {
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Enabled  *bool  `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if input.Name == "" || input.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and url are required"})
+		return
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	created, err := app.database.CreateNPMInstance(&db.NPMInstance{
+		Name:     input.Name,
+		URL:      input.URL,
+		Username: input.Username,
+		Password: input.Password,
+		Enabled:  enabled,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, toNPMInstanceJSON(created))
+}
+
+func (app *App) UpdateNPMInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var input struct {
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Enabled  *bool  `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	existing, err := app.database.GetNPMInstance(id)
+	if err != nil || existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+	enabled := existing.Enabled
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	if err := app.database.UpdateNPMInstance(id, &db.NPMInstance{
+		Name:     input.Name,
+		URL:      input.URL,
+		Username: input.Username,
+		Password: input.Password,
+		Enabled:  enabled,
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	app.npmRegistry.Invalidate(int(id))
+	updated, _ := app.database.GetNPMInstance(id)
+	c.JSON(http.StatusOK, toNPMInstanceJSON(updated))
+}
+
+func (app *App) DeleteNPMInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	app.npmRegistry.Invalidate(int(id))
+	if err := app.database.DeleteNPMInstance(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func (app *App) TestNPMInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	inst, err := app.database.GetNPMInstance(id)
+	if err != nil || inst == nil {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "message": "instance not found"})
+		return
+	}
+	client := npm.NewClient(inst.URL, inst.Username, inst.Password)
+	proxies, err := client.GetProxyHosts()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": fmt.Sprintf("Connected, %d proxy hosts found", len(proxies))})
+}
+
 func (app *App) Status(c *gin.Context) {
 	s := app.settings()
 
@@ -692,9 +847,10 @@ func (app *App) Status(c *gin.Context) {
 	clients, _ := app.kumaRegistry.All()
 
 	// NPM health
+	npmClients, _ := app.npmRegistry.All()
 	npmCount := 0
 	npmErr := ""
-	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
+	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
 	if npmFetchErr == nil {
 		npmCount = len(npmProxies)
 	} else {
@@ -734,6 +890,24 @@ func (app *App) Status(c *gin.Context) {
 	lastDocker, _ := app.database.GetLatestSyncRun("docker")
 	lastNPM, _ := app.database.GetLatestSyncRun("npm")
 
+	// NPM per-instance health
+	npmInstances, _ := app.database.GetEnabledNPMInstances()
+	npmHealthList := make([]gin.H, 0, len(npmInstances))
+	for _, inst := range npmInstances {
+		c := npm.NewClient(inst.URL, inst.Username, inst.Password)
+		_, err := c.GetProxyHosts()
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		npmHealthList = append(npmHealthList, gin.H{
+			"id":         inst.ID,
+			"name":       inst.Name,
+			"ok":         err == nil,
+			"last_error": errMsg,
+		})
+	}
+
 	connectionHealth := gin.H{
 		"docker": gin.H{
 			"ok":         dockerErr == "",
@@ -742,6 +916,7 @@ func (app *App) Status(c *gin.Context) {
 		"npm": gin.H{
 			"ok":         npmErr == "",
 			"last_error": npmErr,
+			"instances":  npmHealthList,
 		},
 		"kuma": gin.H{
 			"ok":         kumaErr == "",
@@ -779,9 +954,9 @@ func (app *App) Services(c *gin.Context) {
 }
 
 func (app *App) Proxies(c *gin.Context) {
-	s := app.settings()
 	clients, _ := app.kumaRegistry.All()
-	result, err := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
+	npmClients, _ := app.npmRegistry.All()
+	result, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -949,8 +1124,6 @@ func (app *App) DockerSync(c *gin.Context) {
 }
 
 func (app *App) NPMSync(c *gin.Context) {
-	s := app.settings()
-
 	app.mu.Lock()
 	if app.running {
 		app.mu.Unlock()
@@ -969,7 +1142,8 @@ func (app *App) NPMSync(c *gin.Context) {
 		}()
 
 		clients, _ := app.kumaRegistry.All()
-		synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, clients, app.database, func(p synclib.Progress) {
+		npmClients, _ := app.npmRegistry.All()
+		synclib.RunNPMSync(npmClients, clients, app.database, func(p synclib.Progress) {
 			app.mu.Lock()
 			for _, ch := range app.progressChans {
 				select {
@@ -1042,7 +1216,8 @@ func (app *App) runScheduledSync() {
 
 	log.Println("scheduler: starting periodic npm sync")
 
-	synclib.RunNPMSync(s.NPMHost, s.NPMUser, s.NPMPass, clients, app.database, func(p synclib.Progress) {
+	npmClients, _ := app.npmRegistry.All()
+	synclib.RunNPMSync(npmClients, clients, app.database, func(p synclib.Progress) {
 		log.Printf("[scheduler] npm sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
 	})
 
@@ -1205,7 +1380,8 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 	// Get NPM CNAMEs for comparison
 	var npmCNAMEs []string
 	clients, _ := app.kumaRegistry.All()
-	proxies, npmErr := synclib.GetNPMProxiesWithStatus(s.NPMHost, s.NPMUser, s.NPMPass, clients)
+	npmClients, _ := app.npmRegistry.All()
+	proxies, npmErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
 	if npmErr == nil {
 		for _, p := range proxies {
 			npmCNAMEs = append(npmCNAMEs, p.CNAME)
@@ -1454,7 +1630,8 @@ func (app *App) AutheliaSync(c *gin.Context) {
 	}
 
 	// Fetch NPM entries
-	npmEntries, err := synclib.GetNPMProxyEntries(s.NPMHost, s.NPMUser, s.NPMPass)
+	npmClients, _ := app.npmRegistry.All()
+	npmEntries, err := synclib.GetNPMProxyEntries(npmClients)
 	if err != nil {
 		logging.LogError("authelia", "Failed to fetch NPM entries for Authelia sync",
 			slog.String("error", err.Error()),

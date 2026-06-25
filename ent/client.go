@@ -14,6 +14,7 @@ import (
 	"synapse/ent/autheliaalert"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
+	"synapse/ent/npminstance"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 	"synapse/ent/tempaccess"
@@ -34,6 +35,8 @@ type Client struct {
 	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
 	Monitor *MonitorClient
+	// NPMInstance is the client for interacting with the NPMInstance builders.
+	NPMInstance *NPMInstanceClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
 	// SyncRun is the client for interacting with the SyncRun builders.
@@ -54,6 +57,7 @@ func (c *Client) init() {
 	c.AutheliaAlert = NewAutheliaAlertClient(c.config)
 	c.KumaInstance = NewKumaInstanceClient(c.config)
 	c.Monitor = NewMonitorClient(c.config)
+	c.NPMInstance = NewNPMInstanceClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
 	c.SyncRun = NewSyncRunClient(c.config)
 	c.TempAccess = NewTempAccessClient(c.config)
@@ -152,6 +156,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		AutheliaAlert: NewAutheliaAlertClient(cfg),
 		KumaInstance:  NewKumaInstanceClient(cfg),
 		Monitor:       NewMonitorClient(cfg),
+		NPMInstance:   NewNPMInstanceClient(cfg),
 		Settings:      NewSettingsClient(cfg),
 		SyncRun:       NewSyncRunClient(cfg),
 		TempAccess:    NewTempAccessClient(cfg),
@@ -177,6 +182,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		AutheliaAlert: NewAutheliaAlertClient(cfg),
 		KumaInstance:  NewKumaInstanceClient(cfg),
 		Monitor:       NewMonitorClient(cfg),
+		NPMInstance:   NewNPMInstanceClient(cfg),
 		Settings:      NewSettingsClient(cfg),
 		SyncRun:       NewSyncRunClient(cfg),
 		TempAccess:    NewTempAccessClient(cfg),
@@ -209,7 +215,8 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.Settings, c.SyncRun, c.TempAccess,
+		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.NPMInstance, c.Settings,
+		c.SyncRun, c.TempAccess,
 	} {
 		n.Use(hooks...)
 	}
@@ -219,7 +226,8 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.Settings, c.SyncRun, c.TempAccess,
+		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.NPMInstance, c.Settings,
+		c.SyncRun, c.TempAccess,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -234,6 +242,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.KumaInstance.mutate(ctx, m)
 	case *MonitorMutation:
 		return c.Monitor.mutate(ctx, m)
+	case *NPMInstanceMutation:
+		return c.NPMInstance.mutate(ctx, m)
 	case *SettingsMutation:
 		return c.Settings.mutate(ctx, m)
 	case *SyncRunMutation:
@@ -644,6 +654,139 @@ func (c *MonitorClient) mutate(ctx context.Context, m *MonitorMutation) (Value, 
 	}
 }
 
+// NPMInstanceClient is a client for the NPMInstance schema.
+type NPMInstanceClient struct {
+	config
+}
+
+// NewNPMInstanceClient returns a client for the NPMInstance from the given config.
+func NewNPMInstanceClient(c config) *NPMInstanceClient {
+	return &NPMInstanceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `npminstance.Hooks(f(g(h())))`.
+func (c *NPMInstanceClient) Use(hooks ...Hook) {
+	c.hooks.NPMInstance = append(c.hooks.NPMInstance, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `npminstance.Intercept(f(g(h())))`.
+func (c *NPMInstanceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.NPMInstance = append(c.inters.NPMInstance, interceptors...)
+}
+
+// Create returns a builder for creating a NPMInstance entity.
+func (c *NPMInstanceClient) Create() *NPMInstanceCreate {
+	mutation := newNPMInstanceMutation(c.config, OpCreate)
+	return &NPMInstanceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of NPMInstance entities.
+func (c *NPMInstanceClient) CreateBulk(builders ...*NPMInstanceCreate) *NPMInstanceCreateBulk {
+	return &NPMInstanceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *NPMInstanceClient) MapCreateBulk(slice any, setFunc func(*NPMInstanceCreate, int)) *NPMInstanceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &NPMInstanceCreateBulk{err: fmt.Errorf("calling to NPMInstanceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*NPMInstanceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &NPMInstanceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for NPMInstance.
+func (c *NPMInstanceClient) Update() *NPMInstanceUpdate {
+	mutation := newNPMInstanceMutation(c.config, OpUpdate)
+	return &NPMInstanceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *NPMInstanceClient) UpdateOne(_m *NPMInstance) *NPMInstanceUpdateOne {
+	mutation := newNPMInstanceMutation(c.config, OpUpdateOne, withNPMInstance(_m))
+	return &NPMInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *NPMInstanceClient) UpdateOneID(id int) *NPMInstanceUpdateOne {
+	mutation := newNPMInstanceMutation(c.config, OpUpdateOne, withNPMInstanceID(id))
+	return &NPMInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for NPMInstance.
+func (c *NPMInstanceClient) Delete() *NPMInstanceDelete {
+	mutation := newNPMInstanceMutation(c.config, OpDelete)
+	return &NPMInstanceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *NPMInstanceClient) DeleteOne(_m *NPMInstance) *NPMInstanceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *NPMInstanceClient) DeleteOneID(id int) *NPMInstanceDeleteOne {
+	builder := c.Delete().Where(npminstance.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &NPMInstanceDeleteOne{builder}
+}
+
+// Query returns a query builder for NPMInstance.
+func (c *NPMInstanceClient) Query() *NPMInstanceQuery {
+	return &NPMInstanceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeNPMInstance},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a NPMInstance entity by its id.
+func (c *NPMInstanceClient) Get(ctx context.Context, id int) (*NPMInstance, error) {
+	return c.Query().Where(npminstance.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *NPMInstanceClient) GetX(ctx context.Context, id int) *NPMInstance {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *NPMInstanceClient) Hooks() []Hook {
+	return c.hooks.NPMInstance
+}
+
+// Interceptors returns the client interceptors.
+func (c *NPMInstanceClient) Interceptors() []Interceptor {
+	return c.inters.NPMInstance
+}
+
+func (c *NPMInstanceClient) mutate(ctx context.Context, m *NPMInstanceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&NPMInstanceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&NPMInstanceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&NPMInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&NPMInstanceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown NPMInstance mutation op: %q", m.Op())
+	}
+}
+
 // SettingsClient is a client for the Settings schema.
 type SettingsClient struct {
 	config
@@ -1046,10 +1189,11 @@ func (c *TempAccessClient) mutate(ctx context.Context, m *TempAccessMutation) (V
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		AutheliaAlert, KumaInstance, Monitor, Settings, SyncRun, TempAccess []ent.Hook
+		AutheliaAlert, KumaInstance, Monitor, NPMInstance, Settings, SyncRun,
+		TempAccess []ent.Hook
 	}
 	inters struct {
-		AutheliaAlert, KumaInstance, Monitor, Settings, SyncRun,
+		AutheliaAlert, KumaInstance, Monitor, NPMInstance, Settings, SyncRun,
 		TempAccess []ent.Interceptor
 	}
 )

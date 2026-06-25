@@ -10,6 +10,7 @@ import (
 	"synapse/ent/migrate"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
+	"synapse/ent/npminstance"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 
@@ -46,6 +47,19 @@ type Monitor struct {
 // instance. Multiple instances may be configured; syncs fan out to all
 // enabled instances.
 type KumaInstance struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Username  string    `json:"username"`
+	Password  string    `json:"password,omitempty"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// NPMInstance holds the connection details for a single Nginx Proxy Manager
+// instance. Multiple instances may be configured; syncs fan out to all
+// enabled instances.
+type NPMInstance struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	URL       string    `json:"url"`
@@ -221,6 +235,18 @@ func toMonitor(e *ent.Monitor) Monitor {
 
 func toKumaInstance(e *ent.KumaInstance) KumaInstance {
 	return KumaInstance{
+		ID:        int64(e.ID),
+		Name:      e.Name,
+		URL:       e.URL,
+		Username:  e.Username,
+		Password:  e.Password,
+		Enabled:   e.Enabled,
+		CreatedAt: e.CreatedAt,
+	}
+}
+
+func toNPMInstance(e *ent.NPMInstance) NPMInstance {
+	return NPMInstance{
 		ID:        int64(e.ID),
 		Name:      e.Name,
 		URL:       e.URL,
@@ -459,6 +485,116 @@ func (db *DB) MigrateKumaInstances(legacy Settings) error {
 		Where(monitor.KumaInstanceIDEQ(0)).
 		SetKumaInstanceID(int(inst.ID)).
 		Save(context.Background())
+	return err
+}
+
+// --- NPMInstance CRUD ---
+
+// CreateNPMInstance inserts a new NPM instance row and returns it.
+func (db *DB) CreateNPMInstance(n *NPMInstance) (*NPMInstance, error) {
+	e, err := db.client.NPMInstance.Create().
+		SetName(n.Name).
+		SetURL(n.URL).
+		SetUsername(n.Username).
+		SetPassword(n.Password).
+		SetEnabled(n.Enabled).
+		SetCreatedAt(time.Now()).
+		Save(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	r := toNPMInstance(e)
+	return &r, nil
+}
+
+// GetNPMInstances returns all configured NPM instances ordered by id.
+func (db *DB) GetNPMInstances() ([]NPMInstance, error) {
+	entries, err := db.client.NPMInstance.Query().
+		Order(npminstance.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]NPMInstance, len(entries))
+	for i, e := range entries {
+		result[i] = toNPMInstance(e)
+	}
+	return result, nil
+}
+
+// GetNPMInstance returns a single instance by id.
+func (db *DB) GetNPMInstance(id int64) (*NPMInstance, error) {
+	e, err := db.client.NPMInstance.Query().
+		Where(npminstance.IDEQ(int(id))).
+		Only(context.Background())
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r := toNPMInstance(e)
+	return &r, nil
+}
+
+// GetEnabledNPMInstances returns all enabled instances ordered by id.
+func (db *DB) GetEnabledNPMInstances() ([]NPMInstance, error) {
+	entries, err := db.client.NPMInstance.Query().
+		Where(npminstance.Enabled(true)).
+		Order(npminstance.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]NPMInstance, len(entries))
+	for i, e := range entries {
+		result[i] = toNPMInstance(e)
+	}
+	return result, nil
+}
+
+// UpdateNPMInstance updates an existing instance. If password is empty the
+// existing password is preserved.
+func (db *DB) UpdateNPMInstance(id int64, n *NPMInstance) error {
+	q := db.client.NPMInstance.UpdateOneID(int(id)).
+		SetName(n.Name).
+		SetURL(n.URL).
+		SetUsername(n.Username).
+		SetEnabled(n.Enabled)
+	if n.Password != "" {
+		q.SetPassword(n.Password)
+	}
+	_, err := q.Save(context.Background())
+	return err
+}
+
+// DeleteNPMInstance removes an instance. NPM instances don't own monitors
+// (monitors belong to Kuma instances), so no cascade is needed.
+func (db *DB) DeleteNPMInstance(id int64) error {
+	return db.client.NPMInstance.DeleteOneID(int(id)).Exec(context.Background())
+}
+
+// MigrateNPMInstances migrates the legacy single-instance npm_* settings
+// into NPMInstance rows. It is idempotent: if instances already exist it
+// does nothing.
+func (db *DB) MigrateNPMInstances(legacy Settings) error {
+	existing, err := db.GetNPMInstances()
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	if legacy.NPMHost == "" {
+		return nil
+	}
+	_, err = db.CreateNPMInstance(&NPMInstance{
+		Name:     "default",
+		URL:      legacy.NPMHost,
+		Username: legacy.NPMUser,
+		Password: legacy.NPMPass,
+		Enabled:  true,
+	})
 	return err
 }
 

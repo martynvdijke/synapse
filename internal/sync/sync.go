@@ -266,10 +266,11 @@ type HealthCheckInfo struct {
 }
 
 type ProxyInfo struct {
-	CNAME     string `json:"cname"`
-	Container string `json:"container"`
-	InKuma    bool   `json:"in_kuma"`
-	KumaID    int    `json:"kuma_id,omitempty"`
+	CNAME            string `json:"cname"`
+	Container        string `json:"container"`
+	InKuma           bool   `json:"in_kuma"`
+	KumaID           int    `json:"kuma_id,omitempty"`
+	SourceInstanceID int    `json:"source_instance_id,omitempty"`
 }
 
 // extractTestString joins healthcheck.Test into a single string for regex matching.
@@ -493,49 +494,63 @@ func GetDockerServicesWithStatus(composePath string, clients []kuma.InstanceClie
 }
 
 // NPMProxyEntry is the full proxy entry data (without Kuma status).
-type NPMProxyEntry struct {
-	CNAME     string `json:"cname"`
-	Container string `json:"container"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`
-}
-
-// GetNPMProxyEntries fetches proxy entries from NPM without Kuma status augmentation.
-func GetNPMProxyEntries(npmHost, npmUser, npmPass string) ([]NPMProxyEntry, error) {
-	entries, err := npm.GetProxyHosts(npmHost, npmUser, npmPass)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]NPMProxyEntry, len(entries))
-	for i, e := range entries {
-		result[i] = NPMProxyEntry{
-			CNAME:     e.CNAME,
-			Container: e.Container,
-			Host:      e.Host,
-			Port:      e.Port,
-			Protocol:  e.Protocol,
+// GetNPMProxyEntries fetches proxy entries across all NPM instances, merged with dedup (first CNAME wins by instance ID order).
+func GetNPMProxyEntries(npmClients []npm.InstanceClient) ([]npm.ProxyEntry, error) {
+	seen := make(map[string]bool)
+	var result []npm.ProxyEntry
+	for _, nc := range npmClients {
+		entries, err := nc.Client.GetProxyHosts()
+		if err != nil {
+			logging.LogWarn("sync", "Failed to fetch proxy entries from NPM instance",
+				slog.Int("instance_id", nc.InstanceID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		for _, e := range entries {
+			if seen[e.CNAME] {
+				continue
+			}
+			seen[e.CNAME] = true
+			e.SourceInstanceID = nc.InstanceID
+			result = append(result, e)
 		}
 	}
 	return result, nil
 }
 
-func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass string, clients []kuma.InstanceClient) ([]ProxyInfo, error) {
+func GetNPMProxiesWithStatus(npmClients []npm.InstanceClient, clients []kuma.InstanceClient) ([]ProxyInfo, error) {
 	_, span := tracer.Start(context.Background(), "GetNPMProxiesWithStatus",
-		trace.WithAttributes(attribute.String("npm_host", npmHost)),
+		trace.WithAttributes(attribute.Int("npm_instance_count", len(npmClients))),
 	)
 	defer span.End()
 
 	start := time.Now()
 	logging.LogDebug("sync", "Getting NPM proxies with Kuma status",
-		slog.String("npm_host", npmHost),
+		slog.Int("npm_instances", len(npmClients)),
 		slog.Int("kuma_instances", len(clients)),
 	)
 
-	entries, err := npm.GetProxyHosts(npmHost, npmUser, npmPass)
-	if err != nil {
-		return nil, err
+	// Fan out across all NPM instances, merge with dedup (first CNAME wins by instance ID order).
+	seen := make(map[string]bool)
+	var npmEntries []npm.ProxyEntry
+	for _, nc := range npmClients {
+		entries, err := nc.Client.GetProxyHosts()
+		if err != nil {
+			logging.LogWarn("sync", "Failed to fetch proxy hosts from NPM instance",
+				slog.Int("instance_id", nc.InstanceID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		for _, e := range entries {
+			if seen[e.CNAME] {
+				continue
+			}
+			seen[e.CNAME] = true
+			e.SourceInstanceID = nc.InstanceID
+			npmEntries = append(npmEntries, e)
+		}
 	}
 
 	// Merge monitors from all Kuma instances.
@@ -556,11 +571,12 @@ func GetNPMProxiesWithStatus(npmHost, npmUser, npmPass string, clients []kuma.In
 		}
 	}
 
-	var result []ProxyInfo
-	for _, e := range entries {
+	result := make([]ProxyInfo, 0, len(npmEntries))
+	for _, e := range npmEntries {
 		info := ProxyInfo{
-			CNAME:     e.CNAME,
-			Container: e.Container,
+			CNAME:            e.CNAME,
+			Container:        e.Container,
+			SourceInstanceID: e.SourceInstanceID,
 		}
 
 		if km, ok := kumaMap[e.CNAME]; ok {
@@ -792,15 +808,15 @@ func RunDockerSync(composePath string, clients []kuma.InstanceClient, database *
 	return run
 }
 
-func RunNPMSync(npmHost, npmUser, npmPass string, clients []kuma.InstanceClient, database *db.DB, onProgress ProgressFn) db.SyncRun {
+func RunNPMSync(npmClients []npm.InstanceClient, clients []kuma.InstanceClient, database *db.DB, onProgress ProgressFn) db.SyncRun {
 	_, span := tracer.Start(context.Background(), "RunNPMSync",
-		trace.WithAttributes(attribute.String("npm_host", npmHost)),
+		trace.WithAttributes(attribute.Int("npm_instance_count", len(npmClients))),
 	)
 	defer span.End()
 
 	syncStart := time.Now()
 	logging.LogInfo("sync", "Starting NPM sync",
-		slog.String("npm_host", npmHost),
+		slog.Int("npm_instances", len(npmClients)),
 		slog.Int("kuma_instances", len(clients)),
 	)
 
@@ -826,12 +842,26 @@ func RunNPMSync(npmHost, npmUser, npmPass string, clients []kuma.InstanceClient,
 		return run
 	}
 
-	entries, err := npm.GetProxyHosts(npmHost, npmUser, npmPass)
-	if err != nil {
-		database.FinishSyncRun(id, "error", 0, 0, 0, err.Error())
-		run.Status = "error"
-		run.ErrorMessage = err.Error()
-		return run
+	// Fan out across all NPM instances, merge with dedup.
+	seen := make(map[string]bool)
+	var entries []npm.ProxyEntry
+	for _, nc := range npmClients {
+		ncEntries, err := nc.Client.GetProxyHosts()
+		if err != nil {
+			logging.LogWarn("sync", "Failed to fetch proxy entries from NPM instance",
+				slog.Int("instance_id", nc.InstanceID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		for _, e := range ncEntries {
+			if seen[e.CNAME] {
+				continue
+			}
+			seen[e.CNAME] = true
+			e.SourceInstanceID = nc.InstanceID
+			entries = append(entries, e)
+		}
 	}
 	run.TotalServices = len(entries)
 	logging.LogInfo("sync", "NPM sync loaded proxy entries",

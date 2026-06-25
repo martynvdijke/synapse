@@ -44,6 +44,18 @@ func (f MonitorFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, err
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.MonitorMutation", m)
 }
 
+// The NPMInstanceFunc type is an adapter to allow the use of ordinary
+// function as NPMInstance mutator.
+type NPMInstanceFunc func(context.Context, *ent.NPMInstanceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f NPMInstanceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.NPMInstanceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.NPMInstanceMutation", m)
+}
+
 // The SettingsFunc type is an adapter to allow the use of ordinary
 // function as Settings mutator.
 type SettingsFunc func(context.Context, *ent.SettingsMutation) (ent.Value, error)

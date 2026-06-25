@@ -15,6 +15,7 @@ import (
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/npm"
 )
 
 func setupTest(t *testing.T) (*App, *gin.Engine) {
@@ -36,6 +37,7 @@ func setupTest(t *testing.T) (*App, *gin.Engine) {
 	app := &App{
 		database:     database,
 		kumaRegistry: kuma.NewRegistry(database),
+		npmRegistry:  npm.NewRegistry(database),
 	}
 	r := setupRouter(app)
 	return app, r
@@ -324,8 +326,8 @@ func TestSettingsSaveAndLoad(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
 
-	// POST new settings (kuma_* is now managed via /api/kuma-instances)
-	body := `{"npm_host":"http://npm:81","compose_path":"/data/compose.yml"}`
+	// npm_host is now managed via /api/npm-instances; compose_path is still managed via /api/settings
+	body := `{"compose_path":"/data/compose.yml"}`
 	req := authRequest(t, "POST", "/api/settings", body, sessionID)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -333,15 +335,12 @@ func TestSettingsSaveAndLoad(t *testing.T) {
 		t.Errorf("post settings: expected 200, got %d", w.Code)
 	}
 
-	// GET should return saved values
+	// GET should return saved compose_path only
 	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	var s2 map[string]any
 	json.NewDecoder(w2.Body).Decode(&s2)
-	if s2["npm_host"] != "http://npm:81" {
-		t.Errorf("expected saved npm_host, got %v", s2["npm_host"])
-	}
 	if s2["compose_path"] != "/data/compose.yml" {
 		t.Errorf("expected saved compose_path, got %v", s2["compose_path"])
 	}
@@ -358,8 +357,8 @@ func TestSaveSettingsOnlySentFields(t *testing.T) {
 		t.Fatalf("seed compose_path: %v", err)
 	}
 
-	// POST settings with ONLY npm_host — compose_path should NOT be affected
-	body := `{"npm_host":"http://updated-npm:81"}`
+	// POST settings with ONLY otel_enabled — compose_path should NOT be affected
+	body := `{"otel_enabled":true}`
 	req := authRequest(t, "POST", "/api/settings", body, sessionID)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -377,12 +376,8 @@ func TestSaveSettingsOnlySentFields(t *testing.T) {
 	if s["compose_path"] != "/docker/compose.yml" {
 		t.Errorf("compose_path should be preserved: expected %q, got %v", "/docker/compose.yml", s["compose_path"])
 	}
-	if s["npm_host"] != "http://updated-npm:81" {
-		t.Errorf("npm_host should be updated: expected %q, got %v", "http://updated-npm:81", s["npm_host"])
-	}
-	// otel_enabled was never sent or saved — should still be env default (false)
-	if s["otel_enabled"] != false {
-		t.Errorf("otel_enabled should not be affected: expected false, got %v", s["otel_enabled"])
+	if s["otel_enabled"] != true {
+		t.Errorf("otel_enabled should be true: got %v", s["otel_enabled"])
 	}
 }
 
@@ -390,15 +385,15 @@ func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
 
-	// Set initial npm password in DB (kuma_pass is now managed via instances)
+	// npm_* settings are now managed via /api/npm-instances; test that legacy fields are still readable but not writable
 	if err := app.database.SaveSettingsMap(map[string]string{
 		"npm_pass": "secret123",
 	}); err != nil {
 		t.Fatalf("seed npm_pass: %v", err)
 	}
 
-	// Save with empty password (frontend sends "" to mean "keep current")
-	body := `{"npm_pass":"","npm_host":"http://test:81"}`
+	// Legacy npm_* fields should be ignored by the settings PUT handler
+	body := `{"npm_pass":"","npm_host":"http://test:81","compose_path":"/custom/path.yml"}`
 	req := authRequest(t, "POST", "/api/settings", body, sessionID)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -406,7 +401,7 @@ func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Verify password preserved and other field updated
+	// Verify compose_path was updated (still active) and npm_* were ignored
 	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
@@ -416,8 +411,8 @@ func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	if s["npm_pass"] != "****" {
 		t.Errorf("npm_pass should be masked and non-empty: got %v", s["npm_pass"])
 	}
-	if s["npm_host"] != "http://test:81" {
-		t.Errorf("npm_host should be updated: expected %q, got %v", "http://test:81", s["npm_host"])
+	if s["compose_path"] != "/custom/path.yml" {
+		t.Errorf("compose_path should be updated: expected %q, got %v", "/custom/path.yml", s["compose_path"])
 	}
 }
 

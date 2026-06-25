@@ -15,6 +15,9 @@ type KumaInstance func(*sql.Selector)
 // Monitor is the predicate function for monitor builders.
 type Monitor func(*sql.Selector)
 
+// NPMInstance is the predicate function for npminstance builders.
+type NPMInstance func(*sql.Selector)
+
 // Settings is the predicate function for settings builders.
 type Settings func(*sql.Selector)
 
