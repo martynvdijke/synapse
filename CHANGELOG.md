@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/martynvdijke/synapse/compare/v1.5.6...v1.6.0) (2026-06-25)
+
+
+### Features
+
+* add NPM multi-instance support (schema, client, registry, API handlers, sync fan-out) ([c5f383f](https://github.com/martynvdijke/synapse/commit/c5f383f8a5e230a02338059f558a8d1b5f7dff50))
+
 ## [1.5.6](https://github.com/martynvdijke/synapse/compare/v1.5.5...v1.5.6) (2026-06-25)
 
 
