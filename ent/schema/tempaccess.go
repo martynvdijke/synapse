@@ -14,6 +14,7 @@ func (TempAccess) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("ip"),
 		field.String("reason").Default(""),
+		field.Int("authelia_instance_id").Default(0),
 		field.Time("expires_at"),
 		field.Time("created_at"),
 		field.String("status").Default("active"),

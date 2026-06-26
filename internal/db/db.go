@@ -11,6 +11,7 @@ import (
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
+	"synapse/ent/autheliainstance"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 
@@ -75,22 +76,37 @@ type AdminUser struct {
 	Password string `json:"-"`
 }
 
+type AutheliaInstance struct {
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	ConfigPath     string    `json:"config_path"`
+	DBPath         string    `json:"db_path,omitempty"`
+	DefaultPolicy  string    `json:"default_policy"`
+	Overrides      string    `json:"overrides,omitempty"`
+	AutoSync       bool      `json:"auto_sync"`
+	NPMInstanceIDs string    `json:"npm_instance_ids,omitempty"` // JSON array, empty=all NPMs
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 type AutheliaAlert struct {
-	ID        int64     `json:"id"`
-	CNAME     string    `json:"cname"`
-	Message   string    `json:"message"`
-	Severity  string    `json:"severity"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                int64     `json:"id"`
+	CNAME             string    `json:"cname"`
+	Message           string    `json:"message"`
+	Severity          string    `json:"severity"`
+	Status            string    `json:"status"`
+	AutheliaInstanceID int64    `json:"authelia_instance_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type TempAccess struct {
-	ID        int64     `json:"id"`
-	IP        string    `json:"ip"`
-	Reason    string    `json:"reason"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
-	Status    string    `json:"status"`
+	ID                int64     `json:"id"`
+	IP                string    `json:"ip"`
+	Reason            string    `json:"reason"`
+	AutheliaInstanceID int64    `json:"authelia_instance_id,omitempty"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	CreatedAt         time.Time `json:"created_at"`
+	Status            string    `json:"status"`
 }
 
 type Settings struct {
@@ -154,6 +170,7 @@ func (db *DB) createAutheliaTables() error {
 		message TEXT NOT NULL DEFAULT '',
 		severity TEXT NOT NULL DEFAULT 'warning',
 		status TEXT NOT NULL DEFAULT 'open',
+		authelia_instance_id INTEGER DEFAULT 0,
 		created_at DATETIME NOT NULL
 	)`)
 	if err != nil {
@@ -164,6 +181,7 @@ func (db *DB) createAutheliaTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		ip TEXT NOT NULL,
 		reason TEXT NOT NULL DEFAULT '',
+		authelia_instance_id INTEGER DEFAULT 0,
 		expires_at DATETIME NOT NULL,
 		created_at DATETIME NOT NULL,
 		status TEXT NOT NULL DEFAULT 'active'
@@ -254,6 +272,21 @@ func toNPMInstance(e *ent.NPMInstance) NPMInstance {
 		Password:  e.Password,
 		Enabled:   e.Enabled,
 		CreatedAt: e.CreatedAt,
+	}
+}
+
+func toAutheliaInstance(e *ent.AutheliaInstance) AutheliaInstance {
+	return AutheliaInstance{
+		ID:             int64(e.ID),
+		Name:           e.Name,
+		ConfigPath:     e.ConfigPath,
+		DBPath:         e.DbPath,
+		DefaultPolicy:  e.DefaultPolicy,
+		Overrides:      e.Overrides,
+		AutoSync:       e.AutoSync,
+		NPMInstanceIDs: e.NpmInstanceIds,
+		Enabled:        e.Enabled,
+		CreatedAt:      e.CreatedAt,
 	}
 }
 
@@ -598,6 +631,144 @@ func (db *DB) MigrateNPMInstances(legacy Settings) error {
 	return err
 }
 
+// --- AutheliaInstance CRUD ---
+
+// CreateAutheliaInstance inserts a new Authelia instance row and returns it.
+func (db *DB) CreateAutheliaInstance(a *AutheliaInstance) (*AutheliaInstance, error) {
+	e, err := db.client.AutheliaInstance.Create().
+		SetName(a.Name).
+		SetConfigPath(a.ConfigPath).
+		SetDbPath(a.DBPath).
+		SetDefaultPolicy(a.DefaultPolicy).
+		SetOverrides(a.Overrides).
+		SetAutoSync(a.AutoSync).
+		SetNpmInstanceIds(a.NPMInstanceIDs).
+		SetEnabled(a.Enabled).
+		SetCreatedAt(time.Now()).
+		Save(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	r := toAutheliaInstance(e)
+	return &r, nil
+}
+
+// GetAutheliaInstances returns all configured Authelia instances ordered by id.
+func (db *DB) GetAutheliaInstances() ([]AutheliaInstance, error) {
+	entries, err := db.client.AutheliaInstance.Query().
+		Order(autheliainstance.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]AutheliaInstance, len(entries))
+	for i, e := range entries {
+		result[i] = toAutheliaInstance(e)
+	}
+	return result, nil
+}
+
+// GetAutheliaInstance returns a single instance by id.
+func (db *DB) GetAutheliaInstance(id int64) (*AutheliaInstance, error) {
+	e, err := db.client.AutheliaInstance.Query().
+		Where(autheliainstance.IDEQ(int(id))).
+		Only(context.Background())
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r := toAutheliaInstance(e)
+	return &r, nil
+}
+
+// GetEnabledAutheliaInstances returns all enabled instances ordered by id.
+func (db *DB) GetEnabledAutheliaInstances() ([]AutheliaInstance, error) {
+	entries, err := db.client.AutheliaInstance.Query().
+		Where(autheliainstance.Enabled(true)).
+		Order(autheliainstance.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]AutheliaInstance, len(entries))
+	for i, e := range entries {
+		result[i] = toAutheliaInstance(e)
+	}
+	return result, nil
+}
+
+// UpdateAutheliaInstance updates an existing instance. Overrides is preserved
+// if the incoming value is empty.
+func (db *DB) UpdateAutheliaInstance(id int64, a *AutheliaInstance) error {
+	q := db.client.AutheliaInstance.UpdateOneID(int(id)).
+		SetName(a.Name).
+		SetConfigPath(a.ConfigPath).
+		SetDbPath(a.DBPath).
+		SetDefaultPolicy(a.DefaultPolicy).
+		SetAutoSync(a.AutoSync).
+		SetNpmInstanceIds(a.NPMInstanceIDs).
+		SetEnabled(a.Enabled)
+	if a.Overrides != "" {
+		q.SetOverrides(a.Overrides)
+	}
+	_, err := q.Save(context.Background())
+	return err
+}
+
+// DeleteAutheliaInstance removes an instance and cascades its alerts and temp access rules.
+func (db *DB) DeleteAutheliaInstance(id int64) error {
+	// Delete alerts and temp access belonging to this instance first.
+	_, err := db.rawDB.Exec("DELETE FROM authelia_alerts WHERE authelia_instance_id = ?", id)
+	if err != nil {
+		return err
+	}
+	_, err = db.rawDB.Exec("DELETE FROM temp_access WHERE authelia_instance_id = ?", id)
+	if err != nil {
+		return err
+	}
+	return db.client.AutheliaInstance.DeleteOneID(int(id)).Exec(context.Background())
+}
+
+// MigrateAutheliaInstances migrates the legacy single-instance authelia_*
+// settings into AutheliaInstance rows. It is idempotent: if instances already
+// exist it does nothing.
+func (db *DB) MigrateAutheliaInstances(legacy Settings) error {
+	existing, err := db.GetAutheliaInstances()
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	if legacy.AutheliaConfigPath == "" {
+		return nil
+	}
+
+	inst, err := db.CreateAutheliaInstance(&AutheliaInstance{
+		Name:          "default",
+		ConfigPath:    legacy.AutheliaConfigPath,
+		DBPath:        legacy.AutheliaDBPath,
+		DefaultPolicy: legacy.AutheliaDefaultPolicy,
+		Overrides:     legacy.AutheliaSyncOverrides,
+		AutoSync:      legacy.AutheliaSyncEnabled,
+		Enabled:       true,
+		NPMInstanceIDs: "",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Backfill existing alerts and temp access to the default instance.
+	_, err = db.rawDB.Exec("UPDATE authelia_alerts SET authelia_instance_id = ? WHERE authelia_instance_id IS NULL OR authelia_instance_id = 0", inst.ID)
+	if err != nil {
+		return err
+	}
+	_, err = db.rawDB.Exec("UPDATE temp_access SET authelia_instance_id = ? WHERE authelia_instance_id IS NULL OR authelia_instance_id = 0", inst.ID)
+	return err
+}
+
 func (db *DB) GetSettings(defaults Settings) Settings {
 	s := defaults
 	rows, err := db.client.Settings.Query().All(context.Background())
@@ -687,16 +858,25 @@ func (db *DB) SaveSettings(s Settings) error {
 
 func (db *DB) AddAutheliaAlert(a *AutheliaAlert) error {
 	_, err := db.rawDB.Exec(
-		"INSERT INTO authelia_alerts (cname, message, severity, status, created_at) VALUES (?, ?, ?, ?, ?)",
-		a.CNAME, a.Message, a.Severity, "open", a.CreatedAt,
+		"INSERT INTO authelia_alerts (cname, message, severity, status, authelia_instance_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		a.CNAME, a.Message, a.Severity, "open", a.AutheliaInstanceID, a.CreatedAt,
 	)
 	return err
 }
 
-func (db *DB) GetAutheliaAlerts() ([]AutheliaAlert, error) {
-	rows, err := db.rawDB.Query(
-		"SELECT id, cname, message, severity, status, created_at FROM authelia_alerts ORDER BY id DESC",
-	)
+func (db *DB) GetAutheliaAlerts(instanceID int64) ([]AutheliaAlert, error) {
+	var rows *sql.Rows
+	var err error
+	if instanceID > 0 {
+		rows, err = db.rawDB.Query(
+			"SELECT id, cname, message, severity, status, authelia_instance_id, created_at FROM authelia_alerts WHERE authelia_instance_id = ? ORDER BY id DESC",
+			instanceID,
+		)
+	} else {
+		rows, err = db.rawDB.Query(
+			"SELECT id, cname, message, severity, status, authelia_instance_id, created_at FROM authelia_alerts ORDER BY id DESC",
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +885,7 @@ func (db *DB) GetAutheliaAlerts() ([]AutheliaAlert, error) {
 	var alerts []AutheliaAlert
 	for rows.Next() {
 		var a AutheliaAlert
-		if err := rows.Scan(&a.ID, &a.CNAME, &a.Message, &a.Severity, &a.Status, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.CNAME, &a.Message, &a.Severity, &a.Status, &a.AutheliaInstanceID, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		alerts = append(alerts, a)
@@ -713,10 +893,19 @@ func (db *DB) GetAutheliaAlerts() ([]AutheliaAlert, error) {
 	return alerts, rows.Err()
 }
 
-func (db *DB) GetOpenAutheliaAlerts() ([]AutheliaAlert, error) {
-	rows, err := db.rawDB.Query(
-		"SELECT id, cname, message, severity, status, created_at FROM authelia_alerts WHERE status = 'open' ORDER BY id DESC",
-	)
+func (db *DB) GetOpenAutheliaAlerts(instanceID int64) ([]AutheliaAlert, error) {
+	var rows *sql.Rows
+	var err error
+	if instanceID > 0 {
+		rows, err = db.rawDB.Query(
+			"SELECT id, cname, message, severity, status, authelia_instance_id, created_at FROM authelia_alerts WHERE status = 'open' AND authelia_instance_id = ? ORDER BY id DESC",
+			instanceID,
+		)
+	} else {
+		rows, err = db.rawDB.Query(
+			"SELECT id, cname, message, severity, status, authelia_instance_id, created_at FROM authelia_alerts WHERE status = 'open' ORDER BY id DESC",
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -725,7 +914,7 @@ func (db *DB) GetOpenAutheliaAlerts() ([]AutheliaAlert, error) {
 	var alerts []AutheliaAlert
 	for rows.Next() {
 		var a AutheliaAlert
-		if err := rows.Scan(&a.ID, &a.CNAME, &a.Message, &a.Severity, &a.Status, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.CNAME, &a.Message, &a.Severity, &a.Status, &a.AutheliaInstanceID, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		alerts = append(alerts, a)
@@ -742,16 +931,25 @@ func (db *DB) ResolveAutheliaAlert(id int64) error {
 
 func (db *DB) AddTempAccess(t *TempAccess) error {
 	_, err := db.rawDB.Exec(
-		"INSERT INTO temp_access (ip, reason, expires_at, created_at, status) VALUES (?, ?, ?, ?, ?)",
-		t.IP, t.Reason, t.ExpiresAt, t.CreatedAt, "active",
+		"INSERT INTO temp_access (ip, reason, authelia_instance_id, expires_at, created_at, status) VALUES (?, ?, ?, ?, ?, ?)",
+		t.IP, t.Reason, t.AutheliaInstanceID, t.ExpiresAt, t.CreatedAt, "active",
 	)
 	return err
 }
 
-func (db *DB) GetTempAccessRules() ([]TempAccess, error) {
-	rows, err := db.rawDB.Query(
-		"SELECT id, ip, reason, expires_at, created_at, status FROM temp_access ORDER BY id DESC",
-	)
+func (db *DB) GetTempAccessRules(instanceID int64) ([]TempAccess, error) {
+	var rows *sql.Rows
+	var err error
+	if instanceID > 0 {
+		rows, err = db.rawDB.Query(
+			"SELECT id, ip, reason, authelia_instance_id, expires_at, created_at, status FROM temp_access WHERE authelia_instance_id = ? ORDER BY id DESC",
+			instanceID,
+		)
+	} else {
+		rows, err = db.rawDB.Query(
+			"SELECT id, ip, reason, authelia_instance_id, expires_at, created_at, status FROM temp_access ORDER BY id DESC",
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -760,7 +958,7 @@ func (db *DB) GetTempAccessRules() ([]TempAccess, error) {
 	var rules []TempAccess
 	for rows.Next() {
 		var t TempAccess
-		if err := rows.Scan(&t.ID, &t.IP, &t.Reason, &t.ExpiresAt, &t.CreatedAt, &t.Status); err != nil {
+		if err := rows.Scan(&t.ID, &t.IP, &t.Reason, &t.AutheliaInstanceID, &t.ExpiresAt, &t.CreatedAt, &t.Status); err != nil {
 			return nil, err
 		}
 		rules = append(rules, t)
@@ -768,10 +966,19 @@ func (db *DB) GetTempAccessRules() ([]TempAccess, error) {
 	return rules, rows.Err()
 }
 
-func (db *DB) GetActiveTempAccess() ([]TempAccess, error) {
-	rows, err := db.rawDB.Query(
-		"SELECT id, ip, reason, expires_at, created_at, status FROM temp_access WHERE status = 'active' ORDER BY id DESC",
-	)
+func (db *DB) GetActiveTempAccess(instanceID int64) ([]TempAccess, error) {
+	var rows *sql.Rows
+	var err error
+	if instanceID > 0 {
+		rows, err = db.rawDB.Query(
+			"SELECT id, ip, reason, authelia_instance_id, expires_at, created_at, status FROM temp_access WHERE status = 'active' AND authelia_instance_id = ? ORDER BY id DESC",
+			instanceID,
+		)
+	} else {
+		rows, err = db.rawDB.Query(
+			"SELECT id, ip, reason, authelia_instance_id, expires_at, created_at, status FROM temp_access WHERE status = 'active' ORDER BY id DESC",
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -780,7 +987,7 @@ func (db *DB) GetActiveTempAccess() ([]TempAccess, error) {
 	var rules []TempAccess
 	for rows.Next() {
 		var t TempAccess
-		if err := rows.Scan(&t.ID, &t.IP, &t.Reason, &t.ExpiresAt, &t.CreatedAt, &t.Status); err != nil {
+		if err := rows.Scan(&t.ID, &t.IP, &t.Reason, &t.AutheliaInstanceID, &t.ExpiresAt, &t.CreatedAt, &t.Status); err != nil {
 			return nil, err
 		}
 		rules = append(rules, t)

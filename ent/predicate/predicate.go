@@ -9,6 +9,9 @@ import (
 // AutheliaAlert is the predicate function for autheliaalert builders.
 type AutheliaAlert func(*sql.Selector)
 
+// AutheliaInstance is the predicate function for autheliainstance builders.
+type AutheliaInstance func(*sql.Selector)
+
 // KumaInstance is the predicate function for kumainstance builders.
 type KumaInstance func(*sql.Selector)
 

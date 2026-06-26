@@ -74,6 +74,11 @@ func Status(v string) predicate.AutheliaAlert {
 	return predicate.AutheliaAlert(sql.FieldEQ(FieldStatus, v))
 }
 
+// AutheliaInstanceID applies equality check predicate on the "authelia_instance_id" field. It's identical to AutheliaInstanceIDEQ.
+func AutheliaInstanceID(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldEQ(FieldAutheliaInstanceID, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.AutheliaAlert {
 	return predicate.AutheliaAlert(sql.FieldEQ(FieldCreatedAt, v))
@@ -337,6 +342,46 @@ func StatusEqualFold(v string) predicate.AutheliaAlert {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.AutheliaAlert {
 	return predicate.AutheliaAlert(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// AutheliaInstanceIDEQ applies the EQ predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDEQ(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldEQ(FieldAutheliaInstanceID, v))
+}
+
+// AutheliaInstanceIDNEQ applies the NEQ predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDNEQ(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldNEQ(FieldAutheliaInstanceID, v))
+}
+
+// AutheliaInstanceIDIn applies the In predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDIn(vs ...int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldIn(FieldAutheliaInstanceID, vs...))
+}
+
+// AutheliaInstanceIDNotIn applies the NotIn predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDNotIn(vs ...int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldNotIn(FieldAutheliaInstanceID, vs...))
+}
+
+// AutheliaInstanceIDGT applies the GT predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDGT(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldGT(FieldAutheliaInstanceID, v))
+}
+
+// AutheliaInstanceIDGTE applies the GTE predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDGTE(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldGTE(FieldAutheliaInstanceID, v))
+}
+
+// AutheliaInstanceIDLT applies the LT predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDLT(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldLT(FieldAutheliaInstanceID, v))
+}
+
+// AutheliaInstanceIDLTE applies the LTE predicate on the "authelia_instance_id" field.
+func AutheliaInstanceIDLTE(v int) predicate.AutheliaAlert {
+	return predicate.AutheliaAlert(sql.FieldLTE(FieldAutheliaInstanceID, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

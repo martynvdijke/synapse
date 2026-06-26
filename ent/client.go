@@ -12,6 +12,7 @@ import (
 	"synapse/ent/migrate"
 
 	"synapse/ent/autheliaalert"
+	"synapse/ent/autheliainstance"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
@@ -31,6 +32,8 @@ type Client struct {
 	Schema *migrate.Schema
 	// AutheliaAlert is the client for interacting with the AutheliaAlert builders.
 	AutheliaAlert *AutheliaAlertClient
+	// AutheliaInstance is the client for interacting with the AutheliaInstance builders.
+	AutheliaInstance *AutheliaInstanceClient
 	// KumaInstance is the client for interacting with the KumaInstance builders.
 	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
@@ -55,6 +58,7 @@ func NewClient(opts ...Option) *Client {
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.AutheliaAlert = NewAutheliaAlertClient(c.config)
+	c.AutheliaInstance = NewAutheliaInstanceClient(c.config)
 	c.KumaInstance = NewKumaInstanceClient(c.config)
 	c.Monitor = NewMonitorClient(c.config)
 	c.NPMInstance = NewNPMInstanceClient(c.config)
@@ -151,15 +155,16 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:           ctx,
-		config:        cfg,
-		AutheliaAlert: NewAutheliaAlertClient(cfg),
-		KumaInstance:  NewKumaInstanceClient(cfg),
-		Monitor:       NewMonitorClient(cfg),
-		NPMInstance:   NewNPMInstanceClient(cfg),
-		Settings:      NewSettingsClient(cfg),
-		SyncRun:       NewSyncRunClient(cfg),
-		TempAccess:    NewTempAccessClient(cfg),
+		ctx:              ctx,
+		config:           cfg,
+		AutheliaAlert:    NewAutheliaAlertClient(cfg),
+		AutheliaInstance: NewAutheliaInstanceClient(cfg),
+		KumaInstance:     NewKumaInstanceClient(cfg),
+		Monitor:          NewMonitorClient(cfg),
+		NPMInstance:      NewNPMInstanceClient(cfg),
+		Settings:         NewSettingsClient(cfg),
+		SyncRun:          NewSyncRunClient(cfg),
+		TempAccess:       NewTempAccessClient(cfg),
 	}, nil
 }
 
@@ -177,15 +182,16 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:           ctx,
-		config:        cfg,
-		AutheliaAlert: NewAutheliaAlertClient(cfg),
-		KumaInstance:  NewKumaInstanceClient(cfg),
-		Monitor:       NewMonitorClient(cfg),
-		NPMInstance:   NewNPMInstanceClient(cfg),
-		Settings:      NewSettingsClient(cfg),
-		SyncRun:       NewSyncRunClient(cfg),
-		TempAccess:    NewTempAccessClient(cfg),
+		ctx:              ctx,
+		config:           cfg,
+		AutheliaAlert:    NewAutheliaAlertClient(cfg),
+		AutheliaInstance: NewAutheliaInstanceClient(cfg),
+		KumaInstance:     NewKumaInstanceClient(cfg),
+		Monitor:          NewMonitorClient(cfg),
+		NPMInstance:      NewNPMInstanceClient(cfg),
+		Settings:         NewSettingsClient(cfg),
+		SyncRun:          NewSyncRunClient(cfg),
+		TempAccess:       NewTempAccessClient(cfg),
 	}, nil
 }
 
@@ -215,8 +221,8 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.NPMInstance, c.Settings,
-		c.SyncRun, c.TempAccess,
+		c.AutheliaAlert, c.AutheliaInstance, c.KumaInstance, c.Monitor, c.NPMInstance,
+		c.Settings, c.SyncRun, c.TempAccess,
 	} {
 		n.Use(hooks...)
 	}
@@ -226,8 +232,8 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.AutheliaAlert, c.KumaInstance, c.Monitor, c.NPMInstance, c.Settings,
-		c.SyncRun, c.TempAccess,
+		c.AutheliaAlert, c.AutheliaInstance, c.KumaInstance, c.Monitor, c.NPMInstance,
+		c.Settings, c.SyncRun, c.TempAccess,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -238,6 +244,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
 	case *AutheliaAlertMutation:
 		return c.AutheliaAlert.mutate(ctx, m)
+	case *AutheliaInstanceMutation:
+		return c.AutheliaInstance.mutate(ctx, m)
 	case *KumaInstanceMutation:
 		return c.KumaInstance.mutate(ctx, m)
 	case *MonitorMutation:
@@ -385,6 +393,139 @@ func (c *AutheliaAlertClient) mutate(ctx context.Context, m *AutheliaAlertMutati
 		return (&AutheliaAlertDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown AutheliaAlert mutation op: %q", m.Op())
+	}
+}
+
+// AutheliaInstanceClient is a client for the AutheliaInstance schema.
+type AutheliaInstanceClient struct {
+	config
+}
+
+// NewAutheliaInstanceClient returns a client for the AutheliaInstance from the given config.
+func NewAutheliaInstanceClient(c config) *AutheliaInstanceClient {
+	return &AutheliaInstanceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `autheliainstance.Hooks(f(g(h())))`.
+func (c *AutheliaInstanceClient) Use(hooks ...Hook) {
+	c.hooks.AutheliaInstance = append(c.hooks.AutheliaInstance, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `autheliainstance.Intercept(f(g(h())))`.
+func (c *AutheliaInstanceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AutheliaInstance = append(c.inters.AutheliaInstance, interceptors...)
+}
+
+// Create returns a builder for creating a AutheliaInstance entity.
+func (c *AutheliaInstanceClient) Create() *AutheliaInstanceCreate {
+	mutation := newAutheliaInstanceMutation(c.config, OpCreate)
+	return &AutheliaInstanceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AutheliaInstance entities.
+func (c *AutheliaInstanceClient) CreateBulk(builders ...*AutheliaInstanceCreate) *AutheliaInstanceCreateBulk {
+	return &AutheliaInstanceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AutheliaInstanceClient) MapCreateBulk(slice any, setFunc func(*AutheliaInstanceCreate, int)) *AutheliaInstanceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AutheliaInstanceCreateBulk{err: fmt.Errorf("calling to AutheliaInstanceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AutheliaInstanceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AutheliaInstanceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AutheliaInstance.
+func (c *AutheliaInstanceClient) Update() *AutheliaInstanceUpdate {
+	mutation := newAutheliaInstanceMutation(c.config, OpUpdate)
+	return &AutheliaInstanceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AutheliaInstanceClient) UpdateOne(_m *AutheliaInstance) *AutheliaInstanceUpdateOne {
+	mutation := newAutheliaInstanceMutation(c.config, OpUpdateOne, withAutheliaInstance(_m))
+	return &AutheliaInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AutheliaInstanceClient) UpdateOneID(id int) *AutheliaInstanceUpdateOne {
+	mutation := newAutheliaInstanceMutation(c.config, OpUpdateOne, withAutheliaInstanceID(id))
+	return &AutheliaInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AutheliaInstance.
+func (c *AutheliaInstanceClient) Delete() *AutheliaInstanceDelete {
+	mutation := newAutheliaInstanceMutation(c.config, OpDelete)
+	return &AutheliaInstanceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AutheliaInstanceClient) DeleteOne(_m *AutheliaInstance) *AutheliaInstanceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AutheliaInstanceClient) DeleteOneID(id int) *AutheliaInstanceDeleteOne {
+	builder := c.Delete().Where(autheliainstance.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AutheliaInstanceDeleteOne{builder}
+}
+
+// Query returns a query builder for AutheliaInstance.
+func (c *AutheliaInstanceClient) Query() *AutheliaInstanceQuery {
+	return &AutheliaInstanceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAutheliaInstance},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AutheliaInstance entity by its id.
+func (c *AutheliaInstanceClient) Get(ctx context.Context, id int) (*AutheliaInstance, error) {
+	return c.Query().Where(autheliainstance.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AutheliaInstanceClient) GetX(ctx context.Context, id int) *AutheliaInstance {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *AutheliaInstanceClient) Hooks() []Hook {
+	return c.hooks.AutheliaInstance
+}
+
+// Interceptors returns the client interceptors.
+func (c *AutheliaInstanceClient) Interceptors() []Interceptor {
+	return c.inters.AutheliaInstance
+}
+
+func (c *AutheliaInstanceClient) mutate(ctx context.Context, m *AutheliaInstanceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AutheliaInstanceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AutheliaInstanceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AutheliaInstanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AutheliaInstanceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AutheliaInstance mutation op: %q", m.Op())
 	}
 }
 
@@ -1189,11 +1330,11 @@ func (c *TempAccessClient) mutate(ctx context.Context, m *TempAccessMutation) (V
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		AutheliaAlert, KumaInstance, Monitor, NPMInstance, Settings, SyncRun,
-		TempAccess []ent.Hook
+		AutheliaAlert, AutheliaInstance, KumaInstance, Monitor, NPMInstance, Settings,
+		SyncRun, TempAccess []ent.Hook
 	}
 	inters struct {
-		AutheliaAlert, KumaInstance, Monitor, NPMInstance, Settings, SyncRun,
-		TempAccess []ent.Interceptor
+		AutheliaAlert, AutheliaInstance, KumaInstance, Monitor, NPMInstance, Settings,
+		SyncRun, TempAccess []ent.Interceptor
 	}
 )

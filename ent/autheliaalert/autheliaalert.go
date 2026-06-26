@@ -19,6 +19,8 @@ const (
 	FieldSeverity = "severity"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldAutheliaInstanceID holds the string denoting the authelia_instance_id field in the database.
+	FieldAutheliaInstanceID = "authelia_instance_id"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the autheliaalert in the database.
@@ -32,6 +34,7 @@ var Columns = []string{
 	FieldMessage,
 	FieldSeverity,
 	FieldStatus,
+	FieldAutheliaInstanceID,
 	FieldCreatedAt,
 }
 
@@ -50,6 +53,8 @@ var (
 	DefaultSeverity string
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
+	// DefaultAutheliaInstanceID holds the default value on creation for the "authelia_instance_id" field.
+	DefaultAutheliaInstanceID int
 )
 
 // OrderOption defines the ordering options for the AutheliaAlert queries.
@@ -78,6 +83,11 @@ func BySeverity(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByAutheliaInstanceID orders the results by the authelia_instance_id field.
+func ByAutheliaInstanceID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAutheliaInstanceID, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

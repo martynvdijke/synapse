@@ -84,6 +84,27 @@ func (_u *AutheliaAlertUpdate) SetNillableStatus(v *string) *AutheliaAlertUpdate
 	return _u
 }
 
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (_u *AutheliaAlertUpdate) SetAutheliaInstanceID(v int) *AutheliaAlertUpdate {
+	_u.mutation.ResetAutheliaInstanceID()
+	_u.mutation.SetAutheliaInstanceID(v)
+	return _u
+}
+
+// SetNillableAutheliaInstanceID sets the "authelia_instance_id" field if the given value is not nil.
+func (_u *AutheliaAlertUpdate) SetNillableAutheliaInstanceID(v *int) *AutheliaAlertUpdate {
+	if v != nil {
+		_u.SetAutheliaInstanceID(*v)
+	}
+	return _u
+}
+
+// AddAutheliaInstanceID adds value to the "authelia_instance_id" field.
+func (_u *AutheliaAlertUpdate) AddAutheliaInstanceID(v int) *AutheliaAlertUpdate {
+	_u.mutation.AddAutheliaInstanceID(v)
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *AutheliaAlertUpdate) SetCreatedAt(v time.Time) *AutheliaAlertUpdate {
 	_u.mutation.SetCreatedAt(v)
@@ -150,6 +171,12 @@ func (_u *AutheliaAlertUpdate) sqlSave(ctx context.Context) (_node int, err erro
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(autheliaalert.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutheliaInstanceID(); ok {
+		_spec.SetField(autheliaalert.FieldAutheliaInstanceID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAutheliaInstanceID(); ok {
+		_spec.AddField(autheliaalert.FieldAutheliaInstanceID, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(autheliaalert.FieldCreatedAt, field.TypeTime, value)
@@ -227,6 +254,27 @@ func (_u *AutheliaAlertUpdateOne) SetNillableStatus(v *string) *AutheliaAlertUpd
 	if v != nil {
 		_u.SetStatus(*v)
 	}
+	return _u
+}
+
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (_u *AutheliaAlertUpdateOne) SetAutheliaInstanceID(v int) *AutheliaAlertUpdateOne {
+	_u.mutation.ResetAutheliaInstanceID()
+	_u.mutation.SetAutheliaInstanceID(v)
+	return _u
+}
+
+// SetNillableAutheliaInstanceID sets the "authelia_instance_id" field if the given value is not nil.
+func (_u *AutheliaAlertUpdateOne) SetNillableAutheliaInstanceID(v *int) *AutheliaAlertUpdateOne {
+	if v != nil {
+		_u.SetAutheliaInstanceID(*v)
+	}
+	return _u
+}
+
+// AddAutheliaInstanceID adds value to the "authelia_instance_id" field.
+func (_u *AutheliaAlertUpdateOne) AddAutheliaInstanceID(v int) *AutheliaAlertUpdateOne {
+	_u.mutation.AddAutheliaInstanceID(v)
 	return _u
 }
 
@@ -326,6 +374,12 @@ func (_u *AutheliaAlertUpdateOne) sqlSave(ctx context.Context) (_node *AutheliaA
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(autheliaalert.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutheliaInstanceID(); ok {
+		_spec.SetField(autheliaalert.FieldAutheliaInstanceID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAutheliaInstanceID(); ok {
+		_spec.AddField(autheliaalert.FieldAutheliaInstanceID, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(autheliaalert.FieldCreatedAt, field.TypeTime, value)

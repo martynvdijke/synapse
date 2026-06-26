@@ -32,7 +32,7 @@ func TestAutheliaAlertCRUD(t *testing.T) {
 	}
 
 	// Get all alerts
-	alerts, err := db.GetAutheliaAlerts()
+	alerts, err := db.GetAutheliaAlerts(0)
 	if err != nil {
 		t.Fatalf("get alerts: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestAutheliaAlertCRUD(t *testing.T) {
 	}
 
 	// Get open alerts
-	openAlerts, err := db.GetOpenAutheliaAlerts()
+	openAlerts, err := db.GetOpenAutheliaAlerts(0)
 	if err != nil {
 		t.Fatalf("get open alerts: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestAutheliaAlertCRUD(t *testing.T) {
 	}
 
 	// Verify it's resolved
-	openAlerts, err = db.GetOpenAutheliaAlerts()
+	openAlerts, err = db.GetOpenAutheliaAlerts(0)
 	if err != nil {
 		t.Fatalf("get open alerts after resolve: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestTempAccessCRUD(t *testing.T) {
 	}
 
 	// Get all rules
-	rules, err := db.GetTempAccessRules()
+	rules, err := db.GetTempAccessRules(0)
 	if err != nil {
 		t.Fatalf("get temp access: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestTempAccessCRUD(t *testing.T) {
 	}
 
 	// Get active rules
-	active, err := db.GetActiveTempAccess()
+	active, err := db.GetActiveTempAccess(0)
 	if err != nil {
 		t.Fatalf("get active temp access: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestTempAccessCRUD(t *testing.T) {
 		t.Fatalf("revoke temp access: %v", err)
 	}
 
-	active, err = db.GetActiveTempAccess()
+	active, err = db.GetActiveTempAccess(0)
 	if err != nil {
 		t.Fatalf("get active after revoke: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestCleanupExpiredTempAccess(t *testing.T) {
 	}
 
 	// Only the active rule should remain
-	active, err := db.GetActiveTempAccess()
+	active, err := db.GetActiveTempAccess(0)
 	if err != nil {
 		t.Fatalf("get active after cleanup: %v", err)
 	}

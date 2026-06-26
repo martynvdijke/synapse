@@ -20,6 +20,18 @@ func (f AutheliaAlertFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Valu
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AutheliaAlertMutation", m)
 }
 
+// The AutheliaInstanceFunc type is an adapter to allow the use of ordinary
+// function as AutheliaInstance mutator.
+type AutheliaInstanceFunc func(context.Context, *ent.AutheliaInstanceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AutheliaInstanceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AutheliaInstanceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AutheliaInstanceMutation", m)
+}
+
 // The KumaInstanceFunc type is an adapter to allow the use of ordinary
 // function as KumaInstance mutator.
 type KumaInstanceFunc func(context.Context, *ent.KumaInstanceMutation) (ent.Value, error)

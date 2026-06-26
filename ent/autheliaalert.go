@@ -25,6 +25,8 @@ type AutheliaAlert struct {
 	Severity string `json:"severity,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
+	// AutheliaInstanceID holds the value of the "authelia_instance_id" field.
+	AutheliaInstanceID int `json:"authelia_instance_id,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
@@ -35,7 +37,7 @@ func (*AutheliaAlert) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case autheliaalert.FieldID:
+		case autheliaalert.FieldID, autheliaalert.FieldAutheliaInstanceID:
 			values[i] = new(sql.NullInt64)
 		case autheliaalert.FieldCname, autheliaalert.FieldMessage, autheliaalert.FieldSeverity, autheliaalert.FieldStatus:
 			values[i] = new(sql.NullString)
@@ -85,6 +87,12 @@ func (_m *AutheliaAlert) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
 				_m.Status = value.String
+			}
+		case autheliaalert.FieldAutheliaInstanceID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field authelia_instance_id", values[i])
+			} else if value.Valid {
+				_m.AutheliaInstanceID = int(value.Int64)
 			}
 		case autheliaalert.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -139,6 +147,9 @@ func (_m *AutheliaAlert) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)
+	builder.WriteString(", ")
+	builder.WriteString("authelia_instance_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AutheliaInstanceID))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

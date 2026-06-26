@@ -16,6 +16,7 @@ func (AutheliaAlert) Fields() []ent.Field {
 		field.String("message"),
 		field.String("severity").Default("warning"),
 		field.String("status").Default("open"),
+		field.Int("authelia_instance_id").Default(0),
 		field.Time("created_at"),
 	}
 }

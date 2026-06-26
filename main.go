@@ -1391,7 +1391,7 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 	matched, missing := authelia.CompareCNAMEs(npmCNAMEs, autheliaDomains)
 
 	openAlerts := 0
-	if alerts, err := app.database.GetOpenAutheliaAlerts(); err == nil {
+	if alerts, err := app.database.GetOpenAutheliaAlerts(0); err == nil {
 		openAlerts = len(alerts)
 	}
 
@@ -1417,7 +1417,8 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 // AutheliaAlerts returns all authelia alerts.
 func (app *App) AutheliaAlerts(c *gin.Context) {
 	logging.LogDebug("authelia", "Alerts requested")
-	alerts, err := app.database.GetAutheliaAlerts()
+	instanceID, _ := strconv.ParseInt(c.Query("instance_id"), 10, 64)
+	alerts, err := app.database.GetAutheliaAlerts(instanceID)
 	if err != nil {
 		logging.LogError("authelia", "Failed to fetch alerts",
 			slog.String("error", err.Error()),
@@ -1475,7 +1476,8 @@ func (app *App) AutheliaTempAccess(c *gin.Context) {
 		)
 	}
 
-	rules, err := app.database.GetTempAccessRules()
+	instanceID, _ := strconv.ParseInt(c.Query("instance_id"), 10, 64)
+	rules, err := app.database.GetTempAccessRules(instanceID)
 	if err != nil {
 		logging.LogError("authelia", "Failed to fetch temp access rules",
 			slog.String("error", err.Error()),

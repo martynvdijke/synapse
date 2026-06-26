@@ -56,6 +56,27 @@ func (_u *TempAccessUpdate) SetNillableReason(v *string) *TempAccessUpdate {
 	return _u
 }
 
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (_u *TempAccessUpdate) SetAutheliaInstanceID(v int) *TempAccessUpdate {
+	_u.mutation.ResetAutheliaInstanceID()
+	_u.mutation.SetAutheliaInstanceID(v)
+	return _u
+}
+
+// SetNillableAutheliaInstanceID sets the "authelia_instance_id" field if the given value is not nil.
+func (_u *TempAccessUpdate) SetNillableAutheliaInstanceID(v *int) *TempAccessUpdate {
+	if v != nil {
+		_u.SetAutheliaInstanceID(*v)
+	}
+	return _u
+}
+
+// AddAutheliaInstanceID adds value to the "authelia_instance_id" field.
+func (_u *TempAccessUpdate) AddAutheliaInstanceID(v int) *TempAccessUpdate {
+	_u.mutation.AddAutheliaInstanceID(v)
+	return _u
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (_u *TempAccessUpdate) SetExpiresAt(v time.Time) *TempAccessUpdate {
 	_u.mutation.SetExpiresAt(v)
@@ -145,6 +166,12 @@ func (_u *TempAccessUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	if value, ok := _u.mutation.Reason(); ok {
 		_spec.SetField(tempaccess.FieldReason, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.AutheliaInstanceID(); ok {
+		_spec.SetField(tempaccess.FieldAutheliaInstanceID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAutheliaInstanceID(); ok {
+		_spec.AddField(tempaccess.FieldAutheliaInstanceID, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.ExpiresAt(); ok {
 		_spec.SetField(tempaccess.FieldExpiresAt, field.TypeTime, value)
 	}
@@ -199,6 +226,27 @@ func (_u *TempAccessUpdateOne) SetNillableReason(v *string) *TempAccessUpdateOne
 	if v != nil {
 		_u.SetReason(*v)
 	}
+	return _u
+}
+
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (_u *TempAccessUpdateOne) SetAutheliaInstanceID(v int) *TempAccessUpdateOne {
+	_u.mutation.ResetAutheliaInstanceID()
+	_u.mutation.SetAutheliaInstanceID(v)
+	return _u
+}
+
+// SetNillableAutheliaInstanceID sets the "authelia_instance_id" field if the given value is not nil.
+func (_u *TempAccessUpdateOne) SetNillableAutheliaInstanceID(v *int) *TempAccessUpdateOne {
+	if v != nil {
+		_u.SetAutheliaInstanceID(*v)
+	}
+	return _u
+}
+
+// AddAutheliaInstanceID adds value to the "authelia_instance_id" field.
+func (_u *TempAccessUpdateOne) AddAutheliaInstanceID(v int) *TempAccessUpdateOne {
+	_u.mutation.AddAutheliaInstanceID(v)
 	return _u
 }
 
@@ -320,6 +368,12 @@ func (_u *TempAccessUpdateOne) sqlSave(ctx context.Context) (_node *TempAccess, 
 	}
 	if value, ok := _u.mutation.Reason(); ok {
 		_spec.SetField(tempaccess.FieldReason, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutheliaInstanceID(); ok {
+		_spec.SetField(tempaccess.FieldAutheliaInstanceID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAutheliaInstanceID(); ok {
+		_spec.AddField(tempaccess.FieldAutheliaInstanceID, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ExpiresAt(); ok {
 		_spec.SetField(tempaccess.FieldExpiresAt, field.TypeTime, value)

@@ -15,6 +15,8 @@ const (
 	FieldIP = "ip"
 	// FieldReason holds the string denoting the reason field in the database.
 	FieldReason = "reason"
+	// FieldAutheliaInstanceID holds the string denoting the authelia_instance_id field in the database.
+	FieldAutheliaInstanceID = "authelia_instance_id"
 	// FieldExpiresAt holds the string denoting the expires_at field in the database.
 	FieldExpiresAt = "expires_at"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -30,6 +32,7 @@ var Columns = []string{
 	FieldID,
 	FieldIP,
 	FieldReason,
+	FieldAutheliaInstanceID,
 	FieldExpiresAt,
 	FieldCreatedAt,
 	FieldStatus,
@@ -48,6 +51,8 @@ func ValidColumn(column string) bool {
 var (
 	// DefaultReason holds the default value on creation for the "reason" field.
 	DefaultReason string
+	// DefaultAutheliaInstanceID holds the default value on creation for the "authelia_instance_id" field.
+	DefaultAutheliaInstanceID int
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 )
@@ -68,6 +73,11 @@ func ByIP(opts ...sql.OrderTermOption) OrderOption {
 // ByReason orders the results by the reason field.
 func ByReason(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldReason, opts...).ToFunc()
+}
+
+// ByAutheliaInstanceID orders the results by the authelia_instance_id field.
+func ByAutheliaInstanceID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAutheliaInstanceID, opts...).ToFunc()
 }
 
 // ByExpiresAt orders the results by the expires_at field.

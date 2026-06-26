@@ -40,6 +40,20 @@ func (_c *TempAccessCreate) SetNillableReason(v *string) *TempAccessCreate {
 	return _c
 }
 
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (_c *TempAccessCreate) SetAutheliaInstanceID(v int) *TempAccessCreate {
+	_c.mutation.SetAutheliaInstanceID(v)
+	return _c
+}
+
+// SetNillableAutheliaInstanceID sets the "authelia_instance_id" field if the given value is not nil.
+func (_c *TempAccessCreate) SetNillableAutheliaInstanceID(v *int) *TempAccessCreate {
+	if v != nil {
+		_c.SetAutheliaInstanceID(*v)
+	}
+	return _c
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (_c *TempAccessCreate) SetExpiresAt(v time.Time) *TempAccessCreate {
 	_c.mutation.SetExpiresAt(v)
@@ -105,6 +119,10 @@ func (_c *TempAccessCreate) defaults() {
 		v := tempaccess.DefaultReason
 		_c.mutation.SetReason(v)
 	}
+	if _, ok := _c.mutation.AutheliaInstanceID(); !ok {
+		v := tempaccess.DefaultAutheliaInstanceID
+		_c.mutation.SetAutheliaInstanceID(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := tempaccess.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -118,6 +136,9 @@ func (_c *TempAccessCreate) check() error {
 	}
 	if _, ok := _c.mutation.Reason(); !ok {
 		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "TempAccess.reason"`)}
+	}
+	if _, ok := _c.mutation.AutheliaInstanceID(); !ok {
+		return &ValidationError{Name: "authelia_instance_id", err: errors.New(`ent: missing required field "TempAccess.authelia_instance_id"`)}
 	}
 	if _, ok := _c.mutation.ExpiresAt(); !ok {
 		return &ValidationError{Name: "expires_at", err: errors.New(`ent: missing required field "TempAccess.expires_at"`)}
@@ -161,6 +182,10 @@ func (_c *TempAccessCreate) createSpec() (*TempAccess, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Reason(); ok {
 		_spec.SetField(tempaccess.FieldReason, field.TypeString, value)
 		_node.Reason = value
+	}
+	if value, ok := _c.mutation.AutheliaInstanceID(); ok {
+		_spec.SetField(tempaccess.FieldAutheliaInstanceID, field.TypeInt, value)
+		_node.AutheliaInstanceID = value
 	}
 	if value, ok := _c.mutation.ExpiresAt(); ok {
 		_spec.SetField(tempaccess.FieldExpiresAt, field.TypeTime, value)

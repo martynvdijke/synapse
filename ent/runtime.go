@@ -4,6 +4,7 @@ package ent
 
 import (
 	"synapse/ent/autheliaalert"
+	"synapse/ent/autheliainstance"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
@@ -26,6 +27,24 @@ func init() {
 	autheliaalertDescStatus := autheliaalertFields[3].Descriptor()
 	// autheliaalert.DefaultStatus holds the default value on creation for the status field.
 	autheliaalert.DefaultStatus = autheliaalertDescStatus.Default.(string)
+	// autheliaalertDescAutheliaInstanceID is the schema descriptor for authelia_instance_id field.
+	autheliaalertDescAutheliaInstanceID := autheliaalertFields[4].Descriptor()
+	// autheliaalert.DefaultAutheliaInstanceID holds the default value on creation for the authelia_instance_id field.
+	autheliaalert.DefaultAutheliaInstanceID = autheliaalertDescAutheliaInstanceID.Default.(int)
+	autheliainstanceFields := schema.AutheliaInstance{}.Fields()
+	_ = autheliainstanceFields
+	// autheliainstanceDescDefaultPolicy is the schema descriptor for default_policy field.
+	autheliainstanceDescDefaultPolicy := autheliainstanceFields[3].Descriptor()
+	// autheliainstance.DefaultDefaultPolicy holds the default value on creation for the default_policy field.
+	autheliainstance.DefaultDefaultPolicy = autheliainstanceDescDefaultPolicy.Default.(string)
+	// autheliainstanceDescAutoSync is the schema descriptor for auto_sync field.
+	autheliainstanceDescAutoSync := autheliainstanceFields[5].Descriptor()
+	// autheliainstance.DefaultAutoSync holds the default value on creation for the auto_sync field.
+	autheliainstance.DefaultAutoSync = autheliainstanceDescAutoSync.Default.(bool)
+	// autheliainstanceDescEnabled is the schema descriptor for enabled field.
+	autheliainstanceDescEnabled := autheliainstanceFields[7].Descriptor()
+	// autheliainstance.DefaultEnabled holds the default value on creation for the enabled field.
+	autheliainstance.DefaultEnabled = autheliainstanceDescEnabled.Default.(bool)
 	kumainstanceFields := schema.KumaInstance{}.Fields()
 	_ = kumainstanceFields
 	// kumainstanceDescEnabled is the schema descriptor for enabled field.
@@ -92,8 +111,12 @@ func init() {
 	tempaccessDescReason := tempaccessFields[1].Descriptor()
 	// tempaccess.DefaultReason holds the default value on creation for the reason field.
 	tempaccess.DefaultReason = tempaccessDescReason.Default.(string)
+	// tempaccessDescAutheliaInstanceID is the schema descriptor for authelia_instance_id field.
+	tempaccessDescAutheliaInstanceID := tempaccessFields[2].Descriptor()
+	// tempaccess.DefaultAutheliaInstanceID holds the default value on creation for the authelia_instance_id field.
+	tempaccess.DefaultAutheliaInstanceID = tempaccessDescAutheliaInstanceID.Default.(int)
 	// tempaccessDescStatus is the schema descriptor for status field.
-	tempaccessDescStatus := tempaccessFields[4].Descriptor()
+	tempaccessDescStatus := tempaccessFields[5].Descriptor()
 	// tempaccess.DefaultStatus holds the default value on creation for the status field.
 	tempaccess.DefaultStatus = tempaccessDescStatus.Default.(string)
 }

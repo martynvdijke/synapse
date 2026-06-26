@@ -21,6 +21,8 @@ type TempAccess struct {
 	IP string `json:"ip,omitempty"`
 	// Reason holds the value of the "reason" field.
 	Reason string `json:"reason,omitempty"`
+	// AutheliaInstanceID holds the value of the "authelia_instance_id" field.
+	AutheliaInstanceID int `json:"authelia_instance_id,omitempty"`
 	// ExpiresAt holds the value of the "expires_at" field.
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -35,7 +37,7 @@ func (*TempAccess) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case tempaccess.FieldID:
+		case tempaccess.FieldID, tempaccess.FieldAutheliaInstanceID:
 			values[i] = new(sql.NullInt64)
 		case tempaccess.FieldIP, tempaccess.FieldReason, tempaccess.FieldStatus:
 			values[i] = new(sql.NullString)
@@ -73,6 +75,12 @@ func (_m *TempAccess) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field reason", values[i])
 			} else if value.Valid {
 				_m.Reason = value.String
+			}
+		case tempaccess.FieldAutheliaInstanceID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field authelia_instance_id", values[i])
+			} else if value.Valid {
+				_m.AutheliaInstanceID = int(value.Int64)
 			}
 		case tempaccess.FieldExpiresAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -133,6 +141,9 @@ func (_m *TempAccess) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("reason=")
 	builder.WriteString(_m.Reason)
+	builder.WriteString(", ")
+	builder.WriteString("authelia_instance_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AutheliaInstanceID))
 	builder.WriteString(", ")
 	builder.WriteString("expires_at=")
 	builder.WriteString(_m.ExpiresAt.Format(time.ANSIC))

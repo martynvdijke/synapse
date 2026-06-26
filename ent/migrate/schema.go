@@ -15,6 +15,7 @@ var (
 		{Name: "message", Type: field.TypeString},
 		{Name: "severity", Type: field.TypeString, Default: "warning"},
 		{Name: "status", Type: field.TypeString, Default: "open"},
+		{Name: "authelia_instance_id", Type: field.TypeInt, Default: 0},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// AutheliaAlertsTable holds the schema information for the "authelia_alerts" table.
@@ -22,6 +23,25 @@ var (
 		Name:       "authelia_alerts",
 		Columns:    AutheliaAlertsColumns,
 		PrimaryKey: []*schema.Column{AutheliaAlertsColumns[0]},
+	}
+	// AutheliaInstancesColumns holds the columns for the "authelia_instances" table.
+	AutheliaInstancesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "name", Type: field.TypeString},
+		{Name: "config_path", Type: field.TypeString},
+		{Name: "db_path", Type: field.TypeString, Nullable: true},
+		{Name: "default_policy", Type: field.TypeString, Default: "one_factor"},
+		{Name: "overrides", Type: field.TypeString, Nullable: true},
+		{Name: "auto_sync", Type: field.TypeBool, Default: false},
+		{Name: "npm_instance_ids", Type: field.TypeString, Nullable: true},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// AutheliaInstancesTable holds the schema information for the "authelia_instances" table.
+	AutheliaInstancesTable = &schema.Table{
+		Name:       "authelia_instances",
+		Columns:    AutheliaInstancesColumns,
+		PrimaryKey: []*schema.Column{AutheliaInstancesColumns[0]},
 	}
 	// KumaInstancesColumns holds the columns for the "kuma_instances" table.
 	KumaInstancesColumns = []*schema.Column{
@@ -123,6 +143,7 @@ var (
 		{Name: "id", Type: field.TypeInt, Increment: true},
 		{Name: "ip", Type: field.TypeString},
 		{Name: "reason", Type: field.TypeString, Default: ""},
+		{Name: "authelia_instance_id", Type: field.TypeInt, Default: 0},
 		{Name: "expires_at", Type: field.TypeTime},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "status", Type: field.TypeString, Default: "active"},
@@ -136,6 +157,7 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		AutheliaAlertsTable,
+		AutheliaInstancesTable,
 		KumaInstancesTable,
 		MonitorsTable,
 		NpmInstancesTable,

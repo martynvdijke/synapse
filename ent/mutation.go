@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"synapse/ent/autheliaalert"
+	"synapse/ent/autheliainstance"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
@@ -30,30 +31,33 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeAutheliaAlert = "AutheliaAlert"
-	TypeKumaInstance  = "KumaInstance"
-	TypeMonitor       = "Monitor"
-	TypeNPMInstance   = "NPMInstance"
-	TypeSettings      = "Settings"
-	TypeSyncRun       = "SyncRun"
-	TypeTempAccess    = "TempAccess"
+	TypeAutheliaAlert    = "AutheliaAlert"
+	TypeAutheliaInstance = "AutheliaInstance"
+	TypeKumaInstance     = "KumaInstance"
+	TypeMonitor          = "Monitor"
+	TypeNPMInstance      = "NPMInstance"
+	TypeSettings         = "Settings"
+	TypeSyncRun          = "SyncRun"
+	TypeTempAccess       = "TempAccess"
 )
 
 // AutheliaAlertMutation represents an operation that mutates the AutheliaAlert nodes in the graph.
 type AutheliaAlertMutation struct {
 	config
-	op            Op
-	typ           string
-	id            *int
-	cname         *string
-	message       *string
-	severity      *string
-	status        *string
-	created_at    *time.Time
-	clearedFields map[string]struct{}
-	done          bool
-	oldValue      func(context.Context) (*AutheliaAlert, error)
-	predicates    []predicate.AutheliaAlert
+	op                      Op
+	typ                     string
+	id                      *int
+	cname                   *string
+	message                 *string
+	severity                *string
+	status                  *string
+	authelia_instance_id    *int
+	addauthelia_instance_id *int
+	created_at              *time.Time
+	clearedFields           map[string]struct{}
+	done                    bool
+	oldValue                func(context.Context) (*AutheliaAlert, error)
+	predicates              []predicate.AutheliaAlert
 }
 
 var _ ent.Mutation = (*AutheliaAlertMutation)(nil)
@@ -298,6 +302,62 @@ func (m *AutheliaAlertMutation) ResetStatus() {
 	m.status = nil
 }
 
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (m *AutheliaAlertMutation) SetAutheliaInstanceID(i int) {
+	m.authelia_instance_id = &i
+	m.addauthelia_instance_id = nil
+}
+
+// AutheliaInstanceID returns the value of the "authelia_instance_id" field in the mutation.
+func (m *AutheliaAlertMutation) AutheliaInstanceID() (r int, exists bool) {
+	v := m.authelia_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutheliaInstanceID returns the old "authelia_instance_id" field's value of the AutheliaAlert entity.
+// If the AutheliaAlert object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaAlertMutation) OldAutheliaInstanceID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutheliaInstanceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutheliaInstanceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutheliaInstanceID: %w", err)
+	}
+	return oldValue.AutheliaInstanceID, nil
+}
+
+// AddAutheliaInstanceID adds i to the "authelia_instance_id" field.
+func (m *AutheliaAlertMutation) AddAutheliaInstanceID(i int) {
+	if m.addauthelia_instance_id != nil {
+		*m.addauthelia_instance_id += i
+	} else {
+		m.addauthelia_instance_id = &i
+	}
+}
+
+// AddedAutheliaInstanceID returns the value that was added to the "authelia_instance_id" field in this mutation.
+func (m *AutheliaAlertMutation) AddedAutheliaInstanceID() (r int, exists bool) {
+	v := m.addauthelia_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAutheliaInstanceID resets all changes to the "authelia_instance_id" field.
+func (m *AutheliaAlertMutation) ResetAutheliaInstanceID() {
+	m.authelia_instance_id = nil
+	m.addauthelia_instance_id = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *AutheliaAlertMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -368,7 +428,7 @@ func (m *AutheliaAlertMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AutheliaAlertMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.cname != nil {
 		fields = append(fields, autheliaalert.FieldCname)
 	}
@@ -380,6 +440,9 @@ func (m *AutheliaAlertMutation) Fields() []string {
 	}
 	if m.status != nil {
 		fields = append(fields, autheliaalert.FieldStatus)
+	}
+	if m.authelia_instance_id != nil {
+		fields = append(fields, autheliaalert.FieldAutheliaInstanceID)
 	}
 	if m.created_at != nil {
 		fields = append(fields, autheliaalert.FieldCreatedAt)
@@ -400,6 +463,8 @@ func (m *AutheliaAlertMutation) Field(name string) (ent.Value, bool) {
 		return m.Severity()
 	case autheliaalert.FieldStatus:
 		return m.Status()
+	case autheliaalert.FieldAutheliaInstanceID:
+		return m.AutheliaInstanceID()
 	case autheliaalert.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -419,6 +484,8 @@ func (m *AutheliaAlertMutation) OldField(ctx context.Context, name string) (ent.
 		return m.OldSeverity(ctx)
 	case autheliaalert.FieldStatus:
 		return m.OldStatus(ctx)
+	case autheliaalert.FieldAutheliaInstanceID:
+		return m.OldAutheliaInstanceID(ctx)
 	case autheliaalert.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	}
@@ -458,6 +525,13 @@ func (m *AutheliaAlertMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetStatus(v)
 		return nil
+	case autheliaalert.FieldAutheliaInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutheliaInstanceID(v)
+		return nil
 	case autheliaalert.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -472,13 +546,21 @@ func (m *AutheliaAlertMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *AutheliaAlertMutation) AddedFields() []string {
-	return nil
+	var fields []string
+	if m.addauthelia_instance_id != nil {
+		fields = append(fields, autheliaalert.FieldAutheliaInstanceID)
+	}
+	return fields
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *AutheliaAlertMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case autheliaalert.FieldAutheliaInstanceID:
+		return m.AddedAutheliaInstanceID()
+	}
 	return nil, false
 }
 
@@ -487,6 +569,13 @@ func (m *AutheliaAlertMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *AutheliaAlertMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case autheliaalert.FieldAutheliaInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAutheliaInstanceID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown AutheliaAlert numeric field %s", name)
 }
@@ -525,6 +614,9 @@ func (m *AutheliaAlertMutation) ResetField(name string) error {
 		return nil
 	case autheliaalert.FieldStatus:
 		m.ResetStatus()
+		return nil
+	case autheliaalert.FieldAutheliaInstanceID:
+		m.ResetAutheliaInstanceID()
 		return nil
 	case autheliaalert.FieldCreatedAt:
 		m.ResetCreatedAt()
@@ -579,6 +671,824 @@ func (m *AutheliaAlertMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *AutheliaAlertMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown AutheliaAlert edge %s", name)
+}
+
+// AutheliaInstanceMutation represents an operation that mutates the AutheliaInstance nodes in the graph.
+type AutheliaInstanceMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *int
+	name             *string
+	config_path      *string
+	db_path          *string
+	default_policy   *string
+	overrides        *string
+	auto_sync        *bool
+	npm_instance_ids *string
+	enabled          *bool
+	created_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*AutheliaInstance, error)
+	predicates       []predicate.AutheliaInstance
+}
+
+var _ ent.Mutation = (*AutheliaInstanceMutation)(nil)
+
+// autheliainstanceOption allows management of the mutation configuration using functional options.
+type autheliainstanceOption func(*AutheliaInstanceMutation)
+
+// newAutheliaInstanceMutation creates new mutation for the AutheliaInstance entity.
+func newAutheliaInstanceMutation(c config, op Op, opts ...autheliainstanceOption) *AutheliaInstanceMutation {
+	m := &AutheliaInstanceMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeAutheliaInstance,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withAutheliaInstanceID sets the ID field of the mutation.
+func withAutheliaInstanceID(id int) autheliainstanceOption {
+	return func(m *AutheliaInstanceMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *AutheliaInstance
+		)
+		m.oldValue = func(ctx context.Context) (*AutheliaInstance, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().AutheliaInstance.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withAutheliaInstance sets the old AutheliaInstance of the mutation.
+func withAutheliaInstance(node *AutheliaInstance) autheliainstanceOption {
+	return func(m *AutheliaInstanceMutation) {
+		m.oldValue = func(context.Context) (*AutheliaInstance, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m AutheliaInstanceMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m AutheliaInstanceMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *AutheliaInstanceMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *AutheliaInstanceMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().AutheliaInstance.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetName sets the "name" field.
+func (m *AutheliaInstanceMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *AutheliaInstanceMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *AutheliaInstanceMutation) ResetName() {
+	m.name = nil
+}
+
+// SetConfigPath sets the "config_path" field.
+func (m *AutheliaInstanceMutation) SetConfigPath(s string) {
+	m.config_path = &s
+}
+
+// ConfigPath returns the value of the "config_path" field in the mutation.
+func (m *AutheliaInstanceMutation) ConfigPath() (r string, exists bool) {
+	v := m.config_path
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConfigPath returns the old "config_path" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldConfigPath(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConfigPath is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConfigPath requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConfigPath: %w", err)
+	}
+	return oldValue.ConfigPath, nil
+}
+
+// ResetConfigPath resets all changes to the "config_path" field.
+func (m *AutheliaInstanceMutation) ResetConfigPath() {
+	m.config_path = nil
+}
+
+// SetDbPath sets the "db_path" field.
+func (m *AutheliaInstanceMutation) SetDbPath(s string) {
+	m.db_path = &s
+}
+
+// DbPath returns the value of the "db_path" field in the mutation.
+func (m *AutheliaInstanceMutation) DbPath() (r string, exists bool) {
+	v := m.db_path
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDbPath returns the old "db_path" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldDbPath(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDbPath is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDbPath requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDbPath: %w", err)
+	}
+	return oldValue.DbPath, nil
+}
+
+// ClearDbPath clears the value of the "db_path" field.
+func (m *AutheliaInstanceMutation) ClearDbPath() {
+	m.db_path = nil
+	m.clearedFields[autheliainstance.FieldDbPath] = struct{}{}
+}
+
+// DbPathCleared returns if the "db_path" field was cleared in this mutation.
+func (m *AutheliaInstanceMutation) DbPathCleared() bool {
+	_, ok := m.clearedFields[autheliainstance.FieldDbPath]
+	return ok
+}
+
+// ResetDbPath resets all changes to the "db_path" field.
+func (m *AutheliaInstanceMutation) ResetDbPath() {
+	m.db_path = nil
+	delete(m.clearedFields, autheliainstance.FieldDbPath)
+}
+
+// SetDefaultPolicy sets the "default_policy" field.
+func (m *AutheliaInstanceMutation) SetDefaultPolicy(s string) {
+	m.default_policy = &s
+}
+
+// DefaultPolicy returns the value of the "default_policy" field in the mutation.
+func (m *AutheliaInstanceMutation) DefaultPolicy() (r string, exists bool) {
+	v := m.default_policy
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDefaultPolicy returns the old "default_policy" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldDefaultPolicy(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDefaultPolicy is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDefaultPolicy requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDefaultPolicy: %w", err)
+	}
+	return oldValue.DefaultPolicy, nil
+}
+
+// ResetDefaultPolicy resets all changes to the "default_policy" field.
+func (m *AutheliaInstanceMutation) ResetDefaultPolicy() {
+	m.default_policy = nil
+}
+
+// SetOverrides sets the "overrides" field.
+func (m *AutheliaInstanceMutation) SetOverrides(s string) {
+	m.overrides = &s
+}
+
+// Overrides returns the value of the "overrides" field in the mutation.
+func (m *AutheliaInstanceMutation) Overrides() (r string, exists bool) {
+	v := m.overrides
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOverrides returns the old "overrides" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldOverrides(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOverrides is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOverrides requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOverrides: %w", err)
+	}
+	return oldValue.Overrides, nil
+}
+
+// ClearOverrides clears the value of the "overrides" field.
+func (m *AutheliaInstanceMutation) ClearOverrides() {
+	m.overrides = nil
+	m.clearedFields[autheliainstance.FieldOverrides] = struct{}{}
+}
+
+// OverridesCleared returns if the "overrides" field was cleared in this mutation.
+func (m *AutheliaInstanceMutation) OverridesCleared() bool {
+	_, ok := m.clearedFields[autheliainstance.FieldOverrides]
+	return ok
+}
+
+// ResetOverrides resets all changes to the "overrides" field.
+func (m *AutheliaInstanceMutation) ResetOverrides() {
+	m.overrides = nil
+	delete(m.clearedFields, autheliainstance.FieldOverrides)
+}
+
+// SetAutoSync sets the "auto_sync" field.
+func (m *AutheliaInstanceMutation) SetAutoSync(b bool) {
+	m.auto_sync = &b
+}
+
+// AutoSync returns the value of the "auto_sync" field in the mutation.
+func (m *AutheliaInstanceMutation) AutoSync() (r bool, exists bool) {
+	v := m.auto_sync
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutoSync returns the old "auto_sync" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldAutoSync(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutoSync is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutoSync requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutoSync: %w", err)
+	}
+	return oldValue.AutoSync, nil
+}
+
+// ResetAutoSync resets all changes to the "auto_sync" field.
+func (m *AutheliaInstanceMutation) ResetAutoSync() {
+	m.auto_sync = nil
+}
+
+// SetNpmInstanceIds sets the "npm_instance_ids" field.
+func (m *AutheliaInstanceMutation) SetNpmInstanceIds(s string) {
+	m.npm_instance_ids = &s
+}
+
+// NpmInstanceIds returns the value of the "npm_instance_ids" field in the mutation.
+func (m *AutheliaInstanceMutation) NpmInstanceIds() (r string, exists bool) {
+	v := m.npm_instance_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNpmInstanceIds returns the old "npm_instance_ids" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldNpmInstanceIds(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNpmInstanceIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNpmInstanceIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNpmInstanceIds: %w", err)
+	}
+	return oldValue.NpmInstanceIds, nil
+}
+
+// ClearNpmInstanceIds clears the value of the "npm_instance_ids" field.
+func (m *AutheliaInstanceMutation) ClearNpmInstanceIds() {
+	m.npm_instance_ids = nil
+	m.clearedFields[autheliainstance.FieldNpmInstanceIds] = struct{}{}
+}
+
+// NpmInstanceIdsCleared returns if the "npm_instance_ids" field was cleared in this mutation.
+func (m *AutheliaInstanceMutation) NpmInstanceIdsCleared() bool {
+	_, ok := m.clearedFields[autheliainstance.FieldNpmInstanceIds]
+	return ok
+}
+
+// ResetNpmInstanceIds resets all changes to the "npm_instance_ids" field.
+func (m *AutheliaInstanceMutation) ResetNpmInstanceIds() {
+	m.npm_instance_ids = nil
+	delete(m.clearedFields, autheliainstance.FieldNpmInstanceIds)
+}
+
+// SetEnabled sets the "enabled" field.
+func (m *AutheliaInstanceMutation) SetEnabled(b bool) {
+	m.enabled = &b
+}
+
+// Enabled returns the value of the "enabled" field in the mutation.
+func (m *AutheliaInstanceMutation) Enabled() (r bool, exists bool) {
+	v := m.enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEnabled returns the old "enabled" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEnabled: %w", err)
+	}
+	return oldValue.Enabled, nil
+}
+
+// ResetEnabled resets all changes to the "enabled" field.
+func (m *AutheliaInstanceMutation) ResetEnabled() {
+	m.enabled = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *AutheliaInstanceMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *AutheliaInstanceMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the AutheliaInstance entity.
+// If the AutheliaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AutheliaInstanceMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *AutheliaInstanceMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the AutheliaInstanceMutation builder.
+func (m *AutheliaInstanceMutation) Where(ps ...predicate.AutheliaInstance) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the AutheliaInstanceMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *AutheliaInstanceMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.AutheliaInstance, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *AutheliaInstanceMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *AutheliaInstanceMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (AutheliaInstance).
+func (m *AutheliaInstanceMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *AutheliaInstanceMutation) Fields() []string {
+	fields := make([]string, 0, 9)
+	if m.name != nil {
+		fields = append(fields, autheliainstance.FieldName)
+	}
+	if m.config_path != nil {
+		fields = append(fields, autheliainstance.FieldConfigPath)
+	}
+	if m.db_path != nil {
+		fields = append(fields, autheliainstance.FieldDbPath)
+	}
+	if m.default_policy != nil {
+		fields = append(fields, autheliainstance.FieldDefaultPolicy)
+	}
+	if m.overrides != nil {
+		fields = append(fields, autheliainstance.FieldOverrides)
+	}
+	if m.auto_sync != nil {
+		fields = append(fields, autheliainstance.FieldAutoSync)
+	}
+	if m.npm_instance_ids != nil {
+		fields = append(fields, autheliainstance.FieldNpmInstanceIds)
+	}
+	if m.enabled != nil {
+		fields = append(fields, autheliainstance.FieldEnabled)
+	}
+	if m.created_at != nil {
+		fields = append(fields, autheliainstance.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *AutheliaInstanceMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case autheliainstance.FieldName:
+		return m.Name()
+	case autheliainstance.FieldConfigPath:
+		return m.ConfigPath()
+	case autheliainstance.FieldDbPath:
+		return m.DbPath()
+	case autheliainstance.FieldDefaultPolicy:
+		return m.DefaultPolicy()
+	case autheliainstance.FieldOverrides:
+		return m.Overrides()
+	case autheliainstance.FieldAutoSync:
+		return m.AutoSync()
+	case autheliainstance.FieldNpmInstanceIds:
+		return m.NpmInstanceIds()
+	case autheliainstance.FieldEnabled:
+		return m.Enabled()
+	case autheliainstance.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *AutheliaInstanceMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case autheliainstance.FieldName:
+		return m.OldName(ctx)
+	case autheliainstance.FieldConfigPath:
+		return m.OldConfigPath(ctx)
+	case autheliainstance.FieldDbPath:
+		return m.OldDbPath(ctx)
+	case autheliainstance.FieldDefaultPolicy:
+		return m.OldDefaultPolicy(ctx)
+	case autheliainstance.FieldOverrides:
+		return m.OldOverrides(ctx)
+	case autheliainstance.FieldAutoSync:
+		return m.OldAutoSync(ctx)
+	case autheliainstance.FieldNpmInstanceIds:
+		return m.OldNpmInstanceIds(ctx)
+	case autheliainstance.FieldEnabled:
+		return m.OldEnabled(ctx)
+	case autheliainstance.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown AutheliaInstance field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AutheliaInstanceMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case autheliainstance.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case autheliainstance.FieldConfigPath:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConfigPath(v)
+		return nil
+	case autheliainstance.FieldDbPath:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDbPath(v)
+		return nil
+	case autheliainstance.FieldDefaultPolicy:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDefaultPolicy(v)
+		return nil
+	case autheliainstance.FieldOverrides:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOverrides(v)
+		return nil
+	case autheliainstance.FieldAutoSync:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutoSync(v)
+		return nil
+	case autheliainstance.FieldNpmInstanceIds:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNpmInstanceIds(v)
+		return nil
+	case autheliainstance.FieldEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnabled(v)
+		return nil
+	case autheliainstance.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AutheliaInstance field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *AutheliaInstanceMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *AutheliaInstanceMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AutheliaInstanceMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown AutheliaInstance numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *AutheliaInstanceMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(autheliainstance.FieldDbPath) {
+		fields = append(fields, autheliainstance.FieldDbPath)
+	}
+	if m.FieldCleared(autheliainstance.FieldOverrides) {
+		fields = append(fields, autheliainstance.FieldOverrides)
+	}
+	if m.FieldCleared(autheliainstance.FieldNpmInstanceIds) {
+		fields = append(fields, autheliainstance.FieldNpmInstanceIds)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *AutheliaInstanceMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *AutheliaInstanceMutation) ClearField(name string) error {
+	switch name {
+	case autheliainstance.FieldDbPath:
+		m.ClearDbPath()
+		return nil
+	case autheliainstance.FieldOverrides:
+		m.ClearOverrides()
+		return nil
+	case autheliainstance.FieldNpmInstanceIds:
+		m.ClearNpmInstanceIds()
+		return nil
+	}
+	return fmt.Errorf("unknown AutheliaInstance nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *AutheliaInstanceMutation) ResetField(name string) error {
+	switch name {
+	case autheliainstance.FieldName:
+		m.ResetName()
+		return nil
+	case autheliainstance.FieldConfigPath:
+		m.ResetConfigPath()
+		return nil
+	case autheliainstance.FieldDbPath:
+		m.ResetDbPath()
+		return nil
+	case autheliainstance.FieldDefaultPolicy:
+		m.ResetDefaultPolicy()
+		return nil
+	case autheliainstance.FieldOverrides:
+		m.ResetOverrides()
+		return nil
+	case autheliainstance.FieldAutoSync:
+		m.ResetAutoSync()
+		return nil
+	case autheliainstance.FieldNpmInstanceIds:
+		m.ResetNpmInstanceIds()
+		return nil
+	case autheliainstance.FieldEnabled:
+		m.ResetEnabled()
+		return nil
+	case autheliainstance.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown AutheliaInstance field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *AutheliaInstanceMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *AutheliaInstanceMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *AutheliaInstanceMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *AutheliaInstanceMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *AutheliaInstanceMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *AutheliaInstanceMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *AutheliaInstanceMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown AutheliaInstance unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *AutheliaInstanceMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown AutheliaInstance edge %s", name)
 }
 
 // KumaInstanceMutation represents an operation that mutates the KumaInstance nodes in the graph.
@@ -3904,18 +4814,20 @@ func (m *SyncRunMutation) ResetEdge(name string) error {
 // TempAccessMutation represents an operation that mutates the TempAccess nodes in the graph.
 type TempAccessMutation struct {
 	config
-	op            Op
-	typ           string
-	id            *int
-	ip            *string
-	reason        *string
-	expires_at    *time.Time
-	created_at    *time.Time
-	status        *string
-	clearedFields map[string]struct{}
-	done          bool
-	oldValue      func(context.Context) (*TempAccess, error)
-	predicates    []predicate.TempAccess
+	op                      Op
+	typ                     string
+	id                      *int
+	ip                      *string
+	reason                  *string
+	authelia_instance_id    *int
+	addauthelia_instance_id *int
+	expires_at              *time.Time
+	created_at              *time.Time
+	status                  *string
+	clearedFields           map[string]struct{}
+	done                    bool
+	oldValue                func(context.Context) (*TempAccess, error)
+	predicates              []predicate.TempAccess
 }
 
 var _ ent.Mutation = (*TempAccessMutation)(nil)
@@ -4088,6 +5000,62 @@ func (m *TempAccessMutation) ResetReason() {
 	m.reason = nil
 }
 
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (m *TempAccessMutation) SetAutheliaInstanceID(i int) {
+	m.authelia_instance_id = &i
+	m.addauthelia_instance_id = nil
+}
+
+// AutheliaInstanceID returns the value of the "authelia_instance_id" field in the mutation.
+func (m *TempAccessMutation) AutheliaInstanceID() (r int, exists bool) {
+	v := m.authelia_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutheliaInstanceID returns the old "authelia_instance_id" field's value of the TempAccess entity.
+// If the TempAccess object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TempAccessMutation) OldAutheliaInstanceID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutheliaInstanceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutheliaInstanceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutheliaInstanceID: %w", err)
+	}
+	return oldValue.AutheliaInstanceID, nil
+}
+
+// AddAutheliaInstanceID adds i to the "authelia_instance_id" field.
+func (m *TempAccessMutation) AddAutheliaInstanceID(i int) {
+	if m.addauthelia_instance_id != nil {
+		*m.addauthelia_instance_id += i
+	} else {
+		m.addauthelia_instance_id = &i
+	}
+}
+
+// AddedAutheliaInstanceID returns the value that was added to the "authelia_instance_id" field in this mutation.
+func (m *TempAccessMutation) AddedAutheliaInstanceID() (r int, exists bool) {
+	v := m.addauthelia_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAutheliaInstanceID resets all changes to the "authelia_instance_id" field.
+func (m *TempAccessMutation) ResetAutheliaInstanceID() {
+	m.authelia_instance_id = nil
+	m.addauthelia_instance_id = nil
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (m *TempAccessMutation) SetExpiresAt(t time.Time) {
 	m.expires_at = &t
@@ -4230,12 +5198,15 @@ func (m *TempAccessMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TempAccessMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.ip != nil {
 		fields = append(fields, tempaccess.FieldIP)
 	}
 	if m.reason != nil {
 		fields = append(fields, tempaccess.FieldReason)
+	}
+	if m.authelia_instance_id != nil {
+		fields = append(fields, tempaccess.FieldAutheliaInstanceID)
 	}
 	if m.expires_at != nil {
 		fields = append(fields, tempaccess.FieldExpiresAt)
@@ -4258,6 +5229,8 @@ func (m *TempAccessMutation) Field(name string) (ent.Value, bool) {
 		return m.IP()
 	case tempaccess.FieldReason:
 		return m.Reason()
+	case tempaccess.FieldAutheliaInstanceID:
+		return m.AutheliaInstanceID()
 	case tempaccess.FieldExpiresAt:
 		return m.ExpiresAt()
 	case tempaccess.FieldCreatedAt:
@@ -4277,6 +5250,8 @@ func (m *TempAccessMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldIP(ctx)
 	case tempaccess.FieldReason:
 		return m.OldReason(ctx)
+	case tempaccess.FieldAutheliaInstanceID:
+		return m.OldAutheliaInstanceID(ctx)
 	case tempaccess.FieldExpiresAt:
 		return m.OldExpiresAt(ctx)
 	case tempaccess.FieldCreatedAt:
@@ -4306,6 +5281,13 @@ func (m *TempAccessMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetReason(v)
 		return nil
+	case tempaccess.FieldAutheliaInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutheliaInstanceID(v)
+		return nil
 	case tempaccess.FieldExpiresAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -4334,13 +5316,21 @@ func (m *TempAccessMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *TempAccessMutation) AddedFields() []string {
-	return nil
+	var fields []string
+	if m.addauthelia_instance_id != nil {
+		fields = append(fields, tempaccess.FieldAutheliaInstanceID)
+	}
+	return fields
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *TempAccessMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case tempaccess.FieldAutheliaInstanceID:
+		return m.AddedAutheliaInstanceID()
+	}
 	return nil, false
 }
 
@@ -4349,6 +5339,13 @@ func (m *TempAccessMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *TempAccessMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case tempaccess.FieldAutheliaInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAutheliaInstanceID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown TempAccess numeric field %s", name)
 }
@@ -4381,6 +5378,9 @@ func (m *TempAccessMutation) ResetField(name string) error {
 		return nil
 	case tempaccess.FieldReason:
 		m.ResetReason()
+		return nil
+	case tempaccess.FieldAutheliaInstanceID:
+		m.ResetAutheliaInstanceID()
 		return nil
 	case tempaccess.FieldExpiresAt:
 		m.ResetExpiresAt()

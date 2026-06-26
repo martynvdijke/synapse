@@ -60,6 +60,20 @@ func (_c *AutheliaAlertCreate) SetNillableStatus(v *string) *AutheliaAlertCreate
 	return _c
 }
 
+// SetAutheliaInstanceID sets the "authelia_instance_id" field.
+func (_c *AutheliaAlertCreate) SetAutheliaInstanceID(v int) *AutheliaAlertCreate {
+	_c.mutation.SetAutheliaInstanceID(v)
+	return _c
+}
+
+// SetNillableAutheliaInstanceID sets the "authelia_instance_id" field if the given value is not nil.
+func (_c *AutheliaAlertCreate) SetNillableAutheliaInstanceID(v *int) *AutheliaAlertCreate {
+	if v != nil {
+		_c.SetAutheliaInstanceID(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *AutheliaAlertCreate) SetCreatedAt(v time.Time) *AutheliaAlertCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -109,6 +123,10 @@ func (_c *AutheliaAlertCreate) defaults() {
 		v := autheliaalert.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.AutheliaInstanceID(); !ok {
+		v := autheliaalert.DefaultAutheliaInstanceID
+		_c.mutation.SetAutheliaInstanceID(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -124,6 +142,9 @@ func (_c *AutheliaAlertCreate) check() error {
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "AutheliaAlert.status"`)}
+	}
+	if _, ok := _c.mutation.AutheliaInstanceID(); !ok {
+		return &ValidationError{Name: "authelia_instance_id", err: errors.New(`ent: missing required field "AutheliaAlert.authelia_instance_id"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "AutheliaAlert.created_at"`)}
@@ -169,6 +190,10 @@ func (_c *AutheliaAlertCreate) createSpec() (*AutheliaAlert, *sqlgraph.CreateSpe
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(autheliaalert.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := _c.mutation.AutheliaInstanceID(); ok {
+		_spec.SetField(autheliaalert.FieldAutheliaInstanceID, field.TypeInt, value)
+		_node.AutheliaInstanceID = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(autheliaalert.FieldCreatedAt, field.TypeTime, value)

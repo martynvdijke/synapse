@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"synapse/ent/autheliaalert"
+	"synapse/ent/autheliainstance"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
@@ -79,13 +80,14 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			autheliaalert.Table: autheliaalert.ValidColumn,
-			kumainstance.Table:  kumainstance.ValidColumn,
-			monitor.Table:       monitor.ValidColumn,
-			npminstance.Table:   npminstance.ValidColumn,
-			settings.Table:      settings.ValidColumn,
-			syncrun.Table:       syncrun.ValidColumn,
-			tempaccess.Table:    tempaccess.ValidColumn,
+			autheliaalert.Table:    autheliaalert.ValidColumn,
+			autheliainstance.Table: autheliainstance.ValidColumn,
+			kumainstance.Table:     kumainstance.ValidColumn,
+			monitor.Table:          monitor.ValidColumn,
+			npminstance.Table:      npminstance.ValidColumn,
+			settings.Table:         settings.ValidColumn,
+			syncrun.Table:          syncrun.ValidColumn,
+			tempaccess.Table:       tempaccess.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

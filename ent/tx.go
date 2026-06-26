@@ -14,6 +14,8 @@ type Tx struct {
 	config
 	// AutheliaAlert is the client for interacting with the AutheliaAlert builders.
 	AutheliaAlert *AutheliaAlertClient
+	// AutheliaInstance is the client for interacting with the AutheliaInstance builders.
+	AutheliaInstance *AutheliaInstanceClient
 	// KumaInstance is the client for interacting with the KumaInstance builders.
 	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
@@ -158,6 +160,7 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.AutheliaAlert = NewAutheliaAlertClient(tx.config)
+	tx.AutheliaInstance = NewAutheliaInstanceClient(tx.config)
 	tx.KumaInstance = NewKumaInstanceClient(tx.config)
 	tx.Monitor = NewMonitorClient(tx.config)
 	tx.NPMInstance = NewNPMInstanceClient(tx.config)
