@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/martynvdijke/synapse/compare/v1.7.0...v1.8.0) (2026-06-26)
+
+
+### Features
+
+* add AutheliaInstance data model + ent schema + db CRUD + migration ([8b9f950](https://github.com/martynvdijke/synapse/commit/8b9f950ab938b2df718d6c1ddb3d6e68af3ab006))
+
 # [1.7.0](https://github.com/martynvdijke/synapse/compare/v1.6.0...v1.7.0) (2026-06-26)
 
 
