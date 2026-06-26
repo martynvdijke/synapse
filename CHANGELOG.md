@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/martynvdijke/synapse/compare/v1.6.0...v1.7.0) (2026-06-26)
+
+
+### Features
+
+* complete npm-multi-instance with tests, typescript conversion ([5ac2162](https://github.com/martynvdijke/synapse/commit/5ac2162eed4f1da8ef9cbab9527dc778c108b8f2))
+
 # [1.6.0](https://github.com/martynvdijke/synapse/compare/v1.5.6...v1.6.0) (2026-06-25)
 
 
