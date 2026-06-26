@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { setupBaseMocks, MOCK_SETTINGS } from './helpers';
+import { setupBaseMocks, MOCK_SETTINGS, MOCK_AUTHELIA_INSTANCES } from './helpers';
 
 const MOCK_AUTHELIA_STATUS_CONFIGURED = {
   configured: true,
@@ -16,7 +16,7 @@ const MOCK_AUTHELIA_STATUS_CONFIGURED = {
 
 const MOCK_AUTHELIA_STATUS_NOT_CONFIGURED = {
   configured: false,
-  message: 'Authelia config path not set',
+  message: 'No Authelia instances configured',
 };
 
 const MOCK_ALERTS = [
@@ -47,6 +47,29 @@ const MOCK_SYNC_RESULT = {
 // Set up API mocking before each test
 async function setupAutheliaMocks(page: Page, configured = true) {
   await setupBaseMocks(page);
+
+  // Mock authelia instances list (GET all, POST create)
+  await page.route('**/api/authelia-instances', async (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 2 }) });
+    } else {
+      const instances = configured ? MOCK_AUTHELIA_INSTANCES : [];
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(instances) });
+    }
+  });
+
+  // Mock authelia instance by ID (PUT, DELETE, test)
+  await page.route('**/api/authelia-instances/*', async (route) => {
+    const method = route.request().method();
+    if (method === 'DELETE') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'deleted' }) });
+    } else if (method === 'PUT') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1 }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    }
+  });
 
   // Override authelia-specific endpoints
   await page.route('**/api/authelia/status', async (route) => {
@@ -99,17 +122,23 @@ test.describe('Authelia UI — configured', () => {
   test('authelia tab opens and displays coverage cards', async ({ page }) => {
     // Click the Authelia tab
     await page.click('button[data-bs-target="#tab-authelia"]');
-    // Wait for dashboard to load
-    await page.waitForSelector('#auth-domain-count:not(:empty)', { timeout: 10000 });
+    // Wait for instance selector to render
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
+    // Wait for dashboard to load (status card shows data)
+    await page.waitForFunction(() => {
+      const el = document.getElementById('auth-domain-count');
+      return el && el.textContent !== '—' && el.textContent !== '';
+    }, { timeout: 10000 });
 
     // Coverage cards should show data
     await expect(page.locator('#auth-domain-count')).toHaveText('4');
-    await expect(page.locator('#auth-coverage')).toHaveText('4/8');
+    await expect(page.locator('#auth-coverage')).toContainText('4/8');
     await expect(page.locator('#auth-open-alerts')).toHaveText('2');
   });
 
   test('CNAME coverage table shows covered and missing badges', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#auth-coverage-tbody tr td', { timeout: 10000 });
 
     const rows = page.locator('#auth-coverage-tbody tr');
@@ -129,6 +158,7 @@ test.describe('Authelia UI — configured', () => {
 
   test('dry run sync shows results panel', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#btn-auth-dryrun', { timeout: 10000 });
 
     // Click Dry Run
@@ -146,6 +176,7 @@ test.describe('Authelia UI — configured', () => {
 
   test('sync button triggers modal and shows results', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#btn-auth-sync', { timeout: 10000 });
 
     // Click sync button — modal should appear
@@ -164,6 +195,7 @@ test.describe('Authelia UI — configured', () => {
 
   test('alerts table renders with resolve buttons', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#auth-alerts-tbody', { timeout: 10000 });
 
     // Should have open alert rows
@@ -180,6 +212,7 @@ test.describe('Authelia UI — configured', () => {
 
   test('temp access table shows active and expired rules', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#auth-temp-tbody', { timeout: 10000 });
 
     const rows = page.locator('#auth-temp-tbody tr');
@@ -197,6 +230,7 @@ test.describe('Authelia UI — configured', () => {
 
   test('add temp access rule creates and clears form', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#btn-add-temp-access', { timeout: 10000 });
 
     // Open the collapse form
@@ -222,6 +256,7 @@ test.describe('Authelia UI — configured', () => {
 
   test('revoke temp access shows toast', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
     await page.waitForSelector('#auth-temp-tbody', { timeout: 10000 });
 
     // Click revoke on first active rule
@@ -247,7 +282,7 @@ test.describe('Authelia UI — not configured', () => {
 
   test('authelia tab shows empty state', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-authelia"]');
-    await page.waitForSelector('#auth-domain-count', { timeout: 10000 });
+    await page.waitForSelector('#auth-instance-selector', { timeout: 10000 });
 
     await expect(page.locator('#auth-domain-count')).toHaveText('—');
     await expect(page.locator('#auth-coverage')).toHaveText('—');
@@ -257,47 +292,100 @@ test.describe('Authelia UI — not configured', () => {
   });
 });
 
-test.describe('Settings — Authelia fields', () => {
+test.describe('Settings — Authelia instances', () => {
   test.beforeEach(async ({ page }) => {
     await setupAutheliaMocks(page, true);
     await page.goto('/');
     await page.waitForSelector('#stat-authelia .badge', { timeout: 10000 });
   });
 
-  test('settings tab loads authelia fields with correct values', async ({ page }) => {
+  test('authelia instances section is visible with add button', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-settings"]');
-    await page.waitForSelector('#s-auth-config-path', { timeout: 10000 });
+    await page.waitForSelector('#authelia-instances-list', { timeout: 10000 });
 
-    await expect(page.locator('#s-auth-config-path')).toHaveValue('/config/configuration.yml');
-    await expect(page.locator('#s-auth-db-path')).toHaveValue('/config/db.sqlite3');
-    await expect(page.locator('#s-auth-sync-enabled')).toBeChecked();
-    await expect(page.locator('#s-auth-default-policy')).toHaveValue('one_factor');
-    await expect(page.locator('#s-auth-overrides')).toHaveValue('{"admin.example.com":"bypass"}');
+    await expect(page.locator('#btn-authelia-add')).toBeVisible();
+    await expect(page.locator('#authelia-instances-list')).toBeVisible();
   });
 
-  test('settings save includes authelia fields', async ({ page }) => {
+  test('add instance button opens form', async ({ page }) => {
     await page.click('button[data-bs-target="#tab-settings"]');
-    // Wait for loadSettings() async call to populate the field
-    await page.waitForFunction(() => {
-      const el = document.getElementById('s-auth-config-path') as HTMLInputElement;
-      return el && el.value === '/config/configuration.yml';
-    }, { timeout: 10000 });
+    await page.waitForSelector('#btn-authelia-add', { timeout: 10000 });
 
-    // Modify an authelia field
-    await page.fill('#s-auth-config-path', '/custom/config.yml');
+    await page.click('#btn-authelia-add');
+    await expect(page.locator('#authelia-instance-form')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#authelia-form-title')).toHaveText('Add Instance');
+  });
+
+  test('cancel button hides form', async ({ page }) => {
+    await page.click('button[data-bs-target="#tab-settings"]');
+    await page.waitForSelector('#btn-authelia-add', { timeout: 10000 });
+
+    await page.click('#btn-authelia-add');
+    await expect(page.locator('#authelia-instance-form')).not.toHaveClass(/d-none/);
+    await page.click('#btn-authelia-cancel');
+    await expect(page.locator('#authelia-instance-form')).toHaveClass(/d-none/);
+  });
+
+  test('saves a new authelia instance and hides the form', async ({ page }) => {
+    await page.click('button[data-bs-target="#tab-settings"]');
+    await page.waitForSelector('#btn-authelia-add', { timeout: 10000 });
+
+    await page.click('#btn-authelia-add');
+    await page.fill('#ai-name', 'test-auth');
+    await page.fill('#ai-config-path', '/test/config.yml');
+    await page.fill('#ai-db-path', '/test/db.sqlite3');
+    await page.selectOption('#ai-default-policy', 'bypass');
 
     // Set up listener for the POST request
-    const savePromise = page.waitForResponse(
-      (resp) => resp.url().includes('/api/settings') && resp.request().method() === 'POST'
+    const postPromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/authelia-instances') && resp.request().method() === 'POST'
     );
 
-    // Click save
-    await page.click('#settings-form button[type="submit"]');
+    await page.click('#btn-authelia-save');
 
-    const response = await savePromise;
-    const body = await response.request().postDataJSON();
-    expect(body.authelia_config_path).toBe('/custom/config.yml');
-    expect(body.authelia_sync_enabled).toBe(true);
-    expect(body.authelia_default_policy).toBe('one_factor');
+    await postPromise;
+    // Form should hide after save
+    await expect(page.locator('#authelia-instance-form')).toHaveClass(/d-none/);
+  });
+
+  test('loads authelia instances list on settings tab open', async ({ page }) => {
+    await page.click('button[data-bs-target="#tab-settings"]');
+    // Wait for authelia instances to load
+    await page.waitForSelector('#authelia-instances-list .card', { timeout: 10000 });
+
+    // Should show the existing instance
+    await expect(page.locator('#authelia-instances-list')).toContainText('main-auth');
+    await expect(page.locator('#authelia-instances-list')).toContainText('/config/configuration.yml');
+  });
+
+  test('shows edit form when Edit button is clicked', async ({ page }) => {
+    await page.click('button[data-bs-target="#tab-settings"]');
+    await page.waitForSelector('#authelia-instances-list .card', { timeout: 10000 });
+
+    // Click Edit on the first instance
+    await page.click('#authelia-instances-list .btn-outline-secondary');
+
+    await expect(page.locator('#authelia-instance-form')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#authelia-form-title')).toHaveText('Edit Instance');
+    await expect(page.locator('#ai-name')).toHaveValue('main-auth');
+    await expect(page.locator('#ai-config-path')).toHaveValue('/config/configuration.yml');
+  });
+
+  test('delete instance sends DELETE request', async ({ page }) => {
+    await page.click('button[data-bs-target="#tab-settings"]');
+    await page.waitForSelector('#authelia-instances-list .card', { timeout: 10000 });
+
+    // Set up listener for the DELETE request
+    const deletePromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/authelia-instances/1') && resp.request().method() === 'DELETE'
+    );
+
+    // Accept confirm dialog and click Delete
+    page.on('dialog', (dialog) => dialog.accept());
+    await page.click('#authelia-instances-list .btn-outline-danger');
+
+    // Verify DELETE was called
+    const response = await deletePromise;
+    expect(response.status()).toBe(200);
   });
 });

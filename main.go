@@ -273,6 +273,11 @@ func main() {
 		api.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
 		api.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
 		api.POST("/authelia/sync", app.AutheliaSync)
+		api.GET("/authelia-instances", app.ListAutheliaInstances)
+		api.POST("/authelia-instances", app.CreateAutheliaInstance)
+		api.PUT("/authelia-instances/:id", app.UpdateAutheliaInstance)
+		api.DELETE("/authelia-instances/:id", app.DeleteAutheliaInstance)
+		api.POST("/authelia-instances/:id/test", app.TestAutheliaInstance)
 	}
 
 	// Start periodic sync scheduler (if SYNC_INTERVAL > 0)
@@ -395,9 +400,11 @@ func (app *App) Dashboard(c *gin.Context) {
 
 func (app *App) GetSettings(c *gin.Context) {
 	s := app.settings()
-	// Check if NPM instances have been migrated (multi-instance exists)
+	// Check if NPM/Authelia instances have been migrated
 	npmInstances, _ := app.database.GetNPMInstances()
 	npmMigrated := len(npmInstances) > 0
+	autheliaInstances, _ := app.database.GetAutheliaInstances()
+	autheliaMigrated := len(autheliaInstances) > 0
 	c.JSON(http.StatusOK, gin.H{
 		"compose_path":            s.ComposePath,
 		"npm_host":                s.NPMHost,
@@ -409,6 +416,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
 		"authelia_default_policy": s.AutheliaDefaultPolicy,
 		"authelia_sync_overrides": s.AutheliaSyncOverrides,
+		"authelia_migrated":       autheliaMigrated,
 		"otel_endpoint":           s.OTelEndpoint,
 		"otel_enabled":            s.OTelEnabled,
 	})
@@ -435,29 +443,25 @@ func (app *App) SaveSettings(c *gin.Context) {
 	if _, ok := raw["npm_pass"]; ok {
 		logging.LogWarn("app", "Legacy npm_pass setting is deprecated, use NPM API instead")
 	}
+	// Legacy authelia_* settings are deprecated — warn if sent, ignore.
+	if _, ok := raw["authelia_config_path"]; ok {
+		logging.LogWarn("app", "Legacy authelia_config_path setting is deprecated, use Authelia API instead")
+	}
+	if _, ok := raw["authelia_db_path"]; ok {
+		logging.LogWarn("app", "Legacy authelia_db_path setting is deprecated, use Authelia API instead")
+	}
+	if _, ok := raw["authelia_sync_enabled"]; ok {
+		logging.LogWarn("app", "Legacy authelia_sync_enabled setting is deprecated, use Authelia API instead")
+	}
+	if _, ok := raw["authelia_default_policy"]; ok {
+		logging.LogWarn("app", "Legacy authelia_default_policy setting is deprecated, use Authelia API instead")
+	}
+	if _, ok := raw["authelia_sync_overrides"]; ok {
+		logging.LogWarn("app", "Legacy authelia_sync_overrides setting is deprecated, use Authelia API instead")
+	}
 	if v, ok := raw["compose_path"]; ok {
 		var val string; json.Unmarshal(v, &val)
 		pairs["compose_path"] = val
-	}
-	if v, ok := raw["authelia_config_path"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["authelia_config_path"] = val
-	}
-	if v, ok := raw["authelia_db_path"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["authelia_db_path"] = val
-	}
-	if v, ok := raw["authelia_sync_enabled"]; ok {
-		var val bool; json.Unmarshal(v, &val)
-		pairs["authelia_sync_enabled"] = strconv.FormatBool(val)
-	}
-	if v, ok := raw["authelia_default_policy"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["authelia_default_policy"] = val
-	}
-	if v, ok := raw["authelia_sync_overrides"]; ok {
-		var val string; json.Unmarshal(v, &val)
-		pairs["authelia_sync_overrides"] = val
 	}
 	if v, ok := raw["otel_endpoint"]; ok {
 		var val string; json.Unmarshal(v, &val)
@@ -828,6 +832,219 @@ func (app *App) TestNPMInstance(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": fmt.Sprintf("Connected, %d proxy hosts found", len(proxies))})
+}
+
+// --- Authelia instance handlers ---
+
+type autheliaInstanceJSON struct {
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	ConfigPath     string `json:"config_path"`
+	DBPath         string `json:"db_path"`
+	DefaultPolicy  string `json:"default_policy"`
+	Overrides      string `json:"overrides"`
+	AutoSync       bool   `json:"auto_sync"`
+	Enabled        bool   `json:"enabled"`
+	NPMInstanceIDs string `json:"npm_instance_ids"`
+	CreatedAt      string `json:"created_at"`
+}
+
+func toAutheliaInstanceJSON(a *db.AutheliaInstance) autheliaInstanceJSON {
+	return autheliaInstanceJSON{
+		ID:             a.ID,
+		Name:           a.Name,
+		ConfigPath:     a.ConfigPath,
+		DBPath:         a.DBPath,
+		DefaultPolicy:  a.DefaultPolicy,
+		Overrides:      a.Overrides,
+		AutoSync:       a.AutoSync,
+		Enabled:        a.Enabled,
+		NPMInstanceIDs: a.NPMInstanceIDs,
+		CreatedAt:      a.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func (app *App) ListAutheliaInstances(c *gin.Context) {
+	instances, err := app.database.GetAutheliaInstances()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	result := make([]autheliaInstanceJSON, 0, len(instances))
+	for i := range instances {
+		result = append(result, toAutheliaInstanceJSON(&instances[i]))
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (app *App) CreateAutheliaInstance(c *gin.Context) {
+	var input struct {
+		Name           string `json:"name"`
+		ConfigPath     string `json:"config_path"`
+		DBPath         string `json:"db_path"`
+		DefaultPolicy  string `json:"default_policy"`
+		Overrides      string `json:"overrides"`
+		AutoSync       bool   `json:"auto_sync"`
+		Enabled        *bool  `json:"enabled"`
+		NPMInstanceIDs string `json:"npm_instance_ids"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if input.Name == "" || input.ConfigPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and config_path are required"})
+		return
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	if input.DefaultPolicy == "" {
+		input.DefaultPolicy = "one_factor"
+	}
+	if input.Overrides == "" {
+		input.Overrides = "{}"
+	}
+	if input.NPMInstanceIDs == "" {
+		input.NPMInstanceIDs = "[]"
+	}
+	created, err := app.database.CreateAutheliaInstance(&db.AutheliaInstance{
+		Name:           input.Name,
+		ConfigPath:     input.ConfigPath,
+		DBPath:         input.DBPath,
+		DefaultPolicy:  input.DefaultPolicy,
+		Overrides:      input.Overrides,
+		AutoSync:       input.AutoSync,
+		Enabled:        enabled,
+		NPMInstanceIDs: input.NPMInstanceIDs,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, toAutheliaInstanceJSON(created))
+}
+
+func (app *App) UpdateAutheliaInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var input struct {
+		Name           string `json:"name"`
+		ConfigPath     string `json:"config_path"`
+		DBPath         string `json:"db_path"`
+		DefaultPolicy  string `json:"default_policy"`
+		Overrides      string `json:"overrides"`
+		AutoSync       *bool  `json:"auto_sync"`
+		Enabled        *bool  `json:"enabled"`
+		NPMInstanceIDs string `json:"npm_instance_ids"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	existing, err := app.database.GetAutheliaInstance(id)
+	if err != nil || existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+	// Preserve existing fields if not sent
+	name := input.Name
+	if name == "" {
+		name = existing.Name
+	}
+	configPath := input.ConfigPath
+	if configPath == "" {
+		configPath = existing.ConfigPath
+	}
+	dbPath := input.DBPath
+	if dbPath == "" {
+		dbPath = existing.DBPath
+	}
+	defaultPolicy := input.DefaultPolicy
+	if defaultPolicy == "" {
+		defaultPolicy = existing.DefaultPolicy
+	}
+	overrides := input.Overrides
+	if overrides == "" {
+		overrides = existing.Overrides
+	}
+	npmInstanceIDs := input.NPMInstanceIDs
+	if npmInstanceIDs == "" {
+		npmInstanceIDs = existing.NPMInstanceIDs
+	}
+	autoSync := existing.AutoSync
+	if input.AutoSync != nil {
+		autoSync = *input.AutoSync
+	}
+	enabled := existing.Enabled
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	if err := app.database.UpdateAutheliaInstance(id, &db.AutheliaInstance{
+		Name:           name,
+		ConfigPath:     configPath,
+		DBPath:         dbPath,
+		DefaultPolicy:  defaultPolicy,
+		Overrides:      overrides,
+		AutoSync:       autoSync,
+		Enabled:        enabled,
+		NPMInstanceIDs: npmInstanceIDs,
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	updated, _ := app.database.GetAutheliaInstance(id)
+	c.JSON(http.StatusOK, toAutheliaInstanceJSON(updated))
+}
+
+func (app *App) DeleteAutheliaInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	if err := app.database.DeleteAutheliaInstance(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func (app *App) TestAutheliaInstance(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	inst, err := app.database.GetAutheliaInstance(id)
+	if err != nil || inst == nil {
+		c.JSON(http.StatusNotFound, gin.H{"ok": false, "message": "instance not found"})
+		return
+	}
+	// Test config file readability
+	if _, err := os.ReadFile(inst.ConfigPath); err != nil {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "message": "config file not readable: " + err.Error()})
+		return
+	}
+	// Test config file parse
+	ac, err := authelia.ParseConfig(inst.ConfigPath)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "message": "config parse error: " + err.Error()})
+		return
+	}
+	// Test DB path accessibility
+	if inst.DBPath != "" {
+		if _, err := os.Stat(inst.DBPath); err != nil {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "message": "db path not accessible: " + err.Error()})
+			return
+		}
+	}
+	domains := authelia.GetDomains(ac)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": fmt.Sprintf("Config readable, %d domains found", len(domains))})
 }
 
 func (app *App) Status(c *gin.Context) {
@@ -1346,25 +1563,98 @@ func (app *App) LogsStreamSSE(c *gin.Context) {
 
 // ─── Authelia Handlers ──────────────────────────────────────────────────────
 
-// AutheliaStatus returns the current state of Authelia integration:
-//   - Whether the config file can be loaded
-//   - NPM CNAMEs and whether they're covered by Authelia rules
-//   - Open alerts count
-func (app *App) AutheliaStatus(c *gin.Context) {
-	s := app.settings()
-	logging.LogDebug("authelia", "Status requested",
-		slog.String("config_path", s.AutheliaConfigPath),
-	)
+// resolveNPMEntries fetches NPM proxy entries for the given npm_instance_ids JSON array.
+// If the array is empty or "[]", it fetches from all NPM instances.
+func (app *App) resolveNPMEntries(npmInstanceIDs string) []npm.ProxyEntry {
+	var ids []int
+	json.Unmarshal([]byte(npmInstanceIDs), &ids)
 
+	var allEntries []npm.ProxyEntry
+	if len(ids) == 0 {
+		// Use all NPM instances
+		clients, err := app.npmRegistry.All()
+		if err != nil {
+			return allEntries
+		}
+		for _, c := range clients {
+			entries, err := c.Client.GetProxyHosts()
+			if err != nil {
+				continue
+			}
+			allEntries = append(allEntries, entries...)
+		}
+		return allEntries
+	}
+	// Use specific NPM instances
+	for _, id := range ids {
+		client, err := app.npmRegistry.Get(id)
+		if err != nil {
+			continue
+		}
+		entries, err := client.GetProxyHosts()
+		if err != nil {
+			continue
+		}
+		allEntries = append(allEntries, entries...)
+	}
+	return allEntries
+}
+
+// AutheliaStatus returns the current state of Authelia integration.
+// Accepts optional ?instance_id=:id to scope to a single instance.
+func (app *App) AutheliaStatus(c *gin.Context) {
+	instanceID, _ := strconv.ParseInt(c.Query("instance_id"), 10, 64)
+
+	if instanceID > 0 {
+		// Scoped status for a specific instance
+		inst, err := app.database.GetAutheliaInstance(instanceID)
+		if err != nil || inst == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "authelia instance not found"})
+			return
+		}
+		app.buildAutheliaInstanceStatus(c, inst)
+		return
+	}
+
+	// Aggregate status across all enabled instances
+	s := app.settings()
 	if s.AutheliaConfigPath == "" {
+		// Check if there are any authelia instances configured
+		instances, err := app.database.GetEnabledAutheliaInstances()
+		if err != nil || len(instances) == 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"configured": false,
+				"message":    "No Authelia instances configured",
+			})
+			return
+		}
+		// Return aggregate: domains across all instances
+		var allDomains []string
+		var allNPMLists []string
+		for _, inst := range instances {
+			ac, err := authelia.ParseConfig(inst.ConfigPath)
+			if err != nil {
+				continue
+			}
+			allDomains = append(allDomains, authelia.GetDomains(ac)...)
+			npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
+			for _, e := range npmEntries {
+				allNPMLists = append(allNPMLists, e.CNAME)
+			}
+		}
+		matched, missing := authelia.CompareCNAMEs(allNPMLists, allDomains)
 		c.JSON(http.StatusOK, gin.H{
-			"configured": false,
-			"message":    "Authelia config path not set",
+			"configured":     true,
+			"domains":        allDomains,
+			"npm_cnames":     allNPMLists,
+			"matched":        matched,
+			"missing":        missing,
+			"instance_count": len(instances),
 		})
 		return
 	}
 
-	// Parse Authelia config
+	// Legacy fallback (single instance from settings)
 	ac, err := authelia.ParseConfig(s.AutheliaConfigPath)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -1377,7 +1667,6 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 
 	autheliaDomains := authelia.GetDomains(ac)
 
-	// Get NPM CNAMEs for comparison
 	var npmCNAMEs []string
 	clients, _ := app.kumaRegistry.All()
 	npmClients, _ := app.npmRegistry.All()
@@ -1411,6 +1700,48 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 			}
 			return ""
 		}(),
+	})
+}
+
+// buildAutheliaInstanceStatus builds a status response for a single Authelia instance.
+func (app *App) buildAutheliaInstanceStatus(c *gin.Context, inst *db.AutheliaInstance) {
+	ac, err := authelia.ParseConfig(inst.ConfigPath)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"configured": true,
+			"instance_id":   inst.ID,
+			"instance_name": inst.Name,
+			"error":         err.Error(),
+			"domains":       []string{},
+		})
+		return
+	}
+
+	autheliaDomains := authelia.GetDomains(ac)
+	npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
+	var npmCNAMEs []string
+	for _, e := range npmEntries {
+		npmCNAMEs = append(npmCNAMEs, e.CNAME)
+	}
+
+	matched, missing := authelia.CompareCNAMEs(npmCNAMEs, autheliaDomains)
+
+	openAlerts := 0
+	if alerts, err := app.database.GetOpenAutheliaAlerts(inst.ID); err == nil {
+		openAlerts = len(alerts)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"configured":     true,
+		"instance_id":    inst.ID,
+		"instance_name":  inst.Name,
+		"domains":        autheliaDomains,
+		"npm_cnames":     npmCNAMEs,
+		"matched":        matched,
+		"missing":        missing,
+		"open_alerts":    openAlerts,
+		"sync_enabled":   inst.AutoSync,
+		"default_policy": inst.DefaultPolicy,
 	})
 }
 
@@ -1596,42 +1927,64 @@ func (app *App) AutheliaRevokeTempAccess(c *gin.Context) {
 }
 
 // AutheliaSync runs an Authelia sync operation (dry-run or actual).
+// Accepts optional ?instance_id=:id to scope to a single instance.
 // Request body can include:
 //   - dry_run: bool (default: true for safety)
-//   - auto_sync: bool (overrides settings)
 func (app *App) AutheliaSync(c *gin.Context) {
 	start := time.Now()
-	s := app.settings()
-	logging.LogInfo("authelia", "Authelia sync triggered",
-		slog.String("config_path", s.AutheliaConfigPath),
-	)
-
-	if s.AutheliaConfigPath == "" {
-		logging.LogError("authelia", "Authelia sync failed — config path not set")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Authelia config path not set"})
-		return
-	}
+	instanceID, _ := strconv.ParseInt(c.Query("instance_id"), 10, 64)
 
 	var input struct {
-		DryRun   *bool `json:"dry_run"`
-		AutoSync *bool `json:"auto_sync"`
+		DryRun *bool `json:"dry_run"`
 	}
-
 	if err := c.ShouldBindJSON(&input); err != nil {
 		// Use defaults on parse error
 	}
-
 	dryRun := true
 	if input.DryRun != nil {
 		dryRun = *input.DryRun
 	}
 
-	autoSync := s.AutheliaSyncEnabled
-	if input.AutoSync != nil {
-		autoSync = *input.AutoSync
+	if instanceID > 0 {
+		// Sync a single instance
+		inst, err := app.database.GetAutheliaInstance(instanceID)
+		if err != nil || inst == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "authelia instance not found"})
+			return
+		}
+		app.syncAutheliaInstance(c, inst, dryRun, start)
+		return
 	}
 
-	// Fetch NPM entries
+	// Sync all enabled instances (or fall back to legacy settings)
+	s := app.settings()
+	instances, err := app.database.GetEnabledAutheliaInstances()
+	if err == nil && len(instances) > 0 {
+		// Use new multi-instance path
+		var allResults []gin.H
+		for _, inst := range instances {
+			result := app.syncAutheliaInstanceInternal(&inst, dryRun)
+			allResults = append(allResults, result)
+		}
+		logging.LogInfo("authelia", "Authelia sync complete",
+			slog.Int("instance_count", len(allResults)),
+			slog.Duration("duration", time.Since(start)),
+		)
+		c.JSON(http.StatusOK, gin.H{
+			"dry_run":   dryRun,
+			"instances": allResults,
+			"message":   fmt.Sprintf("Synced %d Authelia instance(s)", len(instances)),
+		})
+		return
+	}
+
+	// Legacy fallback (single instance from settings)
+	if s.AutheliaConfigPath == "" {
+		logging.LogError("authelia", "Authelia sync failed — no instances configured")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No Authelia instances configured"})
+		return
+	}
+
 	npmClients, _ := app.npmRegistry.All()
 	npmEntries, err := synclib.GetNPMProxyEntries(npmClients)
 	if err != nil {
@@ -1641,31 +1994,13 @@ func (app *App) AutheliaSync(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch NPM entries: " + err.Error()})
 		return
 	}
-	logging.LogInfo("authelia", "Fetched NPM entries for Authelia sync",
-		slog.Int("entry_count", len(npmEntries)),
-	)
 
-	// Parse overrides from settings JSON
 	var overrides map[string]string
 	if s.AutheliaSyncOverrides != "" {
-		if err := json.Unmarshal([]byte(s.AutheliaSyncOverrides), &overrides); err != nil {
-			overrides = nil
-		}
+		json.Unmarshal([]byte(s.AutheliaSyncOverrides), &overrides)
 	}
 
-	// Convert NPM entries to authelia.ProxyEntry
-	var proxyEntries []authelia.ProxyEntry
-	for _, e := range npmEntries {
-		proxyEntries = append(proxyEntries, authelia.ProxyEntry{
-			CNAME:     e.CNAME,
-			Container: e.Container,
-			Host:      e.Host,
-			Port:      e.Port,
-			Protocol:  e.Protocol,
-		})
-	}
-
-	actions, err := authelia.SyncConfig(s.AutheliaConfigPath, proxyEntries, s.AutheliaDefaultPolicy, overrides, autoSync, dryRun)
+	actions, err := authelia.SyncConfig(s.AutheliaConfigPath, s.AutheliaDBPath, npmEntries, s.AutheliaDefaultPolicy, overrides, s.AutheliaSyncEnabled, dryRun)
 	if err != nil {
 		logging.LogError("authelia", "Authelia sync config failed",
 			slog.String("error", err.Error()),
@@ -1674,12 +2009,8 @@ func (app *App) AutheliaSync(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "actions": actions})
 		return
 	}
-	logging.LogInfo("authelia", "Authelia sync config processed",
-		slog.Int("actions", len(actions)),
-	)
 
-	// If not dry-run and auto-sync enabled, create alerts for any errors
-	if !dryRun && autoSync {
+	if !dryRun && s.AutheliaSyncEnabled {
 		for _, a := range actions {
 			if a.Action == "add" {
 				app.database.AddAutheliaAlert(&db.AutheliaAlert{
@@ -1693,8 +2024,7 @@ func (app *App) AutheliaSync(c *gin.Context) {
 		}
 	}
 
-	// If auto-sync is disabled, create open alerts for missing CNAMEs
-	if !autoSync {
+	if !s.AutheliaSyncEnabled {
 		for _, a := range actions {
 			if a.Action == "alert" {
 				app.database.AddAutheliaAlert(&db.AutheliaAlert{
@@ -1707,33 +2037,147 @@ func (app *App) AutheliaSync(c *gin.Context) {
 		}
 	}
 
-	resp := gin.H{
-		"dry_run": dryRun,
-		"actions": actions,
-		"added":   0,
-		"skipped": 0,
-		"alerted": 0,
-	}
-
-	for _, a := range actions {
-		switch a.Action {
-		case "add":
-			resp["added"] = resp["added"].(int) + 1
-		case "skip":
-			resp["skipped"] = resp["skipped"].(int) + 1
-		case "alert":
-			resp["alerted"] = resp["alerted"].(int) + 1
-		}
-	}
-
+	added, skipped, alerted := countActions(actions)
 	logging.LogInfo("authelia", "Authelia sync complete",
 		slog.Int("actions", len(actions)),
-		slog.Int("added", resp["added"].(int)),
-		slog.Int("skipped", resp["skipped"].(int)),
-		slog.Int("alerted", resp["alerted"].(int)),
+		slog.Int("added", added),
+		slog.Int("skipped", skipped),
+		slog.Int("alerted", alerted),
 		slog.Bool("dry_run", dryRun),
 		slog.Duration("duration", time.Since(start)),
 	)
+	c.JSON(http.StatusOK, gin.H{
+		"dry_run": dryRun, "actions": actions,
+		"added": added, "skipped": skipped, "alerted": alerted,
+	})
+}
 
-	c.JSON(http.StatusOK, resp)
+// syncAutheliaInstance syncs a single Authelia instance and returns the HTTP response.
+func (app *App) syncAutheliaInstance(c *gin.Context, inst *db.AutheliaInstance, dryRun bool, start time.Time) {
+	npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
+
+	var overrides map[string]string
+	if inst.Overrides != "" && inst.Overrides != "{}" {
+		json.Unmarshal([]byte(inst.Overrides), &overrides)
+	}
+
+	actions, err := authelia.SyncConfig(inst.ConfigPath, inst.DBPath, npmEntries, inst.DefaultPolicy, overrides, inst.AutoSync, dryRun)
+	if err != nil {
+		logging.LogError("authelia", "Authelia sync config failed",
+			slog.Int64("instance_id", inst.ID),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "actions": actions, "instance_id": inst.ID})
+		return
+	}
+
+	// Create alerts for this instance
+	if !dryRun && inst.AutoSync {
+		for _, a := range actions {
+			if a.Action == "add" {
+				app.database.AddAutheliaAlert(&db.AutheliaAlert{
+					CNAME:              a.CNAME,
+					Message:            a.Message,
+					Severity:           "info",
+					Status:             "resolved",
+					CreatedAt:          time.Now(),
+					AutheliaInstanceID: inst.ID,
+				})
+			}
+		}
+	}
+
+	if !inst.AutoSync {
+		for _, a := range actions {
+			if a.Action == "alert" {
+				app.database.AddAutheliaAlert(&db.AutheliaAlert{
+					CNAME:              a.CNAME,
+					Message:            a.Message,
+					Severity:           "warning",
+					CreatedAt:          time.Now(),
+					AutheliaInstanceID: inst.ID,
+				})
+			}
+		}
+	}
+
+	added, skipped, alerted := countActions(actions)
+	logging.LogInfo("authelia", "Authelia sync instance complete",
+		slog.Int64("instance_id", inst.ID),
+		slog.Int("added", added),
+		slog.Int("skipped", skipped),
+		slog.Int("alerted", alerted),
+		slog.Duration("duration", time.Since(start)),
+	)
+	c.JSON(http.StatusOK, gin.H{
+		"dry_run": dryRun, "actions": actions,
+		"added": added, "skipped": skipped, "alerted": alerted,
+		"instance_id": inst.ID, "instance_name": inst.Name,
+	})
+}
+
+// syncAutheliaInstanceInternal runs a sync for a single instance without writing an HTTP response.
+func (app *App) syncAutheliaInstanceInternal(inst *db.AutheliaInstance, dryRun bool) gin.H {
+	npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
+
+	var overrides map[string]string
+	if inst.Overrides != "" && inst.Overrides != "{}" {
+		json.Unmarshal([]byte(inst.Overrides), &overrides)
+	}
+
+	actions, err := authelia.SyncConfig(inst.ConfigPath, inst.DBPath, npmEntries, inst.DefaultPolicy, overrides, inst.AutoSync, dryRun)
+	if err != nil {
+		return gin.H{"instance_id": inst.ID, "instance_name": inst.Name, "error": err.Error()}
+	}
+
+	if !dryRun && inst.AutoSync {
+		for _, a := range actions {
+			if a.Action == "add" {
+				app.database.AddAutheliaAlert(&db.AutheliaAlert{
+					CNAME:              a.CNAME,
+					Message:            a.Message,
+					Severity:           "info",
+					Status:             "resolved",
+					CreatedAt:          time.Now(),
+					AutheliaInstanceID: inst.ID,
+				})
+			}
+		}
+	}
+
+	if !inst.AutoSync {
+		for _, a := range actions {
+			if a.Action == "alert" {
+				app.database.AddAutheliaAlert(&db.AutheliaAlert{
+					CNAME:              a.CNAME,
+					Message:            a.Message,
+					Severity:           "warning",
+					CreatedAt:          time.Now(),
+					AutheliaInstanceID: inst.ID,
+				})
+			}
+		}
+	}
+
+	added, skipped, alerted := countActions(actions)
+	return gin.H{
+		"instance_id": inst.ID, "instance_name": inst.Name,
+		"actions": actions, "added": added, "skipped": skipped, "alerted": alerted,
+	}
+}
+
+// countActions tallies add/skip/alert actions.
+func countActions(actions []authelia.SyncAction) (added, skipped, alerted int) {
+	for _, a := range actions {
+		switch a.Action {
+		case "add":
+			added++
+		case "skip":
+			skipped++
+		case "alert":
+			alerted++
+		}
+	}
+	return
 }

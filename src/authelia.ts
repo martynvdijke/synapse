@@ -1,5 +1,53 @@
 // Authelia tab logic
-import type { AutheliaStatusResponse, AutheliaAlert, TempAccessRule, AutheliaSyncResult } from './types';
+import type { AutheliaStatusResponse, AutheliaInstanceJSON, AutheliaAlert, TempAccessRule, AutheliaSyncResult, AutheliaSyncInstanceResult } from './types';
+
+// ─── Instance Selector ──────────────────────────────────────────
+
+var autheliaInstances: AutheliaInstanceJSON[] = [];
+var selectedInstanceId: number | null = null;
+
+export function loadAutheliaInstanceSelector(): void {
+    apiFetch('/api/authelia-instances').then(function(r){return r.json() as Promise<AutheliaInstanceJSON[]>;}).then(function(instances) {
+        autheliaInstances = instances || [];
+        var sel = document.getElementById('auth-instance-selector') as HTMLSelectElement;
+        if (!sel) return;
+        sel.innerHTML = '<option value="">All Instances</option>'
+            + (autheliaInstances.map(function(inst) {
+                return '<option value="' + inst.id + '">' + esc(inst.name) + '</option>';
+            }).join(''));
+        // Restore from URL hash
+        var hash = window.location.hash;
+        var match = hash.match(/authelia-instance=(\d+)/);
+        if (match) {
+            var id = parseInt(match[1], 10);
+            if (autheliaInstances.some(function(i) { return i.id === id; })) {
+                sel.value = '' + id;
+                selectedInstanceId = id;
+            }
+        }
+        loadAutheliaDashboard();
+    }).catch(function() {
+        // If instances can't be loaded, still try to render the dashboard
+        loadAutheliaDashboard();
+    });
+}
+
+function onInstanceSelectorChange(): void {
+    var sel = document.getElementById('auth-instance-selector') as HTMLSelectElement;
+    var val = sel ? sel.value : '';
+    selectedInstanceId = val ? parseInt(val, 10) : null;
+    // Persist to URL hash
+    if (selectedInstanceId) {
+        window.location.hash = 'authelia-instance=' + selectedInstanceId;
+    } else {
+        window.location.hash = '';
+    }
+    loadAutheliaDashboard();
+}
+
+function getInstanceQueryParam(): string {
+    return selectedInstanceId ? '?instance_id=' + selectedInstanceId : '';
+}
 
 export function loadAutheliaDashboard(): void {
     loadAutheliaStatus();
@@ -8,7 +56,8 @@ export function loadAutheliaDashboard(): void {
 }
 
 export function loadAutheliaStatus(): void {
-    apiFetch('/api/authelia/status').then(function(r){return r.json() as Promise<AutheliaStatusResponse>;}).then(function(d) {
+    var qs = getInstanceQueryParam();
+    apiFetch('/api/authelia/status' + qs).then(function(r){return r.json() as Promise<AutheliaStatusResponse>;}).then(function(d) {
         if (!d.configured) {
             document.getElementById('auth-domain-count')!.textContent = '—';
             document.getElementById('auth-coverage')!.textContent = '—';
@@ -26,13 +75,13 @@ export function loadAutheliaStatus(): void {
 
         document.getElementById('auth-domain-count')!.textContent = '' + (d.domains ? d.domains.length : 0);
 
-        var total = d.npm_cnames ? d.npm_cnames.length : 0;
-        var matched = d.matched ? d.matched.length : 0;
-        document.getElementById('auth-coverage')!.textContent = matched + '/' + total;
+        var instanceLabel = d.instance_name ? ' (' + esc(d.instance_name) + ')' : (d.instance_count ? ' (' + d.instance_count + ' instances)' : '');
+        document.getElementById('auth-coverage')!.textContent = (d.matched ? d.matched.length : 0) + '/' + (d.npm_cnames ? d.npm_cnames.length : 0) + instanceLabel;
         document.getElementById('auth-open-alerts')!.textContent = '' + (d.open_alerts || 0);
 
         var tbody = document.getElementById('auth-coverage-tbody')!;
-        if (total === 0) { tbody.innerHTML = emptyRow(4, 'No NPM proxy hosts found'); return; }
+        var npmTotal = d.npm_cnames ? d.npm_cnames.length : 0;
+        if (npmTotal === 0) { tbody.innerHTML = emptyRow(4, 'No NPM proxy hosts found'); return; }
 
         var matchedMap: Record<string, boolean> = {};
         (d.matched || []).forEach(function(c) { matchedMap[c] = true; });
@@ -50,7 +99,8 @@ export function loadAutheliaStatus(): void {
 }
 
 export function loadAutheliaAlerts(): void {
-    apiFetch('/api/authelia/alerts').then(function(r){return r.json() as Promise<AutheliaAlert[]>;}).then(function(alerts) {
+    var qs = getInstanceQueryParam();
+    apiFetch('/api/authelia/alerts' + qs).then(function(r){return r.json() as Promise<AutheliaAlert[]>;}).then(function(alerts) {
         var tbody = document.getElementById('auth-alerts-tbody')!;
         if (!alerts || !alerts.length) { tbody.innerHTML = emptyRow(4, 'No alerts'); return; }
         tbody.innerHTML = alerts.map(function(a) {
@@ -76,7 +126,8 @@ export function resolveAlert(id: number): void {
 }
 
 export function loadAutheliaTempAccess(): void {
-    apiFetch('/api/authelia/temp-access').then(function(r){return r.json() as Promise<TempAccessRule[]>;}).then(function(rules) {
+    var qs = getInstanceQueryParam();
+    apiFetch('/api/authelia/temp-access' + qs).then(function(r){return r.json() as Promise<TempAccessRule[]>;}).then(function(rules) {
         var tbody = document.getElementById('auth-temp-tbody')!;
         if (!rules || !rules.length) { tbody.innerHTML = emptyRow(5, 'No temporary access rules'); return; }
         tbody.innerHTML = rules.map(function(r) {
@@ -102,33 +153,64 @@ export function revokeTempAccess(id: number): void {
         .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to revoke rule', 'error'); });
 }
 
+function renderSyncResult(d: AutheliaSyncResult, dryRun: boolean): void {
+    var resultHtml = '<div class="alert ' + (dryRun ? 'alert-info' : 'alert-success') + ' p-2 mb-0">';
+    if (d.error) {
+        resultHtml += '<strong>Error:</strong> ' + esc(d.error);
+        resultHtml += '</div>';
+        document.getElementById('auth-sync-result')!.innerHTML = resultHtml;
+        document.getElementById('auth-sync-result')!.classList.remove('d-none');
+        return;
+    }
+    // Handle multi-instance response
+    if (d.instances && d.instances.length > 0) {
+        resultHtml += '<strong>' + (dryRun ? 'Dry Run Results' : 'Sync Results') + '</strong>: ' + d.instances.length + ' instance(s)';
+        d.instances.forEach(function(inst: AutheliaSyncInstanceResult) {
+            resultHtml += '<div class="mt-1"><strong>' + esc(inst.instance_name) + '</strong>: Added: ' + (inst.added || 0) + ', Skipped: ' + (inst.skipped || 0) + ', Alerted: ' + (inst.alerted || 0);
+            if (inst.error) resultHtml += ' <span class="text-danger">(' + esc(inst.error) + ')</span>';
+            resultHtml += '</div>';
+            var instActions = inst.actions || [];
+            if (instActions.length) {
+                resultHtml += '<ul class="mb-0 mt-1 small">';
+                instActions.forEach(function(a) { resultHtml += '<li>[' + esc(a.action) + '] ' + esc(a.cname) + (a.policy ? ' → ' + esc(a.policy) : '') + ': ' + esc(a.message) + '</li>'; });
+                resultHtml += '</ul>';
+            }
+        });
+    } else {
+        // Single instance response
+        resultHtml += '<strong>' + (dryRun ? 'Dry Run Results' : 'Sync Results') + '</strong>: Added: ' + (d.added || 0) + ', Skipped: ' + (d.skipped || 0) + ', Alerted: ' + (d.alerted || 0);
+        var actions = d.actions || [];
+        if (actions.length) {
+            resultHtml += '<ul class="mb-0 mt-1 small">';
+            actions.forEach(function(a) { resultHtml += '<li>[' + esc(a.action) + '] ' + esc(a.cname) + (a.policy ? ' → ' + esc(a.policy) : '') + ': ' + esc(a.message) + '</li>'; });
+            resultHtml += '</ul>';
+        }
+    }
+    resultHtml += '</div>';
+    document.getElementById('auth-sync-result')!.innerHTML = resultHtml;
+    document.getElementById('auth-sync-result')!.classList.remove('d-none');
+}
+
 export function runAutheliaSync(dryRun: boolean): void {
     var btn = document.getElementById(dryRun ? 'btn-auth-dryrun' : 'btn-auth-sync') as HTMLButtonElement;
     btn.disabled = true;
     var orig = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-sm"></span> ' + (dryRun ? 'Dry running...' : 'Syncing...');
 
-    apiFetch('/api/authelia/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: dryRun }) })
+    var qs = getInstanceQueryParam();
+    apiFetch('/api/authelia/sync' + qs, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: dryRun }) })
         .then(function(r){return r.json() as Promise<AutheliaSyncResult>;})
         .then(function(d) {
-            if (d.error) { toast('Sync error: ' + d.error, 'error'); return; }
-            var resultHtml = '<div class="alert ' + (dryRun ? 'alert-info' : 'alert-success') + ' p-2 mb-0"><strong>' + (dryRun ? 'Dry Run Results' : 'Sync Results') + '</strong>: Added: ' + (d.added || 0) + ', Skipped: ' + (d.skipped || 0) + ', Alerted: ' + (d.alerted || 0);
-            var actions = d.actions || [];
-            if (actions.length) {
-                resultHtml += '<ul class="mb-0 mt-1 small">';
-                actions.forEach(function(a) { resultHtml += '<li>[' + esc(a.action) + '] ' + esc(a.cname) + (a.policy ? ' → ' + esc(a.policy) : '') + ': ' + esc(a.message) + '</li>'; });
-                resultHtml += '</ul>';
-            }
-            resultHtml += '</div>';
-            document.getElementById('auth-sync-result')!.innerHTML = resultHtml;
-            document.getElementById('auth-sync-result')!.classList.remove('d-none');
+            renderSyncResult(d, dryRun);
             loadAutheliaStatus(); loadAutheliaAlerts();
-            if (!dryRun) toast('Sync completed', 'success');
+            if (!dryRun && !d.error) toast('Sync completed', 'success');
+            if (d.error) toast('Sync error: ' + d.error, 'error');
         })
         .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Sync failed', 'error'); })
         .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
 }
 
+window.loadAutheliaInstanceSelector = loadAutheliaInstanceSelector;
 window.loadAutheliaDashboard = loadAutheliaDashboard;
 window.loadAutheliaStatus = loadAutheliaStatus;
 window.loadAutheliaAlerts = loadAutheliaAlerts;
@@ -136,3 +218,4 @@ window.resolveAlert = resolveAlert;
 window.loadAutheliaTempAccess = loadAutheliaTempAccess;
 window.revokeTempAccess = revokeTempAccess;
 window.runAutheliaSync = runAutheliaSync;
+window.onInstanceSelectorChange = onInstanceSelectorChange;

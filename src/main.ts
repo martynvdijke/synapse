@@ -5,8 +5,8 @@ import { toast, setLoading } from './toast';
 import { connectSSE, setRefreshAll } from './sse';
 import { loadStatus, refreshAll } from './stats';
 import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory } from './tabs';
-import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance } from './settings';
-import { loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia';
+import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance, loadAutheliaInstances, showAutheliaInstanceForm, hideAutheliaInstanceForm, saveAutheliaInstance } from './settings';
+import { loadAutheliaInstanceSelector, loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia';
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs';
 
 // Wire SSE refreshAll reference
@@ -86,6 +86,14 @@ document.getElementById('btn-npm-add')!.addEventListener('click', function() { s
 document.getElementById('btn-npm-save')!.addEventListener('click', saveNPMInstance);
 document.getElementById('btn-npm-cancel')!.addEventListener('click', hideNPMInstanceForm);
 
+// Authelia instance management
+document.getElementById('btn-authelia-add')!.addEventListener('click', function() { showAutheliaInstanceForm(null); });
+document.getElementById('btn-authelia-save')!.addEventListener('click', saveAutheliaInstance);
+document.getElementById('btn-authelia-cancel')!.addEventListener('click', hideAutheliaInstanceForm);
+
+// Authelia instance selector
+document.getElementById('auth-instance-selector')!.addEventListener('change', onInstanceSelectorChange);
+
 // Monitor detail panel close
 document.getElementById('monitor-detail-close')!.addEventListener('click', function() {
     document.getElementById('monitor-detail-panel')!.classList.add('d-none');
@@ -121,8 +129,8 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-npm') loadNPMProxies();
         else if (target === '#tab-kuma') loadKumaMonitors();
         else if (target === '#tab-history') loadHistory();
-        else if (target === '#tab-settings') { loadSettings(); loadKumaInstances(); loadNPMInstances(); }
-        else if (target === '#tab-authelia') loadAutheliaDashboard();
+        else if (target === '#tab-settings') { loadSettings(); loadKumaInstances(); loadNPMInstances(); loadAutheliaInstances(); }
+        else if (target === '#tab-authelia') loadAutheliaInstanceSelector();
         else if (target === '#tab-logs') {
             setupLogFilters();
             if (!isLogsLoaded()) { loadLogs(false); connectLogSSE(); }

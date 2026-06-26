@@ -493,7 +493,6 @@ func GetDockerServicesWithStatus(composePath string, clients []kuma.InstanceClie
 	return result, nil
 }
 
-// NPMProxyEntry is the full proxy entry data (without Kuma status).
 // GetNPMProxyEntries fetches proxy entries across all NPM instances, merged with dedup (first CNAME wins by instance ID order).
 func GetNPMProxyEntries(npmClients []npm.InstanceClient) ([]npm.ProxyEntry, error) {
 	seen := make(map[string]bool)

@@ -42,11 +42,19 @@ declare function saveNPMInstance(): void;
 declare function deleteNPMInstance(id: number, name: string): void;
 declare function testNPMInstance(id: number): void;
 declare function editNPMInstance(id: number): void;
+declare function loadAutheliaInstances(): void;
+declare function showAutheliaInstanceForm(editId: number | null): void;
+declare function hideAutheliaInstanceForm(): void;
+declare function saveAutheliaInstance(): void;
+declare function deleteAutheliaInstance(id: number, name: string): void;
+declare function testAutheliaInstance(id: number): void;
+declare function editAutheliaInstance(id: number): void;
 
 // ── sse.js ──────────────────────────────────────────────────────
 declare function connectSSE(): void;
 
 // ── authelia.js ─────────────────────────────────────────────────
+declare function loadAutheliaInstanceSelector(): void;
 declare function loadAutheliaDashboard(): void;
 declare function loadAutheliaStatus(): void;
 declare function loadAutheliaAlerts(): void;
@@ -54,6 +62,7 @@ declare function resolveAlert(id: number): void;
 declare function loadAutheliaTempAccess(): void;
 declare function revokeTempAccess(id: number): void;
 declare function runAutheliaSync(dryRun: boolean): void;
+declare function onInstanceSelectorChange(): void;
 
 // ── logs.js ─────────────────────────────────────────────────────
 declare function setupLogFilters(): void;

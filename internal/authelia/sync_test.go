@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"synapse/internal/npm"
 )
 
 func TestCompareCNAMEs_AllMatched(t *testing.T) {
@@ -82,12 +84,12 @@ access_control:
 		t.Fatalf("write config: %v", err)
 	}
 
-	entries := []ProxyEntry{
+	entries := []npm.ProxyEntry{
 		{CNAME: "existing.example.com", Container: "web"},
 		{CNAME: "new.example.com", Container: "api"},
 	}
 
-	actions, err := SyncConfig(cfgPath, entries, "one_factor", nil, true, true)
+	actions, err := SyncConfig(cfgPath, "", entries, "one_factor", nil, true, true)
 	if err != nil {
 		t.Fatalf("sync config: %v", err)
 	}
@@ -128,12 +130,12 @@ access_control:
 		t.Fatalf("write config: %v", err)
 	}
 
-	entries := []ProxyEntry{
+	entries := []npm.ProxyEntry{
 		{CNAME: "existing.example.com", Container: "web"},
 		{CNAME: "new.example.com", Container: "api"},
 	}
 
-	actions, err := SyncConfig(cfgPath, entries, "one_factor", nil, false, false)
+	actions, err := SyncConfig(cfgPath, "", entries, "one_factor", nil, false, false)
 	if err != nil {
 		t.Fatalf("sync config: %v", err)
 	}
@@ -160,7 +162,7 @@ access_control:
 		t.Fatalf("write config: %v", err)
 	}
 
-	entries := []ProxyEntry{
+	entries := []npm.ProxyEntry{
 		{CNAME: "public.example.com", Container: "static"},
 		{CNAME: "admin.example.com", Container: "admin"},
 	}
@@ -169,7 +171,7 @@ access_control:
 		"public.example.com": "bypass",
 	}
 
-	actions, err := SyncConfig(cfgPath, entries, "one_factor", overrides, true, true)
+	actions, err := SyncConfig(cfgPath, "", entries, "one_factor", overrides, true, true)
 	if err != nil {
 		t.Fatalf("sync config: %v", err)
 	}
@@ -204,12 +206,12 @@ access_control:
 		t.Fatalf("write config: %v", err)
 	}
 
-	entries := []ProxyEntry{
+	entries := []npm.ProxyEntry{
 		{CNAME: "existing.example.com", Container: "web"},
 		{CNAME: "new.example.com", Container: "api"},
 	}
 
-	actions, err := SyncConfig(cfgPath, entries, "two_factor", nil, true, false)
+	actions, err := SyncConfig(cfgPath, "", entries, "two_factor", nil, true, false)
 	if err != nil {
 		t.Fatalf("sync config: %v", err)
 	}

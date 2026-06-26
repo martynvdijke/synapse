@@ -1,5 +1,5 @@
 // Settings tab logic
-import type { KumaInstanceJSON, NPMInstanceJSON, SettingsResponse } from './types';
+import type { KumaInstanceJSON, NPMInstanceJSON, AutheliaInstanceJSON, SettingsResponse } from './types';
 
 export function loadSettings(): void {
     apiFetch('/api/settings').then(function(r){return r.json() as Promise<SettingsResponse>;}).then(function(s) {
@@ -298,6 +298,151 @@ export function testNPMInstance(id: number): void {
         .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
 }
 
+// ─── Authelia Instance CRUD ───────────────────────────────────
+
+var autheliaInstancesCache: AutheliaInstanceJSON[] = [];
+
+export function loadAutheliaInstances(): void {
+    var listEl = document.getElementById('authelia-instances-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-sm"></span> Loading...</div>';
+    apiFetch('/api/authelia-instances').then(function(r){return r.json() as Promise<AutheliaInstanceJSON[]>;}).then(function(instances) {
+        autheliaInstancesCache = instances || [];
+        renderAutheliaInstances(autheliaInstancesCache);
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        listEl!.innerHTML = '<div class="text-center text-danger py-3">Failed to load instances</div>';
+    });
+}
+
+function renderAutheliaInstances(instances: AutheliaInstanceJSON[]): void {
+    var listEl = document.getElementById('authelia-instances-list')!;
+    if (!instances.length) {
+        listEl.innerHTML = '<div class="text-center text-muted py-3">No Authelia instances configured. Click "Add Instance" to create one.</div>';
+        return;
+    }
+    var html = '';
+    instances.forEach(function(inst) {
+        var enabledBadge = inst.enabled
+            ? '<span class="badge bg-success">Enabled</span>'
+            : '<span class="badge bg-secondary">Disabled</span>';
+        var autoSyncBadge = inst.auto_sync
+            ? '<span class="badge bg-info">Auto-sync</span>'
+            : '';
+        html += '<div class="card card-body bg-light p-2 mb-2 d-flex flex-row align-items-center justify-content-between">'
+            + '<div class="flex-grow-1">'
+            + '<div class="fw-semibold">' + esc(inst.name) + ' ' + enabledBadge + ' ' + autoSyncBadge + '</div>'
+            + '<div class="small text-muted">' + esc(inst.config_path) + ' &middot; Policy: ' + esc(inst.default_policy) + '</div>'
+            + '</div>'
+            + '<div class="d-flex gap-1">'
+            + '<button type="button" class="btn btn-outline-secondary btn-sm" onclick="editAutheliaInstance(' + inst.id + ')">Edit</button>'
+            + '<button type="button" class="btn btn-outline-info btn-sm" onclick="testAutheliaInstance(' + inst.id + ')">Test</button>'
+            + '<button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteAutheliaInstance(' + inst.id + ',\'' + esc(inst.name).replace(/'/g, "\\'") + '\')">Delete</button>'
+            + '</div>'
+            + '</div>';
+    });
+    listEl.innerHTML = html;
+}
+
+export function showAutheliaInstanceForm(editId: number | null): void {
+    var form = document.getElementById('authelia-instance-form')!;
+    var title = document.getElementById('authelia-form-title')!;
+
+    if (editId !== null && editId !== undefined) {
+        var inst = autheliaInstancesCache.find(function(i) { return i.id === editId; });
+        if (!inst) { toast('Instance not found', 'error'); return; }
+        title.textContent = 'Edit Instance';
+        (document.getElementById('ai-edit-id') as HTMLInputElement).value = '' + editId;
+        (document.getElementById('ai-name') as HTMLInputElement).value = inst.name || '';
+        (document.getElementById('ai-config-path') as HTMLInputElement).value = inst.config_path || '';
+        (document.getElementById('ai-db-path') as HTMLInputElement).value = inst.db_path || '';
+        (document.getElementById('ai-default-policy') as HTMLSelectElement).value = inst.default_policy || 'one_factor';
+        (document.getElementById('ai-npm-ids') as HTMLInputElement).value = inst.npm_instance_ids || '[]';
+        (document.getElementById('ai-overrides') as HTMLInputElement).value = inst.overrides || '';
+        (document.getElementById('ai-auto-sync') as HTMLInputElement).checked = !!inst.auto_sync;
+        (document.getElementById('ai-enabled') as HTMLInputElement).checked = !!inst.enabled;
+    } else {
+        title.textContent = 'Add Instance';
+        (document.getElementById('ai-edit-id') as HTMLInputElement).value = '';
+        (document.getElementById('ai-name') as HTMLInputElement).value = '';
+        (document.getElementById('ai-config-path') as HTMLInputElement).value = '';
+        (document.getElementById('ai-db-path') as HTMLInputElement).value = '';
+        (document.getElementById('ai-default-policy') as HTMLSelectElement).value = 'one_factor';
+        (document.getElementById('ai-npm-ids') as HTMLInputElement).value = '[]';
+        (document.getElementById('ai-overrides') as HTMLInputElement).value = '';
+        (document.getElementById('ai-auto-sync') as HTMLInputElement).checked = true;
+        (document.getElementById('ai-enabled') as HTMLInputElement).checked = true;
+    }
+    form.classList.remove('d-none');
+}
+
+export function hideAutheliaInstanceForm(): void {
+    var form = document.getElementById('authelia-instance-form')!;
+    form.classList.add('d-none');
+    (document.getElementById('ai-edit-id') as HTMLInputElement).value = '';
+}
+
+export function saveAutheliaInstance(): void {
+    var editId = (document.getElementById('ai-edit-id') as HTMLInputElement).value;
+    var name = (document.getElementById('ai-name') as HTMLInputElement).value.trim();
+    var configPath = (document.getElementById('ai-config-path') as HTMLInputElement).value.trim();
+    var dbPath = (document.getElementById('ai-db-path') as HTMLInputElement).value.trim();
+    var defaultPolicy = (document.getElementById('ai-default-policy') as HTMLSelectElement).value;
+    var npmIds = (document.getElementById('ai-npm-ids') as HTMLInputElement).value.trim();
+    var overrides = (document.getElementById('ai-overrides') as HTMLInputElement).value.trim();
+    var autoSync = (document.getElementById('ai-auto-sync') as HTMLInputElement).checked;
+    var enabled = (document.getElementById('ai-enabled') as HTMLInputElement).checked;
+
+    if (!name) { toast('Name is required', 'error'); return; }
+    if (!configPath) { toast('Config Path is required', 'error'); return; }
+    if (!npmIds) { npmIds = '[]'; }
+
+    var payload = {
+        name: name, config_path: configPath, db_path: dbPath,
+        default_policy: defaultPolicy, npm_instance_ids: npmIds,
+        overrides: overrides, auto_sync: autoSync, enabled: enabled
+    };
+    var btn = document.getElementById('btn-authelia-save') as HTMLButtonElement;
+    btn.disabled = true;
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
+
+    var method = editId ? 'PUT' : 'POST';
+    var endpoint = editId ? '/api/authelia-instances/' + editId : '/api/authelia-instances';
+
+    apiFetch(endpoint, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
+        .then(function() {
+            toast(editId ? 'Instance updated' : 'Instance added', 'success');
+            hideAutheliaInstanceForm();
+            loadAutheliaInstances();
+        })
+        .catch(function(err: Error) {
+            if (err.message === 'not authenticated') return;
+            toast('Failed to save instance', 'error');
+        })
+        .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
+}
+
+export function deleteAutheliaInstance(id: number, name: string): void {
+    if (!confirm('Delete Authelia instance "' + name + '"? This will remove all alerts and rules associated with this instance.')) return;
+    apiFetch('/api/authelia-instances/' + id, { method: 'DELETE' })
+        .then(function(r) { if (!r.ok) throw new Error('Delete failed'); return r.json(); })
+        .then(function() { toast('Instance deleted', 'success'); loadAutheliaInstances(); })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
+}
+
+export function testAutheliaInstance(id: number): void {
+    toast('Testing connection...', 'info');
+    apiFetch('/api/authelia-instances/' + id + '/test', { method: 'POST' })
+        .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string}>; })
+        .then(function(d) {
+            if (d.ok) toast('Connection OK: ' + (d.message || 'success'), 'success');
+            else toast('Connection failed: ' + (d.message || 'unknown error'), 'error');
+        })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
+}
+
 window.loadSettings = loadSettings;
 window.saveSettings = saveSettings;
 window.testConnection = testConnection;
@@ -315,3 +460,10 @@ window.saveNPMInstance = saveNPMInstance;
 window.deleteNPMInstance = deleteNPMInstance;
 window.testNPMInstance = testNPMInstance;
 window.editNPMInstance = function(id: number) { showNPMInstanceForm(id); };
+window.loadAutheliaInstances = loadAutheliaInstances;
+window.showAutheliaInstanceForm = showAutheliaInstanceForm;
+window.hideAutheliaInstanceForm = hideAutheliaInstanceForm;
+window.saveAutheliaInstance = saveAutheliaInstance;
+window.deleteAutheliaInstance = deleteAutheliaInstance;
+window.testAutheliaInstance = testAutheliaInstance;
+window.editAutheliaInstance = function(id: number) { showAutheliaInstanceForm(id); };

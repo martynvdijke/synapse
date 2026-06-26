@@ -239,6 +239,15 @@
         </div>
 
         <div class="tab-pane fade" id="tab-authelia" role="tabpanel" aria-labelledby="tab-btn-authelia">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="auth-instance-selector" class="form-label mb-0 small fw-semibold">Authelia Instance:</label>
+                    <select id="auth-instance-selector" class="form-select form-select-sm" style="width:auto; min-width:200px">
+                        <option value="">All Instances</option>
+                    </select>
+                </div>
+                <div id="auth-instance-error" class="text-danger small d-none"></div>
+            </div>
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
                     <div class="card border-0 shadow-sm">
@@ -512,6 +521,64 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="col-12">
+                            <div class="d-flex align-items-center justify-content-between mb-3">
+                                <h6 class="mb-0 text-info">Authelia Instances</h6>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="btn-authelia-add">+ Add Instance</button>
+                            </div>
+                            <div id="authelia-instances-list" class="mb-3">
+                                <div class="text-center text-muted py-3">Loading instances...</div>
+                            </div>
+                            <div id="authelia-instance-form" class="card card-body bg-light p-3 d-none">
+                                <h6 class="mb-3" id="authelia-form-title">Add Instance</h6>
+                                <input type="hidden" id="ai-edit-id" value="">
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small">Name</label>
+                                        <input class="form-control form-control-sm" id="ai-name" placeholder="prod-authelia">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label small">Config Path</label>
+                                        <input class="form-control form-control-sm" id="ai-config-path" placeholder="/config/configuration.yml">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label small">Database Path</label>
+                                        <input class="form-control form-control-sm" id="ai-db-path" placeholder="/config/db.sqlite3">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small">Default Policy</label>
+                                        <select class="form-select form-select-sm" id="ai-default-policy">
+                                            <option value="one_factor">one_factor</option>
+                                            <option value="two_factor">two_factor</option>
+                                            <option value="bypass">bypass</option>
+                                            <option value="deny">deny</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small">NPM Instance IDs (JSON array)</label>
+                                        <input class="form-control form-control-sm" id="ai-npm-ids" placeholder='[1,2] or empty for all'>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small">Policy Overrides</label>
+                                        <input class="form-control form-control-sm" id="ai-overrides" placeholder='{"cname":"bypass"}'>
+                                    </div>
+                                    <div class="col-md-3 d-flex align-items-end gap-2 pb-1">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="ai-auto-sync" checked>
+                                            <label class="form-check-label small" for="ai-auto-sync">Auto-sync</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="ai-enabled" checked>
+                                            <label class="form-check-label small" for="ai-enabled">Enabled</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 d-flex justify-content-end gap-2">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-authelia-cancel">Cancel</button>
+                                        <button type="button" class="btn btn-primary btn-sm" id="btn-authelia-save">Save Instance</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div class="col-md-6 d-none">
                             <h6 class="mb-3 text-success">Nginx Proxy Manager (Legacy)</h6>
                             <div class="mb-2">
@@ -531,8 +598,8 @@
                                 <span class="test-result" id="test-npm-result"></span>
                             </div>
                         </div>
-                        <div class="col-md-6">
-                            <h6 class="mb-3 text-info">Authelia</h6>
+                        <div class="col-md-6 d-none">
+                            <h6 class="mb-3 text-info">Authelia (Legacy)</h6>
                             <div class="mb-2">
                                 <label class="form-label">Config Path</label>
                                 <input class="form-control form-control-sm" id="s-auth-config-path" placeholder="/config/configuration.yml">
@@ -548,8 +615,8 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-6">
-                            <h6 class="mb-3 text-info">Authelia Policies</h6>
+                        <div class="col-md-6 d-none">
+                            <h6 class="mb-3 text-info">Authelia Policies (Legacy)</h6>
                             <div class="mb-2">
                                 <label class="form-label">Default Policy</label>
                                 <select class="form-select form-select-sm" id="s-auth-default-policy">

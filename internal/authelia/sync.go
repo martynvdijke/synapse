@@ -3,6 +3,8 @@ package authelia
 import (
 	"fmt"
 	"sort"
+
+	"synapse/internal/npm"
 )
 
 // CompareCNAMEs compares NPM CNAMEs against Authelia domains.
@@ -33,7 +35,7 @@ func CompareCNAMEs(npmCNAMEs []string, autheliaDomains []string) (matched, missi
 // If dryRun is true, it returns the planned actions without modifying the file.
 // overrides maps CNAME -> policy (e.g., "bypass", "one_factor", "two_factor", "deny").
 // If autoSync is false, only alerts are returned (no config modification).
-func SyncConfig(autheliaPath string, npmEntries []ProxyEntry, defaultPolicy string, overrides map[string]string, autoSync, dryRun bool) ([]SyncAction, error) {
+func SyncConfig(autheliaPath, dbPath string, npmEntries []npm.ProxyEntry, defaultPolicy string, overrides map[string]string, autoSync, dryRun bool) ([]SyncAction, error) {
 	if defaultPolicy == "" {
 		defaultPolicy = DefaultPolicy
 	}
@@ -121,15 +123,6 @@ func SyncConfig(autheliaPath string, npmEntries []ProxyEntry, defaultPolicy stri
 	}
 
 	return actions, nil
-}
-
-// ProxyEntry represents an NPM proxy host entry.
-type ProxyEntry struct {
-	CNAME     string `json:"cname"`
-	Container string `json:"container"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`
 }
 
 // hasAddActions checks if any action is an "add" type.

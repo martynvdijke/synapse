@@ -13,6 +13,10 @@ export const MOCK_MONITORS = [
   { id: 2, name: 'API Health', type: 'http', url: 'http://api.example.com' },
 ];
 
+export const MOCK_AUTHELIA_INSTANCES = [
+  { id: 1, name: 'main-auth', config_path: '/config/configuration.yml', db_path: '/config/db.sqlite3', default_policy: 'one_factor', overrides: '{"admin.example.com":"bypass"}', auto_sync: true, enabled: true, npm_instance_ids: '[]', created_at: '2024-01-01T00:00:00Z' },
+];
+
 export const MOCK_NPM_INSTANCES = [
   { id: 1, name: 'npm-edge', url: 'https://npm1.test', username: 'admin', enabled: true, created_at: '2024-01-01T00:00:00Z' },
   { id: 2, name: 'npm-internal', url: 'https://npm2.test', username: 'admin', enabled: true, created_at: '2024-01-01T00:00:00Z' },

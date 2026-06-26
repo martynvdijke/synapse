@@ -20,6 +20,19 @@ export interface NPMInstanceJSON {
   created_at: string;
 }
 
+export interface AutheliaInstanceJSON {
+  id: number;
+  name: string;
+  config_path: string;
+  db_path: string;
+  default_policy: string;
+  overrides: string;
+  auto_sync: boolean;
+  enabled: boolean;
+  npm_instance_ids: string;
+  created_at: string;
+}
+
 export interface MonitorResponse {
   id: number;
   name: string;
@@ -120,10 +133,17 @@ export interface SyncRun {
 export interface AutheliaStatusResponse {
   configured: boolean;
   error?: string;
+  message?: string;
   domains?: string[];
   npm_cnames?: string[];
   matched?: string[];
+  missing?: string[];
   open_alerts?: number;
+  instance_id?: number;
+  instance_name?: string;
+  instance_count?: number;
+  sync_enabled?: boolean;
+  default_policy?: string;
 }
 
 export interface AutheliaAlert {
@@ -132,6 +152,7 @@ export interface AutheliaAlert {
   message: string;
   severity: string;
   status: string;
+  authelia_instance_id?: number;
 }
 
 export interface TempAccessRule {
@@ -140,6 +161,24 @@ export interface TempAccessRule {
   reason: string;
   expires_at: string;
   status: string;
+  authelia_instance_id?: number;
+}
+
+export interface AutheliaSyncAction {
+  action: string;
+  cname: string;
+  policy?: string;
+  message: string;
+}
+
+export interface AutheliaSyncInstanceResult {
+  instance_id: number;
+  instance_name: string;
+  error?: string;
+  added?: number;
+  skipped?: number;
+  alerted?: number;
+  actions?: AutheliaSyncAction[];
 }
 
 export interface AutheliaSyncResult {
@@ -147,12 +186,12 @@ export interface AutheliaSyncResult {
   added?: number;
   skipped?: number;
   alerted?: number;
-  actions?: Array<{
-    action: string;
-    cname: string;
-    policy?: string;
-    message: string;
-  }>;
+  actions?: AutheliaSyncAction[];
+  instance_id?: number;
+  instance_name?: string;
+  dry_run?: boolean;
+  message?: string;
+  instances?: AutheliaSyncInstanceResult[];
 }
 
 export interface ProgressEvent {
