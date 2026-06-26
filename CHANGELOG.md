@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/martynvdijke/synapse/compare/v1.8.0...v1.9.0) (2026-06-26)
+
+
+### Features
+
+* complete authelia-multi-decouple ([bff861b](https://github.com/martynvdijke/synapse/commit/bff861bc79c37258527c24eeee0572ac36847cd2))
+
 # [1.8.0](https://github.com/martynvdijke/synapse/compare/v1.7.0...v1.8.0) (2026-06-26)
 
 
