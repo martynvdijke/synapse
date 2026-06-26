@@ -1,6 +1,6 @@
 import { Page } from '@playwright/test';
 
-export const MOCK_STATUS = { docker_count: 5, npm_count: 8, npm_error: false, monitor_count: 12, running: false };
+export const MOCK_STATUS = { docker_count: 5, npm_count: 8, npm_error: false, monitor_count: 12, running: false, connection_health: { docker: { ok: true }, npm: { ok: true, instances: [{ id: 1, name: 'npm-edge', ok: true }, { id: 2, name: 'npm-internal', ok: true }] }, kuma: { ok: true, instances: [] } } };
 
 export const MOCK_SERVICES = [
   { name: 'web-app', container_name: 'synapse-web-1', type: 'http', url: 'http://web.example.com', in_kuma: true },
@@ -13,15 +13,19 @@ export const MOCK_MONITORS = [
   { id: 2, name: 'API Health', type: 'http', url: 'http://api.example.com' },
 ];
 
+export const MOCK_NPM_INSTANCES = [
+  { id: 1, name: 'npm-edge', url: 'https://npm1.test', username: 'admin', enabled: true, created_at: '2024-01-01T00:00:00Z' },
+  { id: 2, name: 'npm-internal', url: 'https://npm2.test', username: 'admin', enabled: true, created_at: '2024-01-01T00:00:00Z' },
+];
+
 export const MOCK_PROXIES = [
-  { cname: 'example.com', container: 'web-app', in_kuma: true },
-  { cname: 'api.example.com', container: 'api', in_kuma: false },
+  { cname: 'example.com', container: 'web-app', in_kuma: true, source_instance_name: 'npm-edge' },
+  { cname: 'api.example.com', container: 'api', in_kuma: false, source_instance_name: 'npm-edge' },
 ];
 
 export const MOCK_SETTINGS = {
-  kuma_url: 'http://uptime-kuma:3001', kuma_user: 'admin',
-  npm_host: 'http://nginx:81', npm_user: 'admin',
   compose_path: '/opt/synapse/docker-compose.yml',
+  npm_migrated: true,
   authelia_config_path: '/config/configuration.yml', authelia_db_path: '/config/db.sqlite3',
   authelia_sync_enabled: true, authelia_default_policy: 'one_factor', authelia_sync_overrides: '{"admin.example.com":"bypass"}',
 };
@@ -40,6 +44,13 @@ export async function setupBaseMocks(page: Page) {
   });
   await page.route('**/api/monitors', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_MONITORS) });
+  });
+  await page.route('**/api/npm-instances', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 3 }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_NPM_INSTANCES) });
+    }
   });
   await page.route('**/api/proxies', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_PROXIES) });

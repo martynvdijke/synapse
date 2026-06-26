@@ -6,7 +6,7 @@ export default defineConfig({
     outDir: 'static/dist',
     emptyOutDir: true,
     rollupOptions: {
-      input: 'src/main.js',
+      input: 'src/main.ts',
       output: {
         entryFileNames: 'app.js',
         assetFileNames: 'app.[ext]',

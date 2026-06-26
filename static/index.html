@@ -201,12 +201,13 @@
                     <thead class="table-light">
                         <tr>
                             <th>Domain</th>
+                            <th>Instance</th>
                             <th>Container</th>
                             <th>In Kuma</th>
                         </tr>
                     </thead>
                     <tbody id="npm-tbody" aria-live="polite">
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
                         <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td></tr>
                         <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
                     </tbody>
@@ -470,8 +471,49 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-6">
-                            <h6 class="mb-3 text-success">Nginx Proxy Manager</h6>
+                        <div class="col-12">
+                            <div class="d-flex align-items-center justify-content-between mb-3">
+                                <h6 class="mb-0 text-success">NPM Instances</h6>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="btn-npm-add">+ Add Instance</button>
+                            </div>
+                            <div id="npm-instances-list" class="mb-3">
+                                <div class="text-center text-muted py-3">Loading instances...</div>
+                            </div>
+                            <div id="npm-instance-form" class="card card-body bg-light p-3 d-none">
+                                <h6 class="mb-3" id="npm-form-title">Add Instance</h6>
+                                <input type="hidden" id="ni-edit-id" value="">
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small">Name</label>
+                                        <input class="form-control form-control-sm" id="ni-name" placeholder="prod-npm">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label small">URL</label>
+                                        <input class="form-control form-control-sm" id="ni-url" placeholder="http://nginx:81">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small">Username</label>
+                                        <input class="form-control form-control-sm" id="ni-user" placeholder="admin">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small">Password</label>
+                                        <input class="form-control form-control-sm" type="password" id="ni-pass" placeholder="Leave blank to keep">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="ni-enabled" checked>
+                                            <label class="form-check-label small" for="ni-enabled">Enabled (included in syncs)</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 d-flex justify-content-end gap-2">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-npm-cancel">Cancel</button>
+                                        <button type="button" class="btn btn-primary btn-sm" id="btn-npm-save">Save Instance</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 d-none">
+                            <h6 class="mb-3 text-success">Nginx Proxy Manager (Legacy)</h6>
                             <div class="mb-2">
                                 <label class="form-label">URL</label>
                                 <input class="form-control form-control-sm" id="s-npm-host" placeholder="http://nginx:81">

@@ -12,6 +12,7 @@ import (
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/npm"
 )
 
 //go:fix inline
@@ -1246,5 +1247,199 @@ func TestGetDockerServicesWithStatusEmptyClients(t *testing.T) {
 		if s.InKuma {
 			t.Errorf("service %q should not be InKuma with no clients", s.ContainerName)
 		}
+	}
+}
+
+// --- NPM sync tests ---
+
+// mockNpmClient starts an httptest server returning NPM proxy hosts and
+// returns an npm.InstanceClient backed by it.
+func mockNpmClient(t *testing.T, instanceID int, entries []npm.ProxyEntry) npm.InstanceClient {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		// Convert ProxyEntry to ProxyHost response format for realistic mock
+		hosts := make([]npm.ProxyHost, len(entries))
+		for i, e := range entries {
+			hosts[i] = npm.ProxyHost{
+				ID:          i + 1,
+				DomainNames: []string{e.CNAME},
+				Forwarding: npm.ForwardingConfig{
+					Host:      e.Host,
+					Port:      e.Port,
+					Container: e.Container,
+					Protocol:  e.Protocol,
+				},
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(hosts)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return npm.InstanceClient{
+		InstanceID: instanceID,
+		Client:     npm.NewClient(srv.URL, "user", "pass"),
+	}
+}
+
+func TestGetNPMProxyEntries(t *testing.T) {
+	c1 := mockNpmClient(t, 1, []npm.ProxyEntry{
+		{CNAME: "example.com", Container: "web", Host: "10.0.0.1", Port: 80, Protocol: "http"},
+		{CNAME: "app.example.com", Container: "app", Host: "10.0.0.2", Port: 8080, Protocol: "http"},
+	})
+	c2 := mockNpmClient(t, 2, []npm.ProxyEntry{
+		{CNAME: "example.com", Container: "web-old", Host: "10.0.0.3", Port: 80, Protocol: "http"},
+		{CNAME: "internal.example.com", Container: "db", Host: "10.0.0.4", Port: 5432, Protocol: "tcp"},
+	})
+
+	entries, err := GetNPMProxyEntries([]npm.InstanceClient{c1, c2})
+	if err != nil {
+		t.Fatalf("GetNPMProxyEntries: %v", err)
+	}
+
+	// Dedup: example.com should come from instance 1 (first in iteration order)
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries (deduped), got %d", len(entries))
+	}
+
+	found := map[string]int{}
+	for _, e := range entries {
+		found[e.CNAME] = e.SourceInstanceID
+	}
+	if found["example.com"] != 1 {
+		t.Errorf("example.com should be from instance 1 (first wins), got instance %d", found["example.com"])
+	}
+	if found["app.example.com"] != 1 {
+		t.Errorf("app.example.com should be from instance 1, got instance %d", found["app.example.com"])
+	}
+	if found["internal.example.com"] != 2 {
+		t.Errorf("internal.example.com should be from instance 2, got instance %d", found["internal.example.com"])
+	}
+}
+
+func TestGetNPMProxyEntriesEmpty(t *testing.T) {
+	entries, err := GetNPMProxyEntries(nil)
+	if err != nil {
+		t.Fatalf("GetNPMProxyEntries nil: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for nil clients, got %d", len(entries))
+	}
+
+	entries, err = GetNPMProxyEntries([]npm.InstanceClient{})
+	if err != nil {
+		t.Fatalf("GetNPMProxyEntries empty: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for empty clients, got %d", len(entries))
+	}
+}
+
+func TestGetNPMProxiesWithStatus(t *testing.T) {
+	// Two NPM clients: c1 has "example.com", c2 has "api.example.com" (also in Kuma).
+	c1 := mockNpmClient(t, 1, []npm.ProxyEntry{
+		{CNAME: "example.com", Container: "web", Host: "10.0.0.1", Port: 80, Protocol: "http"},
+	})
+	c2 := mockNpmClient(t, 2, []npm.ProxyEntry{
+		{CNAME: "api.example.com", Container: "api", Host: "10.0.0.2", Port: 8080, Protocol: "http"},
+	})
+
+	// One Kuma client with "api.example.com" monitor.
+	kumaClient := mockKumaClient(t, 1, nil, []kuma.Monitor{{ID: 42, Name: "api.example.com", Type: "http"}})
+
+	proxies, err := GetNPMProxiesWithStatus([]npm.InstanceClient{c1, c2}, []kuma.InstanceClient{kumaClient})
+	if err != nil {
+		t.Fatalf("GetNPMProxiesWithStatus: %v", err)
+	}
+	if len(proxies) != 2 {
+		t.Fatalf("expected 2 proxies, got %d", len(proxies))
+	}
+
+	proxyMap := map[string]bool{}
+	instanceMap := map[string]int{}
+	for _, p := range proxies {
+		proxyMap[p.CNAME] = p.InKuma
+		instanceMap[p.CNAME] = p.SourceInstanceID
+	}
+
+	if proxyMap["example.com"] != false {
+		t.Errorf("example.com should not be InKuma (not in any Kuma instance)")
+	}
+	if proxyMap["api.example.com"] != true {
+		t.Errorf("api.example.com should be InKuma (present in Kuma instance)")
+	}
+	if instanceMap["api.example.com"] != 2 {
+		t.Errorf("api.example.com should have SourceInstanceID 2, got %d", instanceMap["api.example.com"])
+	}
+}
+
+func TestGetNPMProxiesWithStatusEmptyClients(t *testing.T) {
+	// No NPM clients should return empty.
+	proxies, err := GetNPMProxiesWithStatus(nil, nil)
+	if err != nil {
+		t.Fatalf("GetNPMProxiesWithStatus nil: %v", err)
+	}
+	if len(proxies) != 0 {
+		t.Errorf("expected 0 proxies for nil clients, got %d", len(proxies))
+	}
+}
+
+func TestRunNPMSync(t *testing.T) {
+	d := setupTestDB(t)
+
+	npmClient := mockNpmClient(t, 1, []npm.ProxyEntry{
+		{CNAME: "synced.example.com", Container: "synced", Host: "10.0.0.1", Port: 80, Protocol: "http"},
+	})
+
+	var kumaAddCalls int32
+	kumaClient := mockKumaClient(t, 1, &kumaAddCalls, nil)
+
+	run := RunNPMSync([]npm.InstanceClient{npmClient}, []kuma.InstanceClient{kumaClient}, d, func(p Progress) {})
+
+	if run.Status != "completed" {
+		t.Errorf("expected status completed, got %q (err=%q)", run.Status, run.ErrorMessage)
+	}
+	if run.Added == 0 {
+		t.Error("expected at least 1 monitor added")
+	}
+	if atomic.LoadInt32(&kumaAddCalls) < 1 {
+		t.Errorf("expected at least 1 AddMonitor call, got %d", kumaAddCalls)
+	}
+}
+
+func TestRunNPMSyncEmptyClients(t *testing.T) {
+	d := setupTestDB(t)
+
+	run := RunNPMSync(nil, nil, d, func(p Progress) {})
+	if run.Status != "error" {
+		t.Errorf("expected status error, got %q", run.Status)
+	}
+	if run.ErrorMessage == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestRunNPMSyncSkipsExisting(t *testing.T) {
+	d := setupTestDB(t)
+
+	npmClient := mockNpmClient(t, 1, []npm.ProxyEntry{
+		{CNAME: "existing.example.com", Container: "existing", Host: "10.0.0.1", Port: 80, Protocol: "http"},
+	})
+
+	var kumaAddCalls int32
+	// Kuma already has a monitor for "existing.example.com"
+	kumaClient := mockKumaClient(t, 1, &kumaAddCalls, []kuma.Monitor{{ID: 100, Name: "existing.example.com", Type: "http"}})
+
+	run := RunNPMSync([]npm.InstanceClient{npmClient}, []kuma.InstanceClient{kumaClient}, d, func(p Progress) {})
+
+	if run.Status != "completed" {
+		t.Errorf("expected completed, got %q (err=%q)", run.Status, run.ErrorMessage)
+	}
+	if run.Skipped < 1 {
+		t.Errorf("expected at least 1 skipped (existing), got %d", run.Skipped)
+	}
+	if atomic.LoadInt32(&kumaAddCalls) != 0 {
+		t.Errorf("expected 0 AddMonitor calls (all existing), got %d", kumaAddCalls)
 	}
 }

@@ -15,7 +15,8 @@ services:
       DB_PATH: /db/synapse.db
       COMPOSE_PATH: /compose/docker-compose.yml
       LISTEN_ADDR: :6270
-      # Optional: connect to Nginx Proxy Manager
+      # DEPRECATED: NPM instances are now configured via the web UI Settings tab.
+      # These legacy env vars are only used for migration on first startup.
       # NPM_HOST: http://npm:81
       # NPM_USER: admin@example.com
       # NPM_PASS: changeme

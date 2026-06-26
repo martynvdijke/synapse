@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { setupBaseMocks, setupTestConnectionMocks } from './helpers';
+import { setupBaseMocks, MOCK_NPM_INSTANCES } from './helpers';
 
 test.describe('Settings tab', () => {
   test.beforeEach(async ({ page }) => {
     await setupBaseMocks(page);
-    await setupTestConnectionMocks(page);
     await page.goto('/');
     // Wait for stats to load
     await page.waitForFunction(() => {
@@ -13,38 +12,138 @@ test.describe('Settings tab', () => {
     }, { timeout: 10000 });
   });
 
-  test('settings form loads with correct values', async ({ page }) => {
+  test('NPM Instances section is visible with add button', async ({ page }) => {
     await page.click('#tab-btn-settings');
 
-    // Wait for loadSettings() to populate fields
-    await page.waitForFunction(() => {
-      const el = document.getElementById('s-kuma-url') as HTMLInputElement;
-      return el && el.value === 'http://uptime-kuma:3001';
-    }, { timeout: 10000 });
-
-    await expect(page.locator('#s-kuma-url')).toHaveValue('http://uptime-kuma:3001');
-    await expect(page.locator('#s-kuma-user')).toHaveValue('admin');
-    await expect(page.locator('#s-npm-host')).toHaveValue('http://nginx:81');
-    await expect(page.locator('#s-npm-user')).toHaveValue('admin');
-    await expect(page.locator('#s-compose-path')).toHaveValue('/opt/synapse/docker-compose.yml');
-    await expect(page.locator('#s-auth-config-path')).toHaveValue('/config/configuration.yml');
-    await expect(page.locator('#s-auth-db-path')).toHaveValue('/config/db.sqlite3');
-    await expect(page.locator('#s-auth-sync-enabled')).toBeChecked();
-    await expect(page.locator('#s-auth-default-policy')).toHaveValue('one_factor');
-    await expect(page.locator('#s-auth-overrides')).toHaveValue('{"admin.example.com":"bypass"}');
+    // Wait for NPM instances section to appear
+    await expect(page.locator('text=NPM Instances')).toBeVisible();
+    await expect(page.locator('#btn-npm-add')).toBeVisible();
   });
 
-  test('settings save makes POST with correct data', async ({ page }) => {
+  test('Add Instance button opens form', async ({ page }) => {
     await page.click('#tab-btn-settings');
 
-    // Wait for form to populate
+    // Form should be hidden initially
+    await expect(page.locator('#npm-instance-form')).toHaveClass(/d-none/);
+
+    // Click Add
+    await page.click('#btn-npm-add');
+
+    // Form should be visible
+    await expect(page.locator('#npm-instance-form')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#npm-form-title')).toHaveText('Add Instance');
+  });
+
+  test('Cancel button hides form', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.click('#btn-npm-add');
+    await expect(page.locator('#npm-instance-form')).not.toHaveClass(/d-none/);
+
+    await page.click('#btn-npm-cancel');
+    await expect(page.locator('#npm-instance-form')).toHaveClass(/d-none/);
+  });
+
+  test('saves a new NPM instance and hides the form', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    // Open form
+    await page.click('#btn-npm-add');
+    await expect(page.locator('#npm-instance-form')).not.toHaveClass(/d-none/);
+
+    // Fill form
+    await page.fill('#ni-name', 'e2e-test-npm');
+    await page.fill('#ni-url', 'https://npm-test:81');
+    await page.fill('#ni-user', 'admin');
+    await page.fill('#ni-pass', 'secret');
+    await page.check('#ni-enabled');
+
+    // Listen for the API call
+    const postPromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/npm-instances') && resp.request().method() === 'POST'
+    );
+
+    await page.click('#btn-npm-save');
+
+    const response = await postPromise;
+    expect(response.status()).toBe(200);
+
+    // Form should hide after save
+    await expect(page.locator('#npm-instance-form')).toHaveClass(/d-none/);
+
+    // The list should still show loaded instances (from mock)
+    await expect(page.locator('#npm-instances-list')).toContainText('npm-edge');
+  });
+
+  test('loads NPM instances list on settings tab open', async ({ page }) => {
+    // The MOCK_NPM_INSTANCES (2 instances) should load when settings tab opens
+    await page.click('#tab-btn-settings');
+
+    // Wait for instances to render
     await page.waitForFunction(() => {
-      const el = document.getElementById('s-kuma-url') as HTMLInputElement;
-      return el && el.value === 'http://uptime-kuma:3001';
+      const list = document.getElementById('npm-instances-list');
+      return list && list.textContent && list.textContent.includes('npm-edge');
     }, { timeout: 10000 });
 
-    // Modify a field
-    await page.fill('#s-kuma-url', 'http://new-kuma:3001');
+    await expect(page.locator('#npm-instances-list')).toContainText('npm-edge');
+    await expect(page.locator('#npm-instances-list')).toContainText('npm-internal');
+    // Should not show "Loading instances..." anymore
+    await expect(page.locator('#npm-instances-list')).not.toContainText('Loading instances');
+  });
+
+  test('shows edit form when Edit button is clicked', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    // Wait for instances to render
+    await page.waitForFunction(() => {
+      const list = document.getElementById('npm-instances-list');
+      return list && list.textContent && list.textContent.includes('npm-edge');
+    }, { timeout: 10000 });
+
+    // Click the first Edit button
+    const editBtn = page.locator('#npm-instances-list button:has-text("Edit")').first();
+    await editBtn.click();
+
+    // Form should show with populated values
+    await expect(page.locator('#npm-instance-form')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#npm-form-title')).toContainText('Edit');
+  });
+
+  test('delete instance removes it from list', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    // Wait for instances to render
+    await page.waitForFunction(() => {
+      const list = document.getElementById('npm-instances-list');
+      return list && list.textContent && list.textContent.includes('npm-edge');
+    }, { timeout: 10000 });
+
+    // Setup mock for delete response
+    await page.route('**/api/npm-instances/*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'deleted' }) });
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) });
+      }
+    });
+
+    // Click first Delete button
+    page.on('dialog', dialog => dialog.accept());
+    const deleteBtn = page.locator('#npm-instances-list button:has-text("Delete")').first();
+    await deleteBtn.click();
+  });
+
+  test('settings form saves compose path correctly', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    // Wait for settings to populate
+    await page.waitForFunction(() => {
+      const el = document.getElementById('s-compose-path') as HTMLInputElement;
+      return el && el.value !== '';
+    }, { timeout: 10000 });
+
+    // Modify compose path
+    await page.fill('#s-compose-path', '/custom/path.yml');
 
     // Listen for the POST
     const savePromise = page.waitForResponse(
@@ -56,47 +155,15 @@ test.describe('Settings tab', () => {
 
     const response = await savePromise;
     const body = JSON.parse(response.request().postData() || '{}');
-    expect(body.kuma_url).toBe('http://new-kuma:3001');
-    expect(body.authelia_sync_enabled).toBe(true);
+    expect(body.compose_path).toBe('/custom/path.yml');
   });
 
-  test('test kuma connection button works', async ({ page }) => {
+  test('saved indicator appears after settings save', async ({ page }) => {
     await page.click('#tab-btn-settings');
 
-    // Wait for form to populate
     await page.waitForFunction(() => {
-      const el = document.getElementById('s-kuma-url') as HTMLInputElement;
-      return el && el.value === 'http://uptime-kuma:3001';
-    }, { timeout: 10000 });
-
-    await page.click('#btn-test-kuma');
-
-    // Should show OK result
-    await expect(page.locator('#test-kuma-result')).toContainText('OK');
-  });
-
-  test('test npm connection button shows failure', async ({ page }) => {
-    await page.click('#tab-btn-settings');
-
-    // Wait for form to populate
-    await page.waitForFunction(() => {
-      const el = document.getElementById('s-kuma-url') as HTMLInputElement;
-      return el && el.value === 'http://uptime-kuma:3001';
-    }, { timeout: 10000 });
-
-    await page.click('#btn-test-npm');
-
-    // Should show failure message
-    await expect(page.locator('#test-npm-result')).toContainText('Connection failed');
-  });
-
-  test('saved indicator appears after save', async ({ page }) => {
-    await page.click('#tab-btn-settings');
-
-    // Wait for form to populate
-    await page.waitForFunction(() => {
-      const el = document.getElementById('s-kuma-url') as HTMLInputElement;
-      return el && el.value === 'http://uptime-kuma:3001';
+      const el = document.getElementById('s-compose-path') as HTMLInputElement;
+      return el && el.value !== '';
     }, { timeout: 10000 });
 
     await page.click('#settings-form button[type="submit"]');

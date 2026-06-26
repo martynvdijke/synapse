@@ -1,6 +1,6 @@
 // Toast notification system
 
-export function toast(msg, type) {
+export function toast(msg: string, type?: string): void {
     type = type || 'info';
     var container = document.getElementById('toast-container');
     if (!container) {
@@ -28,13 +28,13 @@ export function toast(msg, type) {
 window.toast = toast;
 window.setLoading = setLoading;
 
-export function setLoading(btnId, loading) {
-    var btn = document.getElementById(btnId);
+export function setLoading(btnId: string, loading: boolean): void {
+    var btn = document.getElementById(btnId) as HTMLButtonElement | null;
     if (!btn) return;
     if (loading) {
         btn.dataset.origHtml = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-sm"></span> ' + (btn.dataset.loadingText || btn.textContent.trim());
+        btn.innerHTML = '<span class="spinner-sm"></span> ' + (btn.dataset.loadingText || btn.textContent!.trim());
     } else {
         btn.disabled = false;
         if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml;

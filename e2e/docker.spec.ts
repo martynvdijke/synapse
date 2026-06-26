@@ -18,7 +18,7 @@ test.describe('Docker tab — services table', () => {
       const tbody = document.getElementById('docker-tbody');
       return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelector('td[data-label]');
     }, { timeout: 10000 });
-    const rows = page.locator('#docker-tbody tr');
+    const rows = page.locator('#docker-tbody tr.docker-service-row');
     await expect(rows).toHaveCount(3);
   });
 
@@ -39,7 +39,7 @@ test.describe('Docker tab — services table', () => {
       const tbody = document.getElementById('docker-tbody');
       return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelector('td[data-label]');
     }, { timeout: 10000 });
-    const secondRow = page.locator('#docker-tbody tr').nth(1);
+    const secondRow = page.locator('#docker-tbody tr.docker-service-row').nth(1);
     await expect(secondRow).toContainText('api');
     await expect(secondRow.locator('.badge.bg-secondary')).toContainText('Missing');
   });

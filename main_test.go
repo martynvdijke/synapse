@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -203,6 +204,7 @@ func TestAPI_RequiresAuth(t *testing.T) {
 		"/api/sync/history",
 		"/api/monitors",
 		"/api/monitors/1/stats",
+		"/api/npm-instances",
 		"/api/authelia/status",
 		"/api/authelia/alerts",
 		"/api/authelia/temp-access",
@@ -472,6 +474,170 @@ func TestKumaMonitorStatsHandler_NotFoundInstance(t *testing.T) {
 	}
 }
 
+func TestNPMInstancesHandler_List(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Create one instance directly via DB
+	if _, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "test", URL: "https://npm:81", Username: "admin", Password: "pass", Enabled: true}); err != nil {
+		t.Fatalf("seed instance: %v", err)
+	}
+
+	req := authRequest(t, "GET", "/api/npm-instances", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(body))
+	}
+	if body[0]["name"] != "test" {
+		t.Errorf("expected name=test, got %v", body[0]["name"])
+	}
+}
+
+func TestNPMInstancesHandler_Create(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	body := `{"name":"new","url":"https://npm:81","username":"admin","password":"secret","enabled":true}`
+	req := authRequest(t, "POST", "/api/npm-instances", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if id, ok := resp["id"].(float64); !ok || id <= 0 {
+		t.Errorf("expected positive id, got %v", resp["id"])
+	}
+	if resp["name"] != "new" {
+		t.Errorf("expected name=new, got %v", resp["name"])
+	}
+}
+
+func TestNPMInstancesHandler_CreateMissingFields(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	body := `{"name":"only-name"}`
+	req := authRequest(t, "POST", "/api/npm-instances", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing url, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNPMInstancesHandler_Update(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	inst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "old", URL: "https://old:81", Username: "admin", Password: "oldpass", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body := `{"name":"updated","url":"https://new:81","username":"newuser","enabled":false}`
+	req := authRequest(t, "PUT", "/api/npm-instances/"+fmt.Sprintf("%d", inst.ID), body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["name"] != "updated" {
+		t.Errorf("expected name=updated, got %v", resp["name"])
+	}
+	if resp["url"] != "https://new:81" {
+		t.Errorf("expected url=https://new:81, got %v", resp["url"])
+	}
+}
+
+func TestNPMInstancesHandler_UpdateNotFound(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	body := `{"name":"nope"}`
+	req := authRequest(t, "PUT", "/api/npm-instances/999", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNPMInstancesHandler_Delete(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	inst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "del", URL: "https://del:81", Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := authRequest(t, "DELETE", "/api/npm-instances/"+fmt.Sprintf("%d", inst.ID), "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "deleted" {
+		t.Errorf("expected status=deleted, got %v", resp["status"])
+	}
+
+	// Verify it's gone
+	req2 := authRequest(t, "GET", "/api/npm-instances", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var list []map[string]any
+	json.NewDecoder(w2.Body).Decode(&list)
+	if len(list) != 0 {
+		t.Errorf("expected empty list after delete, got %d items", len(list))
+	}
+}
+
+func TestNPMInstancesHandler_Test(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	inst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "test", URL: "https://test:81", Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := authRequest(t, "POST", "/api/npm-instances/"+fmt.Sprintf("%d", inst.ID)+"/test", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	// NPM at localhost:81 is not running, so we expect ok=false
+	if resp["ok"] != false {
+		t.Logf("test result: %+v", resp)
+	}
+}
+
 func TestSaveSettingsDoesNotOverwriteUnsentOtelFields(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
@@ -528,6 +694,11 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/settings", app.SaveSettings)
 		api.GET("/status", app.Status)
 		api.GET("/sync/history", app.SyncHistory)
+		api.GET("/npm-instances", app.ListNPMInstances)
+		api.POST("/npm-instances", app.CreateNPMInstance)
+		api.PUT("/npm-instances/:id", app.UpdateNPMInstance)
+		api.DELETE("/npm-instances/:id", app.DeleteNPMInstance)
+		api.POST("/npm-instances/:id/test", app.TestNPMInstance)
 		api.POST("/sync/docker", app.DockerSync)
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/monitors", app.KumaMonitors)

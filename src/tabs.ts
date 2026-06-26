@@ -1,9 +1,10 @@
 // Tab data loaders (Docker, Kuma, NPM, History)
+import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun } from './types';
 
-function renderDockerDetailRow(svc) {
-    var fields = [];
+function renderDockerDetailRow(svc: ServiceInfo): string {
+    var fields: string[] = [];
 
-    function addField(label, value) {
+    function addField(label: string, value: unknown): void {
         if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0) || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)) {
             return;
         }
@@ -11,9 +12,9 @@ function renderDockerDetailRow(svc) {
             fields.push('<div class="detail-field"><span class="detail-label">' + label + '</span><span class="detail-value">' + value.map(function(v) { return esc(String(v)); }).join('<br>') + '</span></div>');
         } else if (typeof value === 'object') {
             var inner = '';
-            for (var k in value) {
-                if (value.hasOwnProperty(k)) {
-                    inner += '<span class="detail-inline-label">' + esc(k) + ':</span> ' + esc(String(value[k])) + '<br>';
+            for (var k in value as Record<string, unknown>) {
+                if ((value as Record<string, unknown>).hasOwnProperty(k)) {
+                    inner += '<span class="detail-inline-label">' + esc(k) + ':</span> ' + esc(String((value as Record<string, unknown>)[k])) + '<br>';
                 }
             }
             if (inner) {
@@ -59,19 +60,19 @@ function renderDockerDetailRow(svc) {
     return fields.length ? '<div class="detail-container">' + fields.join('') + '</div>' : '';
 }
 
-export function loadDockerServices() {
-    document.getElementById('docker-tbody').innerHTML = loadingRow(6);
-    apiFetch('/api/services').then(function(r){return r.json();}).then(function(services) {
-        var tbody = document.getElementById('docker-tbody');
-        if (services.error) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">' + esc(services.error) + '</td></tr>';
+export function loadDockerServices(): void {
+    document.getElementById('docker-tbody')!.innerHTML = loadingRow(6);
+    apiFetch('/api/services').then(function(r){return r.json() as Promise<(ServiceInfo & {error?: string})[]>;}).then(function(services) {
+        var tbody = document.getElementById('docker-tbody')!;
+        if ((services as any).error) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">' + esc((services as any).error) + '</td></tr>';
             return;
         }
         if (!services.length) {
             tbody.innerHTML = emptyRow(6, 'No services found');
             return;
         }
-        var rows = [];
+        var rows: string[] = [];
         services.forEach(function(s, idx) {
             rows.push('<tr class="docker-service-row" data-idx="' + idx + '" onclick="toggleDockerDetail(this)">'
                 + '<td data-label="Service"><code>' + esc(s.name) + '</code></td>'
@@ -92,9 +93,9 @@ export function loadDockerServices() {
     });
 }
 
-window.toggleDockerDetail = function(row) {
+window.toggleDockerDetail = function(row: HTMLElement) {
     var idx = row.getAttribute('data-idx');
-    var detailRow = row.parentNode.querySelector('.docker-detail-row[data-idx="' + idx + '"]');
+    var detailRow = row.parentNode!.querySelector('.docker-detail-row[data-idx="' + idx + '"]') as HTMLElement | null;
     if (detailRow) {
         var isVisible = detailRow.style.display !== 'none';
         detailRow.style.display = isVisible ? 'none' : 'table-row';
@@ -106,14 +107,19 @@ window.toggleDockerDetail = function(row) {
 var monitorStatsCache = new Map();
 var STATS_CACHE_TTL = 60000; // 60 seconds
 
-function getCachedStats(instanceId, monitorId) {
+interface CacheEntry {
+    stats: MonitorStats;
+    timestamp: number;
+}
+
+function getCachedStats(instanceId: string, monitorId: string): MonitorStats | null {
     var key = instanceId + ':' + monitorId;
-    var entry = monitorStatsCache.get(key);
+    var entry = monitorStatsCache.get(key) as CacheEntry | undefined;
     if (entry && Date.now() - entry.timestamp < STATS_CACHE_TTL) return entry.stats;
     return null;
 }
 
-function renderMonitorStats(stats) {
+function renderMonitorStats(stats: MonitorStats): string {
     var statusBadge = stats.status === 1
         ? '<span class="badge bg-success">UP</span>'
         : stats.status === 0
@@ -131,44 +137,44 @@ function renderMonitorStats(stats) {
         + '</div>';
 }
 
-function loadMonitorStats(monitorId, instanceId) {
+function loadMonitorStats(monitorId: string, instanceId: string): void {
     var cacheKey = instanceId + ':' + monitorId;
     var cached = getCachedStats(instanceId, monitorId);
     if (cached) {
-        document.getElementById('monitor-detail-title').textContent = 'Monitor #' + monitorId;
-        document.getElementById('monitor-detail-body').innerHTML = renderMonitorStats(cached);
-        document.getElementById('monitor-detail-panel').classList.remove('d-none');
+        document.getElementById('monitor-detail-title')!.textContent = 'Monitor #' + monitorId;
+        document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(cached);
+        document.getElementById('monitor-detail-panel')!.classList.remove('d-none');
         return;
     }
 
-    document.getElementById('monitor-detail-title').textContent = 'Monitor #' + monitorId;
-    document.getElementById('monitor-detail-body').innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm" role="status"></span> Loading stats...</div>';
-    document.getElementById('monitor-detail-panel').classList.remove('d-none');
+    document.getElementById('monitor-detail-title')!.textContent = 'Monitor #' + monitorId;
+    document.getElementById('monitor-detail-body')!.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm" role="status"></span> Loading stats...</div>';
+    document.getElementById('monitor-detail-panel')!.classList.remove('d-none');
 
     apiFetch('/api/monitors/' + monitorId + '/stats?instance=' + instanceId)
         .then(function(r) {
-            if (!r.ok) { throw new Error(r.status); }
-            return r.json();
+            if (!r.ok) { throw new Error('' + r.status); }
+            return r.json() as Promise<MonitorStats>;
         })
         .then(function(stats) {
             monitorStatsCache.set(cacheKey, { stats: stats, timestamp: Date.now() });
-            document.getElementById('monitor-detail-body').innerHTML = renderMonitorStats(stats);
+            document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(stats);
         })
-        .catch(function(err) {
+        .catch(function(err: Error) {
             if (err.message === 'not authenticated') return;
             var msg = 'Stats unavailable';
             if (err.message === '404') msg = 'Instance not found';
             else if (err.message === '502') msg = 'Stats unavailable (Socket.IO connection failed)';
-            document.getElementById('monitor-detail-body').innerHTML = '<div class="text-center text-danger py-3">' + msg + '</div>';
+            document.getElementById('monitor-detail-body')!.innerHTML = '<div class="text-center text-danger py-3">' + msg + '</div>';
         });
 }
 
-export function loadKumaMonitors() {
-    document.getElementById('kuma-tbody').innerHTML = loadingRow(5);
-    apiFetch('/api/monitors').then(function(r){return r.json();}).then(function(monitors) {
-        var tbody = document.getElementById('kuma-tbody');
-        if (monitors.error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc(monitors.error) + '</td></tr>';
+export function loadKumaMonitors(): void {
+    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(5);
+    apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & {error?: string})[]>;}).then(function(monitors) {
+        var tbody = document.getElementById('kuma-tbody')!;
+        if ((monitors as any).error) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc((monitors as any).error) + '</td></tr>';
             return;
         }
         if (!monitors.length) {
@@ -188,27 +194,30 @@ export function loadKumaMonitors() {
         // Wire click handlers for detail stats
         tbody.querySelectorAll('tr[data-monitor-id]').forEach(function(row) {
             row.addEventListener('click', function() {
-                loadMonitorStats(row.getAttribute('data-monitor-id'), row.getAttribute('data-instance-id'));
+                loadMonitorStats(row.getAttribute('data-monitor-id')!, row.getAttribute('data-instance-id')!);
             });
         });
     });
 }
 
-export function loadNPMProxies() {
-    document.getElementById('npm-tbody').innerHTML = loadingRow(3);
-    apiFetch('/api/proxies').then(function(r){return r.json();}).then(function(proxies) {
-        var tbody = document.getElementById('npm-tbody');
-        if (proxies.error) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">' + esc(proxies.error) + '</td></tr>';
+export function loadNPMProxies(): void {
+    document.getElementById('npm-tbody')!.innerHTML = loadingRow(4);
+    apiFetch('/api/proxies').then(function(r){return r.json() as Promise<(ProxyResponse & {error?: string})[]>;}).then(function(proxies) {
+        var tbody = document.getElementById('npm-tbody')!;
+        if ((proxies as any).error) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc((proxies as any).error) + '</td></tr>';
             return;
         }
         if (!proxies.length) {
-            tbody.innerHTML = emptyRow(3, 'No proxy hosts found');
+            tbody.innerHTML = emptyRow(4, 'No proxy hosts found');
             return;
         }
         tbody.innerHTML = proxies.map(function(p) {
             return '<tr>'
                 + '<td data-label="Domain"><code>' + esc(p.cname) + '</code></td>'
+                + '<td data-label="Instance">' + (p.source_instance_name
+                    ? '<span class="badge bg-secondary">' + esc(p.source_instance_name) + '</span>'
+                    : '<span class="text-muted">\u2014</span>') + '</td>'
                 + '<td data-label="Container">' + esc(p.container) + '</td>'
                 + '<td data-label="In Kuma">' + (p.in_kuma
                     ? '<span class="badge bg-success">\u2713 In Kuma</span>'
@@ -218,10 +227,10 @@ export function loadNPMProxies() {
     });
 }
 
-export function loadHistory() {
-    document.getElementById('history-tbody').innerHTML = loadingRow(8);
-    apiFetch('/api/sync/history').then(function(r){return r.json();}).then(function(runs) {
-        var tbody = document.getElementById('history-tbody');
+export function loadHistory(): void {
+    document.getElementById('history-tbody')!.innerHTML = loadingRow(8);
+    apiFetch('/api/sync/history').then(function(r){return r.json() as Promise<SyncRun[]>;}).then(function(runs) {
+        var tbody = document.getElementById('history-tbody')!;
         if (!runs.length) {
             tbody.innerHTML = emptyRow(8, 'No sync history yet');
             return;

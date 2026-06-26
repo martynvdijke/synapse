@@ -14,16 +14,16 @@ test.describe('Dashboard — stat cards', () => {
 
   test('stat cards render with correct values', async ({ page }) => {
     await expect(page.locator('#stat-docker')).toHaveText('5');
-    await expect(page.locator('#stat-npm')).toHaveText('8');
+    await expect(page.locator('#stat-npm')).toContainText('2/2');
     await expect(page.locator('#stat-monitors')).toHaveText('12');
     await expect(page.locator('#stat-status')).toContainText('Idle');
     await expect(page.locator('#stat-authelia')).toContainText('Not configured');
   });
 
-  test('npm stat shows warning icon on error', async ({ page }) => {
-    // Override the status mock to simulate npm_error
+  test('npm stat shows partial health when instance fails', async ({ page }) => {
+    // Override the status mock to simulate a failed NPM instance
     await page.route('**/api/status', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_STATUS, npm_error: true }) });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_STATUS, connection_health: { ...MOCK_STATUS.connection_health, npm: { ok: false, instances: [{ id: 1, name: 'npm-edge', ok: false, last_error: 'connection refused' }, { id: 2, name: 'npm-internal', ok: true }] } } }) });
     });
     // Reload to pick up new mock
     await page.goto('/');
@@ -31,7 +31,7 @@ test.describe('Dashboard — stat cards', () => {
       const el = document.getElementById('stat-npm');
       return el && el.textContent !== '' && !el.querySelector('.skeleton');
     }, { timeout: 10000 });
-    await expect(page.locator('#stat-npm')).toContainText('\u26A0');
+    await expect(page.locator('#stat-npm')).toContainText('1/2');
   });
 
   test('stat cards have aria-labels', async ({ page }) => {

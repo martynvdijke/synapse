@@ -525,6 +525,131 @@ func TestMigrateKumaInstances(t *testing.T) {
 	}
 }
 
+func TestNPMInstanceCRUD(t *testing.T) {
+	db := setupTestDB(t)
+
+	prod, err := db.CreateNPMInstance(&NPMInstance{
+		Name: "prod", URL: "https://npm-prod:81",
+		Username: "admin", Password: "secret", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create prod: %v", err)
+	}
+	if prod.ID <= 0 {
+		t.Fatalf("expected positive id, got %d", prod.ID)
+	}
+	if prod.Name != "prod" || prod.URL != "https://npm-prod:81" || prod.Password != "secret" || !prod.Enabled {
+		t.Errorf("prod fields mismatch: %+v", prod)
+	}
+
+	staging, err := db.CreateNPMInstance(&NPMInstance{
+		Name: "staging", URL: "https://npm-staging:81",
+		Username: "admin", Password: "stgpass", Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("create staging: %v", err)
+	}
+
+	all, err := db.GetNPMInstances()
+	if err != nil {
+		t.Fatalf("get all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(all))
+	}
+
+	enabled, err := db.GetEnabledNPMInstances()
+	if err != nil {
+		t.Fatalf("get enabled: %v", err)
+	}
+	if len(enabled) != 1 || enabled[0].Name != "prod" {
+		t.Fatalf("expected 1 enabled (prod), got %+v", enabled)
+	}
+
+	got, err := db.GetNPMInstance(prod.ID)
+	if err != nil {
+		t.Fatalf("get prod: %v", err)
+	}
+	if got.Password != "secret" {
+		t.Errorf("expected password secret, got %q", got.Password)
+	}
+
+	// Update with empty password must keep existing password.
+	if err := db.UpdateNPMInstance(prod.ID, &NPMInstance{
+		Name: "prod2", URL: "https://new", Username: "user2", Password: "", Enabled: true,
+	}); err != nil {
+		t.Fatalf("update keep pass: %v", err)
+	}
+	got, err = db.GetNPMInstance(prod.ID)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if got.Name != "prod2" || got.URL != "https://new" || got.Username != "user2" {
+		t.Errorf("fields not updated: %+v", got)
+	}
+	if got.Password != "secret" {
+		t.Errorf("password should be preserved, got %q", got.Password)
+	}
+
+	// Update with a new password.
+	if err := db.UpdateNPMInstance(prod.ID, &NPMInstance{
+		Name: "prod3", URL: "https://new", Username: "u", Password: "newpass", Enabled: true,
+	}); err != nil {
+		t.Fatalf("update new pass: %v", err)
+	}
+	got, _ = db.GetNPMInstance(prod.ID)
+	if got.Password != "newpass" {
+		t.Errorf("password should be newpass, got %q", got.Password)
+	}
+
+	// Delete staging.
+	if err := db.DeleteNPMInstance(staging.ID); err != nil {
+		t.Fatalf("delete staging: %v", err)
+	}
+	all, _ = db.GetNPMInstances()
+	if len(all) != 1 || all[0].Name != "prod3" {
+		t.Fatalf("expected 1 instance (prod3) after delete, got %+v", all)
+	}
+}
+
+func TestMigrateNPMInstances(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Migrate from legacy settings.
+	if err := db.MigrateNPMInstances(Settings{NPMHost: "https://npm:81", NPMUser: "admin", NPMPass: "secret"}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	insts, _ := db.GetNPMInstances()
+	if len(insts) != 1 {
+		t.Fatalf("expected 1 instance after migrate, got %d", len(insts))
+	}
+	if insts[0].Name != "default" || insts[0].URL != "https://npm:81" || insts[0].Username != "admin" || insts[0].Password != "secret" || !insts[0].Enabled {
+		t.Errorf("default instance fields mismatch: %+v", insts[0])
+	}
+
+	// Idempotent: second migrate must not create another instance.
+	if err := db.MigrateNPMInstances(Settings{NPMHost: "https://other:81", NPMUser: "x", NPMPass: "y"}); err != nil {
+		t.Fatalf("migrate again: %v", err)
+	}
+	insts, _ = db.GetNPMInstances()
+	if len(insts) != 1 || insts[0].URL != "https://npm:81" {
+		t.Errorf("migrate not idempotent: %+v", insts)
+	}
+}
+
+func TestMigrateNPMInstancesEmptyURL(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.MigrateNPMInstances(Settings{NPMHost: ""}); err != nil {
+		t.Fatalf("migrate empty: %v", err)
+	}
+	insts, _ := db.GetNPMInstances()
+	if len(insts) != 0 {
+		t.Fatalf("expected 0 instances for empty url, got %d", len(insts))
+	}
+}
+
 func TestMigrateKumaInstancesEmptyURL(t *testing.T) {
 	db := setupTestDB(t)
 

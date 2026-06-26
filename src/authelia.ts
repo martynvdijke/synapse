@@ -1,39 +1,40 @@
 // Authelia tab logic
+import type { AutheliaStatusResponse, AutheliaAlert, TempAccessRule, AutheliaSyncResult } from './types';
 
-export function loadAutheliaDashboard() {
+export function loadAutheliaDashboard(): void {
     loadAutheliaStatus();
     loadAutheliaAlerts();
     loadAutheliaTempAccess();
 }
 
-export function loadAutheliaStatus() {
-    apiFetch('/api/authelia/status').then(function(r){return r.json();}).then(function(d) {
+export function loadAutheliaStatus(): void {
+    apiFetch('/api/authelia/status').then(function(r){return r.json() as Promise<AutheliaStatusResponse>;}).then(function(d) {
         if (!d.configured) {
-            document.getElementById('auth-domain-count').textContent = '—';
-            document.getElementById('auth-coverage').textContent = '—';
-            document.getElementById('auth-open-alerts').textContent = '—';
-            document.getElementById('auth-coverage-tbody').innerHTML = emptyRow(4, 'Authelia not configured. Set config path in Settings.');
+            document.getElementById('auth-domain-count')!.textContent = '—';
+            document.getElementById('auth-coverage')!.textContent = '—';
+            document.getElementById('auth-open-alerts')!.textContent = '—';
+            document.getElementById('auth-coverage-tbody')!.innerHTML = emptyRow(4, 'Authelia not configured. Set config path in Settings.');
             return;
         }
         if (d.error) {
-            document.getElementById('auth-domain-count').textContent = '\u26A0';
-            document.getElementById('auth-coverage').textContent = '\u26A0';
-            document.getElementById('auth-open-alerts').textContent = '\u26A0';
-            document.getElementById('auth-coverage-tbody').innerHTML = emptyRow(4, 'Error loading config: ' + esc(d.error));
+            document.getElementById('auth-domain-count')!.textContent = '\u26A0';
+            document.getElementById('auth-coverage')!.textContent = '\u26A0';
+            document.getElementById('auth-open-alerts')!.textContent = '\u26A0';
+            document.getElementById('auth-coverage-tbody')!.innerHTML = emptyRow(4, 'Error loading config: ' + esc(d.error));
             return;
         }
 
-        document.getElementById('auth-domain-count').textContent = d.domains ? d.domains.length : 0;
+        document.getElementById('auth-domain-count')!.textContent = '' + (d.domains ? d.domains.length : 0);
 
         var total = d.npm_cnames ? d.npm_cnames.length : 0;
         var matched = d.matched ? d.matched.length : 0;
-        document.getElementById('auth-coverage').textContent = matched + '/' + total;
-        document.getElementById('auth-open-alerts').textContent = d.open_alerts || 0;
+        document.getElementById('auth-coverage')!.textContent = matched + '/' + total;
+        document.getElementById('auth-open-alerts')!.textContent = '' + (d.open_alerts || 0);
 
-        var tbody = document.getElementById('auth-coverage-tbody');
+        var tbody = document.getElementById('auth-coverage-tbody')!;
         if (total === 0) { tbody.innerHTML = emptyRow(4, 'No NPM proxy hosts found'); return; }
 
-        var matchedMap = {};
+        var matchedMap: Record<string, boolean> = {};
         (d.matched || []).forEach(function(c) { matchedMap[c] = true; });
 
         tbody.innerHTML = (d.npm_cnames || []).map(function(cname) {
@@ -48,9 +49,9 @@ export function loadAutheliaStatus() {
     });
 }
 
-export function loadAutheliaAlerts() {
-    apiFetch('/api/authelia/alerts').then(function(r){return r.json();}).then(function(alerts) {
-        var tbody = document.getElementById('auth-alerts-tbody');
+export function loadAutheliaAlerts(): void {
+    apiFetch('/api/authelia/alerts').then(function(r){return r.json() as Promise<AutheliaAlert[]>;}).then(function(alerts) {
+        var tbody = document.getElementById('auth-alerts-tbody')!;
         if (!alerts || !alerts.length) { tbody.innerHTML = emptyRow(4, 'No alerts'); return; }
         tbody.innerHTML = alerts.map(function(a) {
             var sevBadge = a.severity === 'error' ? 'bg-danger' : a.severity === 'warning' ? 'bg-warning text-dark' : 'bg-info';
@@ -67,16 +68,16 @@ export function loadAutheliaAlerts() {
     });
 }
 
-export function resolveAlert(id) {
+export function resolveAlert(id: number): void {
     apiFetch('/api/authelia/alerts/' + id + '/resolve', { method: 'POST' })
         .then(function(r){return r.json();})
-        .then(function(d) { toast('Alert resolved', 'success'); loadAutheliaAlerts(); loadAutheliaStatus(); })
-        .catch(function(err) { if (err.message === 'not authenticated') return; toast('Failed to resolve alert', 'error'); });
+        .then(function() { toast('Alert resolved', 'success'); loadAutheliaAlerts(); loadAutheliaStatus(); })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to resolve alert', 'error'); });
 }
 
-export function loadAutheliaTempAccess() {
-    apiFetch('/api/authelia/temp-access').then(function(r){return r.json();}).then(function(rules) {
-        var tbody = document.getElementById('auth-temp-tbody');
+export function loadAutheliaTempAccess(): void {
+    apiFetch('/api/authelia/temp-access').then(function(r){return r.json() as Promise<TempAccessRule[]>;}).then(function(rules) {
+        var tbody = document.getElementById('auth-temp-tbody')!;
         if (!rules || !rules.length) { tbody.innerHTML = emptyRow(5, 'No temporary access rules'); return; }
         tbody.innerHTML = rules.map(function(r) {
             var statusBadge = r.status === 'active' ? 'bg-success' : r.status === 'expired' ? 'bg-secondary' : 'bg-danger';
@@ -94,21 +95,21 @@ export function loadAutheliaTempAccess() {
     });
 }
 
-export function revokeTempAccess(id) {
+export function revokeTempAccess(id: number): void {
     apiFetch('/api/authelia/temp-access/' + id + '/revoke', { method: 'POST' })
         .then(function(r){return r.json();})
-        .then(function(d) { toast('Access rule revoked', 'success'); loadAutheliaTempAccess(); })
-        .catch(function(err) { if (err.message === 'not authenticated') return; toast('Failed to revoke rule', 'error'); });
+        .then(function() { toast('Access rule revoked', 'success'); loadAutheliaTempAccess(); })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to revoke rule', 'error'); });
 }
 
-export function runAutheliaSync(dryRun) {
-    var btn = dryRun ? document.getElementById('btn-auth-dryrun') : document.getElementById('btn-auth-sync');
+export function runAutheliaSync(dryRun: boolean): void {
+    var btn = document.getElementById(dryRun ? 'btn-auth-dryrun' : 'btn-auth-sync') as HTMLButtonElement;
     btn.disabled = true;
     var orig = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-sm"></span> ' + (dryRun ? 'Dry running...' : 'Syncing...');
 
     apiFetch('/api/authelia/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: dryRun }) })
-        .then(function(r){return r.json();})
+        .then(function(r){return r.json() as Promise<AutheliaSyncResult>;})
         .then(function(d) {
             if (d.error) { toast('Sync error: ' + d.error, 'error'); return; }
             var resultHtml = '<div class="alert ' + (dryRun ? 'alert-info' : 'alert-success') + ' p-2 mb-0"><strong>' + (dryRun ? 'Dry Run Results' : 'Sync Results') + '</strong>: Added: ' + (d.added || 0) + ', Skipped: ' + (d.skipped || 0) + ', Alerted: ' + (d.alerted || 0);
@@ -119,12 +120,12 @@ export function runAutheliaSync(dryRun) {
                 resultHtml += '</ul>';
             }
             resultHtml += '</div>';
-            document.getElementById('auth-sync-result').innerHTML = resultHtml;
-            document.getElementById('auth-sync-result').classList.remove('d-none');
+            document.getElementById('auth-sync-result')!.innerHTML = resultHtml;
+            document.getElementById('auth-sync-result')!.classList.remove('d-none');
             loadAutheliaStatus(); loadAutheliaAlerts();
             if (!dryRun) toast('Sync completed', 'success');
         })
-        .catch(function(err) { if (err.message === 'not authenticated') return; toast('Sync failed', 'error'); })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Sync failed', 'error'); })
         .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
 }
 
