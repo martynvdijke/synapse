@@ -9,8 +9,8 @@ export const MOCK_SERVICES = [
 ];
 
 export const MOCK_MONITORS = [
-  { id: 1, name: 'Web App Monitor', type: 'http', url: 'http://web.example.com' },
-  { id: 2, name: 'API Health', type: 'http', url: 'http://api.example.com' },
+  { id: 1, name: 'Web App Monitor', type: 'http', url: 'http://web.example.com', instance_id: 1, instance_name: 'prod-kuma' },
+  { id: 2, name: 'API Health', type: 'http', url: 'http://api.example.com', instance_id: 1, instance_name: 'prod-kuma' },
 ];
 
 export const MOCK_AUTHELIA_INSTANCES = [
@@ -39,6 +39,17 @@ export const MOCK_SYNC_HISTORY = [
   { id: 2, source: 'npm', status: 'completed_with_errors', started_at: new Date(Date.now() - 86400000).toISOString(), added: 1, skipped: 0, failed: 2, error_message: 'Connection timeout' },
 ];
 
+export const MOCK_LOGS = {
+  entries: [
+    { timestamp: '2025-01-15T10:00:00Z', level: 'info', source: 'app', message: 'Synapse started', duration: 0, error: '', error_kind: '', metadata: {} },
+    { timestamp: '2025-01-15T10:00:01Z', level: 'info', source: 'kuma', message: 'Kuma sync completed', duration: 1200, error: '', error_kind: '', metadata: { instance: 'kuma-1' } },
+    { timestamp: '2025-01-15T10:00:02Z', level: 'warn', source: 'npm', message: 'NPM connection timeout', duration: 0, error: 'timeout', error_kind: 'network', metadata: { instance: 'npm-edge' } },
+    { timestamp: '2025-01-15T10:00:03Z', level: 'error', source: 'sync', message: 'Sync failed', duration: 0, error: 'connection refused', error_kind: 'network', metadata: {} },
+  ],
+  total: 4,
+  has_more: true,
+};
+
 export async function setupBaseMocks(page: Page) {
   await page.route('**/api/status', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_STATUS) });
@@ -46,8 +57,15 @@ export async function setupBaseMocks(page: Page) {
   await page.route('**/api/services', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_SERVICES) });
   });
-  await page.route('**/api/monitors', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_MONITORS) });
+  await page.route(/\/api\/monitors/, async (route) => {
+    const url = route.request().url();
+    if (url.includes('/stats?')) {
+      // Monitor stats endpoint
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, status: 1, uptime_24h: 99.9, uptime_7d: 99.5, uptime_1y: 99.0, avg_ping: 45.2, last_msg: 'OK', cert_info: '' }) });
+    } else {
+      // Monitor list endpoint
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_MONITORS) });
+    }
   });
   await page.route('**/api/npm-instances', async (route) => {
     if (route.request().method() === 'POST') {
@@ -84,6 +102,31 @@ export async function setupBaseMocks(page: Page) {
         await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Invalid credentials' }) });
       }
     }
+  });
+  await page.route('**/api/kuma-instances', async (route) => {
+    const instances = [{ id: 1, name: 'prod-kuma', url: 'http://kuma:3001', username: 'admin', enabled: true, created_at: '2024-01-01T00:00:00Z' }];
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 2 }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(instances) });
+    }
+  });
+  await page.route('**/api/kuma-instances/*/test', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, message: 'Connection OK' }) });
+  });
+  await page.route('**/api/kuma-instances/*', async (route) => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'deleted' }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    }
+  });
+  await page.route(/\/api\/logs(?:\?|$)/, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_LOGS.entries) });
+  });
+  await page.route(/\/api\/logs\/stream/, async (route) => {
+    // Simulate an SSE connection that stays open. Send one keepalive then hold.
+    await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' }, body: ': keepalive\n\n' });
   });
   await page.route('**/api/authelia/status', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configured: false, message: 'Not configured' }) });

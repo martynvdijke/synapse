@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { setupBaseMocks, MOCK_NPM_INSTANCES } from './helpers';
+import { setupBaseMocks, MOCK_NPM_INSTANCES, MOCK_MONITORS } from './helpers';
 
 test.describe('Settings tab', () => {
   test.beforeEach(async ({ page }) => {
@@ -170,5 +170,120 @@ test.describe('Settings tab', () => {
 
     // Check for success toast
     await expect(page.locator('.toast-msg.toast-success')).toContainText('Settings saved');
+  });
+});
+
+test.describe('Settings — Kuma instances', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupBaseMocks(page);
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('stat-docker');
+      return el && el.textContent !== '' && !el.querySelector('.skeleton');
+    }, { timeout: 10000 });
+  });
+
+  test('kuma instances section is visible with add button', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await expect(page.locator('text=Uptime Kuma Instances')).toBeVisible();
+    await expect(page.locator('#btn-kuma-add')).toBeVisible();
+  });
+
+  test('add kuma instance button opens form', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await expect(page.locator('#kuma-instance-form')).toHaveClass(/d-none/);
+    await page.click('#btn-kuma-add');
+    await expect(page.locator('#kuma-instance-form')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#kuma-form-title')).toHaveText('Add Instance');
+  });
+
+  test('cancel button hides kuma instance form', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.click('#btn-kuma-add');
+    await expect(page.locator('#kuma-instance-form')).not.toHaveClass(/d-none/);
+    await page.click('#btn-kuma-cancel');
+    await expect(page.locator('#kuma-instance-form')).toHaveClass(/d-none/);
+  });
+
+  test('saves a new kuma instance and hides the form', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.click('#btn-kuma-add');
+    await page.fill('#ki-name', 'e2e-kuma');
+    await page.fill('#ki-url', 'http://kuma-test:3001');
+    await page.fill('#ki-user', 'admin');
+    await page.fill('#ki-pass', 'secret');
+    await page.check('#ki-enabled');
+
+    const postPromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/kuma-instances') && resp.request().method() === 'POST'
+    );
+
+    await page.click('#btn-kuma-save');
+
+    const response = await postPromise;
+    expect(response.status()).toBe(200);
+    await expect(page.locator('#kuma-instance-form')).toHaveClass(/d-none/);
+  });
+
+  test('loads kuma instances list on settings tab open', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.waitForFunction(() => {
+      const list = document.getElementById('kuma-instances-list');
+      return list && list.textContent && list.textContent.includes('prod-kuma');
+    }, { timeout: 10000 });
+
+    await expect(page.locator('#kuma-instances-list')).toContainText('prod-kuma');
+    await expect(page.locator('#kuma-instances-list')).toContainText('http://kuma:3001');
+    await expect(page.locator('#kuma-instances-list')).not.toContainText('Loading instances');
+  });
+
+  test('edit button opens kuma form with populated values', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.waitForFunction(() => {
+      const list = document.getElementById('kuma-instances-list');
+      return list && list.textContent && list.textContent.includes('prod-kuma');
+    }, { timeout: 10000 });
+
+    await page.click('#kuma-instances-list button:has-text("Edit")');
+
+    await expect(page.locator('#kuma-instance-form')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#kuma-form-title')).toContainText('Edit');
+  });
+
+  test('delete kuma instance shows confirm and calls API', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.waitForFunction(() => {
+      const list = document.getElementById('kuma-instances-list');
+      return list && list.textContent && list.textContent.includes('prod-kuma');
+    }, { timeout: 10000 });
+
+    const deletePromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/kuma-instances/1') && resp.request().method() === 'DELETE'
+    );
+
+    page.on('dialog', (dialog) => dialog.accept());
+    await page.click('#kuma-instances-list button:has-text("Delete")');
+
+    const response = await deletePromise;
+    expect(response.status()).toBe(200);
+  });
+
+  test('test kuma instance shows toast result', async ({ page }) => {
+    await page.click('#tab-btn-settings');
+
+    await page.waitForFunction(() => {
+      const list = document.getElementById('kuma-instances-list');
+      return list && list.textContent && list.textContent.includes('prod-kuma');
+    }, { timeout: 10000 });
+
+    await page.click('#kuma-instances-list button:has-text("Test")');
+    await expect(page.locator('.toast-msg.toast-success')).toContainText('Connection OK');
   });
 });

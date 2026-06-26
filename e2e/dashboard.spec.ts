@@ -43,6 +43,47 @@ test.describe('Dashboard — stat cards', () => {
   });
 });
 
+test.describe('Dashboard — interactions', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupBaseMocks(page);
+  });
+
+  test('clicking docker stat card switches to docker tab', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('stat-docker');
+      return el && el.textContent !== '' && !el.querySelector('.skeleton');
+    }, { timeout: 10000 });
+
+    // Click the docker stat card
+    await page.click('#stat-docker-card');
+
+    // Wait for Docker tab to be shown
+    await page.waitForTimeout(500);
+    await expect(page.locator('#tab-docker')).toHaveClass(/show active/);
+  });
+
+  test('npm stat shows health count with all healthy', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('stat-npm');
+      return el && el.textContent !== '' && !el.querySelector('.skeleton');
+    }, { timeout: 10000 });
+    await expect(page.locator('#stat-npm')).toContainText('2/2');
+    // Health dot should be green (class "healthy")
+    await expect(page.locator('#health-npm')).toHaveClass(/healthy/);
+  });
+
+  test('kuma monitors stat shows count', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('stat-monitors');
+      return el && el.textContent !== '' && !el.querySelector('.skeleton');
+    }, { timeout: 10000 });
+    await expect(page.locator('#stat-monitors')).toHaveText('12');
+  });
+});
+
 test.describe('Dashboard — initial state', () => {
   test('page title is correct', async ({ page }) => {
     await page.goto('/');

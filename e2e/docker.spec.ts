@@ -84,6 +84,73 @@ test.describe('Kuma tab — monitors table', () => {
     await expect(page.locator('#kuma-tbody tr').first()).toContainText('Web App Monitor');
     await expect(page.locator('#kuma-tbody tr').nth(1)).toContainText('API Health');
   });
+
+  test('clicking monitor row opens detail stats panel', async ({ page }) => {
+    // Mock the stats endpoint
+    await page.route('**/api/monitors/*/stats', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, status: 1, uptime_24h: 99.9, uptime_7d: 99.5, uptime_1y: 99.0, avg_ping: 45.2, last_msg: 'OK', cert_info: '' }) });
+    });
+
+    await page.click('#tab-btn-kuma');
+    await page.waitForFunction(() => {
+      const tbody = document.getElementById('kuma-tbody');
+      return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelector('td[data-label]');
+    }, { timeout: 10000 });
+
+    // Click the first monitor row
+    await page.click('#kuma-tbody tr:first-child');
+
+    // Detail panel should appear
+    await expect(page.locator('#monitor-detail-panel')).not.toHaveClass(/d-none/);
+    await expect(page.locator('#monitor-detail-title')).toContainText('Monitor #1');
+    // Stats should load
+    await expect(page.locator('#monitor-detail-body')).toContainText('99.9');
+  });
+
+  test('kuma tab shows error state when API fails', async ({ page }) => {
+    await page.route('**/api/monitors', async (route) => {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Internal server error' }) });
+    });
+
+    await page.click('#tab-btn-kuma');
+    await page.waitForTimeout(1000);
+
+    // Should show an error message
+    const tbody = page.locator('#kuma-tbody');
+    await expect(tbody).toContainText('error');
+  });
+
+  test('npm tab shows error state when API fails', async ({ page }) => {
+    await page.route('**/api/proxies', async (route) => {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Upstream error' }) });
+    });
+
+    await page.click('#tab-btn-npm');
+    await page.waitForTimeout(1000);
+
+    const tbody = page.locator('#npm-tbody');
+    await expect(tbody).toContainText('error');
+  });
+
+  test('monitor detail panel close button hides it', async ({ page }) => {
+    await page.route('**/api/monitors/*/stats', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, status: 1, uptime_24h: 99.9, uptime_7d: 99.5, uptime_1y: 99.0, avg_ping: 45.2, last_msg: 'OK', cert_info: '' }) });
+    });
+
+    await page.click('#tab-btn-kuma');
+    await page.waitForFunction(() => {
+      const tbody = document.getElementById('kuma-tbody');
+      return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelector('td[data-label]');
+    }, { timeout: 10000 });
+
+    // Open panel
+    await page.click('#kuma-tbody tr:first-child');
+    await expect(page.locator('#monitor-detail-panel')).not.toHaveClass(/d-none/);
+
+    // Click close
+    await page.click('#monitor-detail-close');
+    await expect(page.locator('#monitor-detail-panel')).toHaveClass(/d-none/);
+  });
 });
 
 test.describe('NPM tab — proxies table', () => {
