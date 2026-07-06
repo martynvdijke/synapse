@@ -1,3 +1,10 @@
+## [1.9.6](https://github.com/martynvdijke/synapse/compare/v1.9.5...v1.9.6) (2026-07-06)
+
+
+### Bug Fixes
+
+* rewrite NPM and Kuma auth to match upstream APIs ([ce07f59](https://github.com/martynvdijke/synapse/commit/ce07f5984764165ac917c89955e469c58943738c))
+
 ## [1.9.5](https://github.com/martynvdijke/synapse/compare/v1.9.4...v1.9.5) (2026-07-06)
 
 ## [1.9.4](https://github.com/martynvdijke/synapse/compare/v1.9.3...v1.9.4) (2026-07-02)
