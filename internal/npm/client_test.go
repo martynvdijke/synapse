@@ -7,19 +7,55 @@ import (
 	"testing"
 )
 
-func TestGetProxyHosts_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/nginx/proxy-hosts" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+// mockNPMJWT creates a test server that handles both POST /api/tokens (JWT login)
+// and GET /api/nginx/proxy-hosts (proxy list). The proxyHosts handler is
+// provided by the caller for each test's specific data.
+func mockNPMJWT(t *testing.T, proxyHosts http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("expected POST /api/tokens, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != "admin" || pass != "secret" {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("failed to decode token request body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if body["identity"] != "admin" || body["secret"] != "secret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid credentials"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":   "jwt-test-token",
+			"expires": "2030-01-01T00:00:00Z",
+		})
+	})
+	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET /api/nginx/proxy-hosts, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer jwt-test-token" {
+			t.Errorf("expected Authorization: Bearer jwt-test-token, got %q", r.Header.Get("Authorization"))
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		proxyHosts(w, r)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
 
+func TestGetProxyHosts_Success(t *testing.T) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		resp := []ProxyHost{
 			{
 				ID:          1,
@@ -44,10 +80,9 @@ func TestGetProxyHosts_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+	})
 
-	entries, err := GetProxyHosts(server.URL, "admin", "secret")
+	entries, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +114,7 @@ func TestGetProxyHosts_Success(t *testing.T) {
 }
 
 func TestGetProxyHosts_NoContainerSkips(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		resp := []ProxyHost{
 			{
 				ID:          1,
@@ -104,10 +139,9 @@ func TestGetProxyHosts_NoContainerSkips(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+	})
 
-	entries, err := GetProxyHosts(server.URL, "admin", "secret")
+	entries, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +154,7 @@ func TestGetProxyHosts_NoContainerSkips(t *testing.T) {
 }
 
 func TestGetProxyHosts_NoDomainsSkips(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		resp := []ProxyHost{
 			{
 				ID:          1,
@@ -135,10 +169,9 @@ func TestGetProxyHosts_NoDomainsSkips(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+	})
 
-	entries, err := GetProxyHosts(server.URL, "admin", "secret")
+	entries, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,6 +182,7 @@ func TestGetProxyHosts_NoDomainsSkips(t *testing.T) {
 
 func TestGetProxyHosts_Unauthorized(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Always return 401 — for both /api/tokens and any other path
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
@@ -160,25 +194,23 @@ func TestGetProxyHosts_Unauthorized(t *testing.T) {
 }
 
 func TestGetProxyHosts_ServerError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
+	})
 
-	_, err := GetProxyHosts(server.URL, "admin", "secret")
+	_, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err == nil {
 		t.Fatal("expected error for server error")
 	}
 }
 
 func TestGetProxyHosts_EmptyResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))
-	}))
-	defer server.Close()
+	})
 
-	entries, err := GetProxyHosts(server.URL, "admin", "secret")
+	entries, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,13 +220,12 @@ func TestGetProxyHosts_EmptyResponse(t *testing.T) {
 }
 
 func TestGetProxyHosts_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("not json"))
-	}))
-	defer server.Close()
+	})
 
-	_, err := GetProxyHosts(server.URL, "admin", "secret")
+	_, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}

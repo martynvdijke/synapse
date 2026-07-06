@@ -420,9 +420,9 @@ func GetDockerServicesWithStatus(composePath string, clients []kuma.InstanceClie
 
 	// Merge monitors from all Kuma instances. A service is "InKuma" if it
 	// exists in ANY instance.
-	kumaMap := make(map[string]kuma.Monitor)
+	kumaMap := make(map[string]kuma.KumaMonitor)
 	for _, ic := range clients {
-		monitors, err := ic.Client.GetMonitors()
+		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping",
 				slog.Int("instance_id", ic.InstanceID),
@@ -553,9 +553,9 @@ func GetNPMProxiesWithStatus(npmClients []npm.InstanceClient, clients []kuma.Ins
 	}
 
 	// Merge monitors from all Kuma instances.
-	kumaMap := make(map[string]kuma.Monitor)
+	kumaMap := make(map[string]kuma.KumaMonitor)
 	for _, ic := range clients {
-		monitors, err := ic.Client.GetMonitors()
+		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping",
 				slog.Int("instance_id", ic.InstanceID),
@@ -655,25 +655,7 @@ func RunDockerSync(composePath string, clients []kuma.InstanceClient, database *
 	for i, ic := range clients {
 		states[i] = clientState{ic: ic, existing: make(map[string]bool)}
 
-		hosts, err := ic.Client.GetDockerHosts()
-		if err != nil {
-			logging.LogWarn("sync", "Failed to fetch Docker hosts from Kuma instance, skipping instance",
-				slog.Int("instance_id", ic.InstanceID),
-				slog.String("error", err.Error()),
-			)
-			states[i].skip = true
-			continue
-		}
-		if len(hosts) == 0 {
-			logging.LogWarn("sync", "No Docker hosts found in Kuma instance, skipping instance",
-				slog.Int("instance_id", ic.InstanceID),
-			)
-			states[i].skip = true
-			continue
-		}
-		states[i].dockerHostID = hosts[0].ID
-
-		existingMonitors, err := ic.Client.GetMonitors()
+		existingMonitors, err := ic.Client.QueryMonitorsViaSocketIO()
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping instance",
 				slog.Int("instance_id", ic.InstanceID),
@@ -727,13 +709,13 @@ func RunDockerSync(composePath string, clients []kuma.InstanceClient, database *
 			var kumaID int
 			var err error
 			if url != "" {
-				kumaID, err = st.ic.Client.AddMonitor("http", displayName, url, "", st.dockerHostID)
+				kumaID, err = st.ic.Client.AddMonitorViaSocketIO("http", displayName, url, "", st.dockerHostID)
 			} else {
 				containerID := svc.ContainerName
 				if containerID == "" {
 					containerID = name
 				}
-				kumaID, err = st.ic.Client.AddMonitor("docker", displayName, "", containerID, st.dockerHostID)
+				kumaID, err = st.ic.Client.AddMonitorViaSocketIO("docker", displayName, "", containerID, st.dockerHostID)
 			}
 
 			if err != nil {
@@ -889,7 +871,7 @@ func RunNPMSync(npmClients []npm.InstanceClient, clients []kuma.InstanceClient, 
 	states := make([]clientState, len(clients))
 	for i, ic := range clients {
 		states[i] = clientState{ic: ic, existing: make(map[string]bool)}
-		existingMonitors, err := ic.Client.GetMonitors()
+		existingMonitors, err := ic.Client.QueryMonitorsViaSocketIO()
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping instance",
 				slog.Int("instance_id", ic.InstanceID),
@@ -931,7 +913,7 @@ func RunNPMSync(npmClients []npm.InstanceClient, clients []kuma.InstanceClient, 
 				Status: "adding", Message: fmt.Sprintf("Adding %s to instance %d...", cname, st.ic.InstanceID),
 				Added: added, Skipped: skipped, Failed: failed})
 
-			kumaID, err := st.ic.Client.AddMonitor("http", cname, fmt.Sprintf("http://%s", cname), "", 0)
+			kumaID, err := st.ic.Client.AddMonitorViaSocketIO("http", cname, fmt.Sprintf("http://%s", cname), "", 0)
 
 			if err != nil {
 				failed++

@@ -20,11 +20,23 @@ func setupTestDB(t *testing.T) *db.DB {
 	return d
 }
 
-// mockNPMServer returns an httptest server that handles GET /api/nginx/proxy-hosts.
+// mockNPMServer returns an httptest server that handles POST /api/tokens (JWT login)
+// and GET /api/nginx/proxy-hosts (proxy list).
 func mockNPMServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":   "jwt-test-token",
+			"expires": "2030-01-01T00:00:00Z",
+		})
+	})
 	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer jwt-test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]ProxyHost{
 			{
@@ -138,4 +150,80 @@ func TestRegistryInvalidateNoop(t *testing.T) {
 	r.Invalidate(1)
 	r.Invalidate(0)
 	r.Invalidate(-1)
+}
+
+func TestRegistryAllSkipsFailedLogin(t *testing.T) {
+	d := setupTestDB(t)
+	// Server that returns 401 on /api/tokens
+	srvBad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srvBad.Close)
+
+	srvGood := mockNPMServer(t)
+
+	if _, err := d.CreateNPMInstance(&db.NPMInstance{Name: "bad", URL: srvBad.URL, Username: "u", Password: "p", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateNPMInstance(&db.NPMInstance{Name: "good", URL: srvGood.URL, Username: "u", Password: "p", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewRegistry(d)
+	clients, err := r.All()
+	if err != nil {
+		t.Fatalf("All should not hard-fail on one bad instance: %v", err)
+	}
+	if len(clients) != 1 {
+		t.Fatalf("expected 1 client (good only), got %d", len(clients))
+	}
+}
+
+func TestRegistryTokenCaching(t *testing.T) {
+	d := setupTestDB(t)
+
+	var tokenCalls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		tokenCalls++
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":   "jwt-test-token",
+			"expires": "2030-01-01T00:00:00Z",
+		})
+	})
+	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer jwt-test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if _, err := d.CreateNPMInstance(&db.NPMInstance{Name: "a", URL: srv.URL, Username: "u", Password: "p", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewRegistry(d)
+
+	// First call logs in
+	clients, _ := r.All()
+	if len(clients) != 1 {
+		t.Fatalf("expected 1 client, got %d", len(clients))
+	}
+	if tokenCalls != 1 {
+		t.Errorf("expected 1 token call, got %d", tokenCalls)
+	}
+
+	// Second call reuses cached token
+	clients, _ = r.All()
+	if len(clients) != 1 {
+		t.Fatalf("expected 1 client, got %d", len(clients))
+	}
+	if tokenCalls != 1 {
+		t.Errorf("expected cached (still 1 token call), got %d", tokenCalls)
+	}
 }

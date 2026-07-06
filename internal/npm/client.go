@@ -1,8 +1,10 @@
 package npm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,12 +42,16 @@ type ProxyEntry struct {
 	SourceInstanceID int `json:"source_instance_id,omitempty"`
 }
 
+var ErrNPM2FARequired = errors.New("NPM account has 2FA enabled. Create a dedicated API account without 2FA for Synapse")
+
 type Client struct {
-	url      string
-	user     string
-	pass     string
-	client   *http.Client
-	tracer   trace.Tracer
+	url         string
+	user        string
+	pass        string
+	token       string
+	tokenExpiry time.Time
+	client      *http.Client
+	tracer      trace.Tracer
 }
 
 func NewClient(url, user, pass string) *Client {
@@ -57,6 +63,96 @@ func NewClient(url, user, pass string) *Client {
 		},
 		tracer: otel.Tracer("npm"),
 	}
+}
+
+func (c *Client) Login() error {
+	start := time.Now()
+	logging.LogDebug("npm", "Logging into NPM via /api/tokens",
+		slog.String("npm_url", c.url),
+	)
+
+	body, _ := json.Marshal(map[string]string{
+		"identity": c.user,
+		"secret":   c.pass,
+	})
+
+	req, err := http.NewRequest("POST", c.url+"/api/tokens", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		errKind := logging.ErrorKindNetwork
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "timeout") {
+			errKind = logging.ErrorKindNetwork
+		}
+		logging.LogError("npm", "NPM login failed",
+			slog.String("error", err.Error()),
+			slog.String("error_kind", string(errKind)),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("invalid NPM credentials")
+	}
+	if resp.StatusCode != http.StatusOK {
+		bodySnippet := ""
+		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
+			bodySnippet = strings.TrimSpace(string(bodyBytes))
+		}
+		err := fmt.Errorf("login failed: status %d", resp.StatusCode)
+		logging.LogError("npm", "NPM login returned non-OK status",
+			slog.Int("status", resp.StatusCode),
+			slog.String("response_body_snippet", bodySnippet),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return err
+	}
+
+	var result struct {
+		Token        string `json:"token"`
+		Expires      string `json:"expires"`
+		Requires2FA  bool   `json:"requires_2fa"`
+		ChallengeTok string `json:"challenge_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		logging.LogError("npm", "NPM login response parse failed",
+			slog.String("error", err.Error()),
+			slog.String("error_kind", string(logging.ErrorKindParse)),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return err
+	}
+
+	if result.Requires2FA {
+		return ErrNPM2FARequired
+	}
+
+	c.token = result.Token
+	// Default 1 day expiry; parse if server provides RFC3339
+	c.tokenExpiry = time.Now().Add(24 * time.Hour)
+	if result.Expires != "" {
+		if t, err := time.Parse(time.RFC3339, result.Expires); err == nil {
+			c.tokenExpiry = t
+		}
+	}
+
+	logging.LogInfo("npm", "NPM login successful",
+		slog.Duration("duration", time.Since(start)),
+	)
+	return nil
+}
+
+func (c *Client) ensureLoggedIn() error {
+	if c.token != "" && time.Now().Before(c.tokenExpiry) {
+		return nil
+	}
+	return c.Login()
 }
 
 func (c *Client) GetProxyHosts() ([]ProxyEntry, error) {
@@ -79,7 +175,14 @@ func (c *Client) GetProxyHosts() ([]ProxyEntry, error) {
 		)
 		return nil, err
 	}
-	req.SetBasicAuth(c.user, c.pass)
+	if err := c.ensureLoggedIn(); err != nil {
+		logging.LogError("npm", "Failed to authenticate to NPM",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -156,5 +259,9 @@ var npmTracer = otel.Tracer("npm")
 
 // GetProxyHosts is the legacy free function wrapper for backward compat.
 func GetProxyHosts(npmHost, npmUser, npmPass string) ([]ProxyEntry, error) {
-	return NewClient(npmHost, npmUser, npmPass).GetProxyHosts()
+	c := NewClient(npmHost, npmUser, npmPass)
+	if err := c.Login(); err != nil {
+		return nil, err
+	}
+	return c.GetProxyHosts()
 }

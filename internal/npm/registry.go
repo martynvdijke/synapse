@@ -2,9 +2,12 @@ package npm
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 
 	"synapse/internal/db"
+	"synapse/internal/logging"
 )
 
 // InstanceClient pairs a NPM instance ID with its Client.
@@ -13,18 +16,23 @@ type InstanceClient struct {
 	Client     *Client
 }
 
-// Registry provides access to NPM instances. Simpler than kuma.Registry
-// because NPM uses basic auth per request — no login caching needed.
+// Registry provides access to NPM instances with JWT token caching.
 type Registry struct {
-	mu sync.Mutex
-	db *db.DB
+	mu      sync.Mutex
+	db      *db.DB
+	clients map[int64]*Client
 }
 
 func NewRegistry(database *db.DB) *Registry {
-	return &Registry{db: database}
+	return &Registry{
+		db:      database,
+		clients: make(map[int64]*Client),
+	}
 }
 
 // All returns an InstanceClient for each enabled NPM instance.
+// Clients are cached with their JWT tokens; instances that fail to
+// authenticate are skipped with a logged warning.
 func (r *Registry) All() ([]InstanceClient, error) {
 	instances, err := r.db.GetEnabledNPMInstances()
 	if err != nil {
@@ -32,7 +40,14 @@ func (r *Registry) All() ([]InstanceClient, error) {
 	}
 	result := make([]InstanceClient, 0, len(instances))
 	for _, inst := range instances {
-		c := NewClient(inst.URL, inst.Username, inst.Password)
+		c, err := r.getOrCreate(int(inst.ID), inst.URL, inst.Username, inst.Password)
+		if err != nil {
+			logging.LogWarn("npm", "Failed to connect to NPM instance, skipping",
+				slog.String("instance", inst.Name),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
 		result = append(result, InstanceClient{InstanceID: int(inst.ID), Client: c})
 	}
 	return result, nil
@@ -44,8 +59,35 @@ func (r *Registry) Get(id int) (*Client, error) {
 	if inst == nil || err != nil {
 		return nil, fmt.Errorf("npm instance %d not found", id)
 	}
-	return NewClient(inst.URL, inst.Username, inst.Password), nil
+	return r.getOrCreate(int(inst.ID), inst.URL, inst.Username, inst.Password)
 }
 
-// Invalidate is a no-op — NPM clients are stateless.
-func (r *Registry) Invalidate(id int) {}
+// Invalidate drops the cached client for an instance, forcing re-login
+// on the next access. Call after credential changes.
+func (r *Registry) Invalidate(id int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.clients, int64(id))
+}
+
+// getOrCreate returns a cached client if its token is still valid, or
+// creates and logs in a new one.
+func (r *Registry) getOrCreate(id int, url, user, pass string) (*Client, error) {
+	r.mu.Lock()
+	cached, exists := r.clients[int64(id)]
+	r.mu.Unlock()
+
+	if exists && cached.token != "" && time.Now().Before(cached.tokenExpiry) {
+		return cached, nil
+	}
+
+	c := NewClient(url, user, pass)
+	if err := c.Login(); err != nil {
+		return nil, err
+	}
+
+	r.mu.Lock()
+	r.clients[int64(id)] = c
+	r.mu.Unlock()
+	return c, nil
+}

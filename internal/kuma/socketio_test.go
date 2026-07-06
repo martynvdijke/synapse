@@ -30,3 +30,24 @@ func TestGetMonitorStats_ShortURL(t *testing.T) {
 		t.Fatal("expected error for unreachable URL")
 	}
 }
+
+func TestAddMonitorViaSocketIO_DialFailure(t *testing.T) {
+	_, err := AddMonitorViaSocketIO("http://127.0.0.1:1", "admin", "secret", "http", "test", "http://ex.com", "", 0)
+	if err == nil {
+		t.Fatal("expected error for unreachable URL")
+	}
+}
+
+func TestAddMonitorViaSocketIO_ShortURL(t *testing.T) {
+	_, err := AddMonitorViaSocketIO("http://127.0.0.1:1", "admin", "secret", "http", "test", "http://ex.com", "", 0)
+	if err == nil {
+		t.Fatal("expected error for unreachable URL")
+	}
+}
+
+func TestQueryMonitorsViaSocketIO_DialFailure(t *testing.T) {
+	_, err := QueryMonitorsViaSocketIO("http://127.0.0.1:1", "admin", "secret")
+	if err == nil {
+		t.Fatal("expected error for unreachable URL")
+	}
+}

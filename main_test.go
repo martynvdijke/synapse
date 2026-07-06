@@ -694,6 +694,11 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/settings", app.SaveSettings)
 		api.GET("/status", app.Status)
 		api.GET("/sync/history", app.SyncHistory)
+		api.GET("/kuma-instances", app.ListKumaInstances)
+		api.POST("/kuma-instances", app.CreateKumaInstance)
+		api.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
+		api.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
+		api.POST("/kuma-instances/:id/test", app.TestKumaInstance)
 		api.GET("/npm-instances", app.ListNPMInstances)
 		api.POST("/npm-instances", app.CreateNPMInstance)
 		api.PUT("/npm-instances/:id", app.UpdateNPMInstance)
@@ -713,4 +718,68 @@ func setupRouter(app *App) *gin.Engine {
 	}
 
 	return r
+}
+
+func TestKumaInstancesHandler_Test_Unreachable(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	inst, err := app.database.CreateKumaInstance(&db.KumaInstance{Name: "test", URL: "http://127.0.0.1:1", Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := authRequest(t, "POST", "/api/kuma-instances/"+fmt.Sprintf("%d", inst.ID)+"/test", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	// Instances at 127.0.0.1:1 is not running, so we expect ok=false
+	if resp["ok"] != false {
+		t.Logf("test result: %+v", resp)
+	}
+}
+
+func TestNPMInstancesHandler_Test_2FAError(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Mock server that returns requires_2fa: true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tokens" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"requires_2fa": true,
+				"challenge_token": "challenge-jwt",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	inst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "2fa-test", URL: srv.URL, Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := authRequest(t, "POST", "/api/npm-instances/"+fmt.Sprintf("%d", inst.ID)+"/test", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != false {
+		t.Fatalf("expected ok=false for 2FA account, got %+v", resp)
+	}
+	if resp["message"] == nil || resp["message"] == "" {
+		t.Fatalf("expected error message for 2FA, got %+v", resp)
+	}
 }

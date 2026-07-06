@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -1085,41 +1086,27 @@ func setupTestDB(t *testing.T) *db.DB {
 	return d
 }
 
-// mockKumaClient starts an httptest server emulating a Kuma instance and
-// returns an InstanceClient with a logged-in client. addCalls counts
-// AddMonitor (POST /api/monitors) calls. existingMonitors is the list
-// returned by GET /api/monitors (so callers can simulate pre-existing
-// monitors). The server always reports one docker host.
-func mockKumaClient(t *testing.T, instanceID int, addCalls *int32, existingMonitors []kuma.Monitor) kuma.InstanceClient {
+// mockKumaClient sets up per-client hooks for Kuma Socket.IO methods
+// to return canned data instead of connecting to a real Kuma instance.
+// addCalls counts AddMonitorViaSocketIO invocations. existingMonitors is
+// the list returned by QueryMonitorsViaSocketIO (simulating pre-existing
+// monitors). Each client gets its own hooks so multiple clients can have
+// independent behavior in the same test.
+func mockKumaClient(t *testing.T, instanceID int, addCalls *int32, existingMonitors []kuma.KumaMonitor) kuma.InstanceClient {
 	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(kuma.LoginResult{Token: "tok"})
+
+	c := kuma.NewClient("http://kuma-mock.invalid")
+	c.SetTestHooks(&kuma.ClientTestHooks{
+		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
+			return existingMonitors, nil
+		},
+		AddMonitor: func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
+			if addCalls != nil {
+				atomic.AddInt32(addCalls, 1)
+			}
+			return 1, nil
+		},
 	})
-	mux.HandleFunc("/api/monitors", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string][]kuma.Monitor{"monitors": existingMonitors})
-			return
-		}
-		// POST — AddMonitor
-		if addCalls != nil {
-			atomic.AddInt32(addCalls, 1)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(kuma.Monitor{ID: 1, Name: "added", Type: "http"})
-	})
-	mux.HandleFunc("/api/docker-hosts", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]kuma.DockerHost{{ID: 1, Name: "host1"}})
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	c := kuma.NewClient(srv.URL)
-	if err := c.Login("user", "pass"); err != nil {
-		t.Fatalf("login: %v", err)
-	}
 	return kuma.InstanceClient{InstanceID: instanceID, Client: c}
 }
 
@@ -1186,7 +1173,7 @@ func TestRunDockerSyncSkipsExisting(t *testing.T) {
 
 	// Pre-populate the mock with an existing monitor named "nginx-web"
 	// (the displayName of the "web" service in testdata/docker-compose.yml).
-	existing := []kuma.Monitor{{ID: 100, Name: "nginx-web", Type: "http"}}
+	existing := []kuma.KumaMonitor{{ID: 100, Name: "nginx-web", Type: "http"}}
 	var addCalls int32
 	c := mockKumaClient(t, 1, &addCalls, existing)
 
@@ -1206,7 +1193,7 @@ func TestRunDockerSyncSkipsExisting(t *testing.T) {
 
 func TestGetDockerServicesWithStatusMultiInstance(t *testing.T) {
 	// Client 1 has "nginx-web" in Kuma; client 2 has nothing.
-	c1 := mockKumaClient(t, 1, nil, []kuma.Monitor{{ID: 100, Name: "nginx-web", Type: "http"}})
+	c1 := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 100, Name: "nginx-web", Type: "http"}})
 	c2 := mockKumaClient(t, 2, nil, nil)
 
 	services, err := GetDockerServicesWithStatus("../../testdata/docker-compose.yml", []kuma.InstanceClient{c1, c2})
@@ -1252,11 +1239,18 @@ func TestGetDockerServicesWithStatusEmptyClients(t *testing.T) {
 
 // --- NPM sync tests ---
 
-// mockNpmClient starts an httptest server returning NPM proxy hosts and
-// returns an npm.InstanceClient backed by it.
+// mockNpmClient starts an httptest server with JWT auth and NPM proxy host
+// endpoints, and returns an npm.InstanceClient backed by it.
 func mockNpmClient(t *testing.T, instanceID int, entries []npm.ProxyEntry) npm.InstanceClient {
 	t.Helper()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":   "test-jwt-token",
+			"expires": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		})
+	})
 	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
 		// Convert ProxyEntry to ProxyHost response format for realistic mock
 		hosts := make([]npm.ProxyHost, len(entries))
@@ -1346,7 +1340,7 @@ func TestGetNPMProxiesWithStatus(t *testing.T) {
 	})
 
 	// One Kuma client with "api.example.com" monitor.
-	kumaClient := mockKumaClient(t, 1, nil, []kuma.Monitor{{ID: 42, Name: "api.example.com", Type: "http"}})
+	kumaClient := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 42, Name: "api.example.com", Type: "http"}})
 
 	proxies, err := GetNPMProxiesWithStatus([]npm.InstanceClient{c1, c2}, []kuma.InstanceClient{kumaClient})
 	if err != nil {
@@ -1429,7 +1423,7 @@ func TestRunNPMSyncSkipsExisting(t *testing.T) {
 
 	var kumaAddCalls int32
 	// Kuma already has a monitor for "existing.example.com"
-	kumaClient := mockKumaClient(t, 1, &kumaAddCalls, []kuma.Monitor{{ID: 100, Name: "existing.example.com", Type: "http"}})
+	kumaClient := mockKumaClient(t, 1, &kumaAddCalls, []kuma.KumaMonitor{{ID: 100, Name: "existing.example.com", Type: "http"}})
 
 	run := RunNPMSync([]npm.InstanceClient{npmClient}, []kuma.InstanceClient{kumaClient}, d, func(p Progress) {})
 

@@ -682,8 +682,8 @@ func (app *App) TestKumaInstance(c *gin.Context) {
 		slog.String("instance", inst.Name),
 		slog.String("kuma_url", inst.URL),
 	)
-	client := kuma.NewClient(inst.URL)
-	if err := client.Login(inst.Username, inst.Password); err != nil {
+	monitors, err := kuma.QueryMonitorsViaSocketIO(inst.URL, inst.Username, inst.Password)
+	if err != nil {
 		logging.LogError("app", "Kuma instance connection test failed",
 			slog.String("instance", inst.Name),
 			slog.String("kuma_url", inst.URL),
@@ -693,21 +693,13 @@ func (app *App) TestKumaInstance(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
 		return
 	}
-	if _, err := client.GetMonitors(); err != nil {
-		logging.LogError("app", "Kuma instance connection test failed on GetMonitors",
-			slog.String("instance", inst.Name),
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
-		return
-	}
 	logging.LogInfo("app", "Kuma instance connection test successful",
 		slog.String("instance", inst.Name),
 		slog.String("kuma_url", inst.URL),
+		slog.Int("monitor_count", len(monitors)),
 		slog.Duration("duration", time.Since(start)),
 	)
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Uptime Kuma connection successful"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": fmt.Sprintf("Connected, %d monitors found", len(monitors))})
 }
 
 // --- NPM instance handlers ---

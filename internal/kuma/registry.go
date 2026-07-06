@@ -1,9 +1,11 @@
 package kuma
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"synapse/internal/db"
 	"synapse/internal/logging"
@@ -22,13 +24,12 @@ type cachedClient struct {
 	client *Client
 	user   string
 	pass   string
-	ready  bool // logged in successfully at least once
+	ready  bool // Socket.IO login verified at least once
 }
 
 // Registry manages connected Kuma clients for all configured instances.
 // Clients are constructed lazily on first use and cached for the process
-// lifetime. On authentication failure (e.g. token expiry) the client is
-// re-logged-in transparently.
+// lifetime. Socket.IO login is verified on first access.
 type Registry struct {
 	mu      sync.Mutex
 	db      *db.DB
@@ -44,9 +45,9 @@ func NewRegistry(database *db.DB) *Registry {
 	}
 }
 
-// All returns connected clients for every enabled instance, logging in as
-// needed. Instances that fail to connect are skipped (with a logged
-// warning) so one unreachable instance does not block a sync.
+// All returns connected clients for every enabled instance, verifying
+// Socket.IO login as needed. Instances that fail to connect are skipped
+// (with a logged warning) so one unreachable instance does not block a sync.
 func (r *Registry) All() ([]InstanceClient, error) {
 	instances, err := r.db.GetEnabledKumaInstances()
 	if err != nil {
@@ -81,16 +82,15 @@ func (r *Registry) Get(id int) (*Client, error) {
 
 // Invalidate drops the cached client for an instance. Call after settings
 // changes (url/user/pass) or a persistent connection failure so the next
-// use re-creates and re-logs-in.
+// use re-creates and re-verifies.
 func (r *Registry) Invalidate(id int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.clients, id)
 }
 
-// getOrLogin returns a cached, logged-in client for the instance, creating
-// and logging in on first use. On a 401 from a previously-ready client it
-// re-logs-in once.
+// getOrLogin returns a cached, verified client for the instance, creating
+// and verifying Socket.IO login on first use.
 func (r *Registry) getOrLogin(id int, user, pass, url string) (*Client, error) {
 	r.mu.Lock()
 	cc, exists := r.clients[id]
@@ -101,12 +101,81 @@ func (r *Registry) getOrLogin(id int, user, pass, url string) (*Client, error) {
 	}
 
 	c := NewClient(url)
-	if err := c.Login(user, pass); err != nil {
-		return nil, fmt.Errorf("login to kuma instance %d: %w", id, err)
+	c.username = user
+	c.password = pass
+
+	if err := verifySocketIOLoginFn(url, user, pass); err != nil {
+		return nil, fmt.Errorf("socket.io login to kuma instance %d: %w", id, err)
 	}
 
 	r.mu.Lock()
 	r.clients[id] = &cachedClient{client: c, user: user, pass: pass, ready: true}
 	r.mu.Unlock()
 	return c, nil
+}
+
+// verifySocketIOLoginFn is overridden in tests to avoid needing a live Socket.IO server.
+var verifySocketIOLoginFn = verifySocketIOLogin
+
+// SetVerifySocketIOLoginTestHook overrides verifySocketIOLoginFn for testing.
+// Returns a restore function. Use with defer or t.Cleanup.
+func SetVerifySocketIOLoginTestHook(fn func(url, user, pass string) error) func() {
+	orig := verifySocketIOLoginFn
+	verifySocketIOLoginFn = fn
+	return func() { verifySocketIOLoginFn = orig }
+}
+
+// verifySocketIOLogin performs a lightweight Socket.IO login check against a
+// Kuma instance. It connects, waits for loginRequired, emits login
+// credentials, verifies the success response, and disconnects.
+func verifySocketIOLogin(kumaURL, user, pass string) error {
+	var (
+		loginErr  = make(chan error, 1)
+		loginSent bool
+	)
+
+	events := make(chan rawEvent, 256)
+	cli, err := dialSIO(kumaURL)
+	if err != nil {
+		return fmt.Errorf("socket.io dial: %w", err)
+	}
+	defer cli.close()
+
+	cli.onEvent = func(ev rawEvent) {
+		events <- ev
+	}
+
+	loginTimer := time.After(10 * time.Second)
+
+	for {
+		select {
+		case ev := <-events:
+			if ev.Name == "loginRequired" && !loginSent {
+				loginSent = true
+				ackCh := cli.emitWithAck("login", map[string]string{
+					"username": user,
+					"password": pass,
+				})
+				go func() {
+					select {
+					case resp := <-ackCh:
+						if len(resp) > 0 {
+							var r struct{ Ok bool `json:"ok"` }
+							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
+								loginErr <- nil
+								return
+							}
+						}
+						loginErr <- fmt.Errorf("login rejected")
+					case <-time.After(10 * time.Second):
+						loginErr <- fmt.Errorf("login timeout")
+					}
+				}()
+			}
+		case err := <-loginErr:
+			return err
+		case <-loginTimer:
+			return fmt.Errorf("login timeout")
+		}
+	}
 }

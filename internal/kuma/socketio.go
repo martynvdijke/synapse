@@ -775,3 +775,134 @@ collectLoop:
 		CertInfo:  certInfo,
 	}, nil
 }
+
+// AddMonitorViaSocketIO creates a monitor in Kuma via the Socket.IO "add" event.
+// It opens a fresh WebSocket connection, logs in, emits the add event with the
+// given monitor configuration, awaits the callback, and disconnects.
+func AddMonitorViaSocketIO(kumaURL, username, password string, monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
+	logging.LogInfo("kuma", "Adding monitor via Socket.IO",
+		slog.String("kuma_url", kumaURL),
+		slog.String("name", name),
+		slog.String("type", monitorType),
+	)
+
+	type addResponse struct {
+		Ok  bool   `json:"ok"`
+		Msg string `json:"msg"`
+	}
+	var (
+		loginErr  = make(chan error, 1)
+		loginSent bool
+	)
+
+	events := make(chan rawEvent, 256)
+	cli, err := dialSIO(kumaURL)
+	if err != nil {
+		return 0, fmt.Errorf("socket.io dial: %w", err)
+	}
+	defer cli.close()
+
+	cli.onEvent = func(ev rawEvent) {
+		events <- ev
+	}
+
+	loginTimer := time.After(10 * time.Second)
+
+	// Phase 1: wait for loginRequired and respond
+	handleEvent := func(ev rawEvent) {
+		switch ev.Name {
+		case "loginRequired":
+			if !loginSent {
+				loginSent = true
+				ackCh := cli.emitWithAck("login", map[string]string{
+					"username": username,
+					"password": password,
+				})
+				go func() {
+					select {
+					case resp := <-ackCh:
+						if len(resp) > 0 {
+							var r struct{ Ok bool `json:"ok"` }
+							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
+								loginErr <- nil
+								return
+							}
+						}
+						loginErr <- fmt.Errorf("login rejected")
+					case <-time.After(10 * time.Second):
+						loginErr <- fmt.Errorf("login timeout")
+					}
+				}()
+			}
+		}
+	}
+
+	logging.LogDebug("kuma", "Socket.IO waiting for loginRequired event")
+loop:
+	for {
+		select {
+		case ev := <-events:
+			handleEvent(ev)
+		case err := <-loginErr:
+			if err != nil {
+				logging.LogError("kuma", "Socket.IO login failed",
+					slog.String("error", err.Error()),
+				)
+				return 0, fmt.Errorf("login: %w", err)
+			}
+			logging.LogInfo("kuma", "Socket.IO login successful")
+			break loop
+		case <-loginTimer:
+			return 0, fmt.Errorf("login timeout")
+		}
+	}
+
+	// Phase 2: emit "add" event and wait for ack
+	payload := map[string]any{
+		"name":          name,
+		"type":          monitorType,
+		"interval":      60,
+		"retryInterval": 60,
+		"maxretries":    3,
+		"conditions":    []any{},
+	}
+	switch monitorType {
+	case "http":
+		payload["url"] = url
+		payload["method"] = "GET"
+		payload["accepted_statuscodes"] = []int{200, 201, 204, 301, 302}
+	case "docker":
+		payload["docker_container"] = dockerContainer
+		payload["docker_host"] = dockerHostID
+	}
+
+	ackCh := cli.emitWithAck("add", payload)
+	select {
+	case resp := <-ackCh:
+		if len(resp) > 0 {
+			var r addResponse
+			if json.Unmarshal(resp[0], &r) == nil {
+				if r.Ok {
+					// Parse monitor ID from msg
+					var monitorID int
+					if _, err := fmt.Sscanf(r.Msg, "%d", &monitorID); err == nil {
+						logging.LogInfo("kuma", "Monitor added via Socket.IO",
+							slog.String("name", name),
+							slog.Int("monitor_id", monitorID),
+						)
+						return monitorID, nil
+					}
+					logging.LogWarn("kuma", "Could not parse monitor ID from add response",
+						slog.String("msg", r.Msg),
+					)
+					// Return 0 as ID success — caller can still proceed
+					return 0, nil
+				}
+				return 0, fmt.Errorf("add monitor rejected: %s", r.Msg)
+			}
+		}
+		return 0, fmt.Errorf("add monitor: unexpected response format")
+	case <-time.After(10 * time.Second):
+		return 0, fmt.Errorf("add monitor response timeout")
+	}
+}
