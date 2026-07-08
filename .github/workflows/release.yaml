@@ -67,7 +67,7 @@ jobs:
         if: steps.semantic.outputs.new_release_published == 'true'
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.5'
 
       - name: Build the Docker image
         if: steps.semantic.outputs.new_release_published == 'true'

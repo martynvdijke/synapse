@@ -6,7 +6,7 @@ COPY src/ ./src/
 COPY vite.config.js ./
 RUN npx vite build
 
-FROM golang:1.26.4-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 
