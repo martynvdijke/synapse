@@ -1,3 +1,10 @@
+## [1.9.18](https://github.com/martynvdijke/synapse/compare/v1.9.17...v1.9.18) (2026-07-29)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/mattn/go-sqlite3 to v1.14.49 ([#35](https://github.com/martynvdijke/synapse/issues/35)) ([9778e82](https://github.com/martynvdijke/synapse/commit/9778e8204d750c6ccab9db0ec068c38f6d531b7e))
+
 ## [1.9.17](https://github.com/martynvdijke/synapse/compare/v1.9.16...v1.9.17) (2026-07-28)
 
 ## [1.9.16](https://github.com/martynvdijke/synapse/compare/v1.9.15...v1.9.16) (2026-07-27)
