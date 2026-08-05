@@ -1,3 +1,10 @@
+## [1.9.24](https://github.com/martynvdijke/synapse/compare/v1.9.23...v1.9.24) (2026-08-05)
+
+
+### Bug Fixes
+
+* **deps:** update all non-major dependencies to v0.70.0 ([#41](https://github.com/martynvdijke/synapse/issues/41)) ([32fce71](https://github.com/martynvdijke/synapse/commit/32fce710bad8f5386ed699b2f901346587b2665c))
+
 ## [1.9.23](https://github.com/martynvdijke/synapse/compare/v1.9.22...v1.9.23) (2026-08-04)
 
 
