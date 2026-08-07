@@ -490,14 +490,20 @@ func TestLoadServices_AllFieldsPopulated(t *testing.T) {
 	if !ok {
 		t.Fatal("service 'api' not found")
 	}
-	if len(api.Environment) != 2 {
-		t.Errorf("expected 2 env vars for api, got %d", len(api.Environment))
+	if len(api.Environment) != 6 {
+		t.Errorf("expected 6 env vars for api, got %d", len(api.Environment))
 	} else {
 		if api.Environment[0] != "DB_HOST=db" {
 			t.Errorf("expected 'DB_HOST=db', got %q", api.Environment[0])
 		}
 		if api.Environment[1] != "DB_PORT=5432" {
 			t.Errorf("expected 'DB_PORT=5432', got %q", api.Environment[1])
+		}
+		if api.Environment[2] != "OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318" {
+			t.Errorf("unexpected OTEL_EXPORTER_OTLP_ENDPOINT: %q", api.Environment[2])
+		}
+		if api.Environment[3] != "OTEL_EXPORTER_OTLP_PROTOCOL=grpc" {
+			t.Errorf("unexpected OTEL_EXPORTER_OTLP_PROTOCOL: %q", api.Environment[3])
 		}
 	}
 
@@ -1185,9 +1191,9 @@ func TestRunDockerSyncSkipsExisting(t *testing.T) {
 	if run.Skipped < 1 {
 		t.Errorf("expected at least 1 skipped (nginx-web), got %d", run.Skipped)
 	}
-	// 5 services total, 1 skipped → 4 added.
-	if atomic.LoadInt32(&addCalls) != 4 {
-		t.Errorf("expected 4 AddMonitor calls (5 services - 1 existing), got %d", addCalls)
+	// 6 services total (including otel-collector), 1 skipped → 5 added.
+	if atomic.LoadInt32(&addCalls) != 5 {
+		t.Errorf("expected 5 AddMonitor calls (6 services - 1 existing), got %d", addCalls)
 	}
 }
 

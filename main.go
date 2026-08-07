@@ -181,12 +181,12 @@ func main() {
 		otelEndpoint = otelSettings.OTelEndpoint
 	}
 
-	tp, err := telemetry.InitTracerProvider(otelEndpoint)
+	providers, err := telemetry.InitTelemetry(otelEndpoint)
 	if err != nil {
 		slog.Warn("telemetry initialization failed, continuing without tracing", "error", err)
-		tp = nil
+		providers = nil
 	}
-	defer telemetry.Shutdown(tp)
+	defer telemetry.Shutdown(providers)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -196,6 +196,7 @@ func main() {
 	r.SetTrustedProxies(nil)
 
 	r.Use(otelgin.Middleware("synapse"))
+	r.Use(telemetry.MetricsMiddleware())
 
 	r.LoadHTMLGlob("static/*.html")
 	r.Static("/dist", "./static/dist")
@@ -313,7 +314,7 @@ func main() {
 }
 
 func (app *App) HandleCheckSetup(c *gin.Context) {
-	count, err := app.database.CountAdminUsers()
+	count, err := app.database.CountAdminUsersCtx(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
 		return
@@ -332,7 +333,7 @@ func (app *App) HandleLogin(c *gin.Context) {
 		return
 	}
 
-	count, _ := app.database.CountAdminUsers()
+	count, _ := app.database.CountAdminUsersCtx(c.Request.Context())
 
 	if input.Setup && count > 0 {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Setup already completed"})
@@ -363,7 +364,7 @@ func (app *App) HandleLogin(c *gin.Context) {
 		return
 	}
 
-	user, err := app.database.GetAdminUser(input.Username)
+	user, err := app.database.GetAdminUserCtx(c.Request.Context(), input.Username)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return

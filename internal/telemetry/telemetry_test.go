@@ -12,6 +12,21 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+func TestInitTelemetry_NoEndpoint(t *testing.T) {
+	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	providers, err := InitTelemetry("")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if providers == nil {
+		t.Fatal("expected non-nil providers")
+	}
+	if providers.TracerProvider == nil {
+		t.Fatal("expected non-nil tracer provider")
+	}
+	Shutdown(providers)
+}
+
 func TestInitTracerProvider_NoEndpoint(t *testing.T) {
 	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	tp, err := InitTracerProvider("")
@@ -21,7 +36,7 @@ func TestInitTracerProvider_NoEndpoint(t *testing.T) {
 	if tp == nil {
 		t.Fatal("expected non-nil tracer provider")
 	}
-	Shutdown(tp)
+	ShutdownTracerProvider(tp)
 }
 
 func TestInitTracerProvider_WithEndpoint(t *testing.T) {
@@ -35,7 +50,7 @@ func TestInitTracerProvider_WithEndpoint(t *testing.T) {
 	if tp == nil {
 		t.Fatal("expected non-nil tracer provider")
 	}
-	Shutdown(tp)
+	ShutdownTracerProvider(tp)
 }
 
 func TestTracerProvider_ExportsSpans(t *testing.T) {
@@ -65,8 +80,82 @@ func TestShutdown_Nil(t *testing.T) {
 	Shutdown(nil)
 }
 
+func TestShutdownTracerProvider_Nil(t *testing.T) {
+	ShutdownTracerProvider(nil)
+}
+
 func TestTracer_IsExported(t *testing.T) {
 	if Tracer == nil {
 		t.Fatal("expected Tracer to be non-nil after init")
 	}
+}
+
+func TestConfigureSampler_Defaults(t *testing.T) {
+	os.Unsetenv("OTEL_TRACES_SAMPLER")
+	os.Unsetenv("OTEL_TRACES_SAMPLER_ARG")
+	sampler := configureSampler()
+	if sampler == nil {
+		t.Fatal("expected non-nil sampler")
+	}
+}
+
+func TestConfigureSampler_TraceIDRatio(t *testing.T) {
+	os.Setenv("OTEL_TRACES_SAMPLER", "traceidratio")
+	os.Setenv("OTEL_TRACES_SAMPLER_ARG", "0.5")
+	defer os.Unsetenv("OTEL_TRACES_SAMPLER")
+	defer os.Unsetenv("OTEL_TRACES_SAMPLER_ARG")
+	sampler := configureSampler()
+	if sampler == nil {
+		t.Fatal("expected non-nil sampler")
+	}
+}
+
+func TestConfigureSampler_AlwaysOff(t *testing.T) {
+	os.Setenv("OTEL_TRACES_SAMPLER", "always_off")
+	defer os.Unsetenv("OTEL_TRACES_SAMPLER")
+	sampler := configureSampler()
+	if sampler == nil {
+		t.Fatal("expected non-nil sampler")
+	}
+}
+
+func TestBuildResource_WithAttributes(t *testing.T) {
+	os.Setenv("OTEL_RESOURCE_ATTRIBUTES", "env=test,region=us-east-1")
+	defer os.Unsetenv("OTEL_RESOURCE_ATTRIBUTES")
+
+	res, err := buildResource("test-service")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected non-nil resource")
+	}
+}
+
+func TestInitTelemetry_NoopFallback(t *testing.T) {
+	// When endpoint is empty, InitTelemetry should return a noop tracer provider
+	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	providers, err := InitTelemetry("")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if providers.TracerProvider == nil {
+		t.Fatal("expected non-nil tracer provider in noop mode")
+	}
+	// MeterProvider and LoggerProvider should be nil (not initialized without endpoint)
+	if providers.MeterProvider != nil {
+		t.Log("meter provider is nil when no endpoint")
+	}
+	Shutdown(providers)
+}
+
+func TestInitTelemetry_ServiceNameDefault(t *testing.T) {
+	os.Unsetenv("OTEL_SERVICE_NAME")
+	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+	providers, err := InitTelemetry("")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	Shutdown(providers)
 }

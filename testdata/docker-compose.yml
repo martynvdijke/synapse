@@ -32,6 +32,10 @@ services:
     environment:
       - DB_HOST=db
       - DB_PORT=5432
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - OTEL_SERVICE_NAME=synapse
+      - OTEL_RESOURCE_ATTRIBUTES=env=test,region=local
     depends_on:
       - db
       - redis
@@ -67,3 +71,15 @@ services:
     healthcheck:
       test: wget --spider http://localhost:9090/ready
       interval: 15s
+
+  # OpenTelemetry Collector for development / test environments
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    ports:
+      - "4317:4317"   # gRPC
+      - "4318:4318"   # HTTP
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    restart: unless-stopped
