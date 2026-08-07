@@ -1,0 +1,374 @@
+/* E-ink mode — high-contrast, motion-free stylesheet for e-paper displays.
+   All rules are gated under html.eink-mode (and html.eink-wallboard). */
+
+/* ─── 1. High contrast palette (Req: #000 on #fff, muted #333, borders #ccc) ─── */
+html.eink-mode,
+html.eink-mode body {
+    background: #ffffff !important;
+    color: #000000 !important;
+}
+
+html.eink-mode .text-muted,
+html.eink-mode .text-secondary,
+html.eink-mode .opacity-75,
+html.eink-mode .small.text-muted,
+html.eink-mode .detail-label,
+html.eink-mode .detail-inline-label,
+html.eink-mode .log-time,
+html.eink-mode .log-duration {
+    color: #333333 !important;
+    opacity: 1 !important;
+}
+
+html.eink-mode .text-primary { color: #000000 !important; }
+html.eink-mode .text-success { color: #000000 !important; }
+html.eink-mode .text-danger { color: #000000 !important; }
+html.eink-mode .text-warning { color: #000000 !important; }
+html.eink-mode .text-info { color: #000000 !important; }
+html.eink-mode .text-dark { color: #000000 !important; }
+
+/* Borders / dividers solid #ccc */
+html.eink-mode .card,
+html.eink-mode .navbar,
+html.eink-mode .modal-content,
+html.eink-mode .form-control,
+html.eink-mode .form-select,
+html.eink-mode .table,
+html.eink-mode .table th,
+html.eink-mode .table td,
+html.eink-mode .input-group-text,
+html.eink-mode .list-group-item {
+    border-color: #cccccc !important;
+}
+
+/* ─── 2. No motion or CSS effects ─── */
+html.eink-mode *,
+html.eink-mode *::before,
+html.eink-mode *::after {
+    transition: none !important;
+    animation: none !important;
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+}
+
+html.eink-mode * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    filter: none !important;
+    background-image: none !important;
+}
+
+html.eink-mode .navbar-dark.bg-dark,
+html.eink-mode .bg-dark {
+    background-color: #000000 !important;
+    background-image: none !important;
+}
+
+/* ─── 3. Large touch targets: min 48x48, 8px spacing ─── */
+html.eink-mode .btn,
+html.eink-mode .nav-link,
+html.eink-mode .form-control,
+html.eink-mode .form-select,
+html.eink-mode .form-check-input,
+html.eink-mode .dropdown-item,
+html.eink-mode .page-link {
+    min-width: 48px !important;
+    min-height: 48px !important;
+    font-size: 1rem !important;
+}
+
+html.eink-mode .btn {
+    padding: 0.75rem 1rem !important;
+    border-width: 2px !important;
+    border-radius: 0 !important;
+}
+
+html.eink-mode .nav-tabs .nav-link,
+html.eink-mode .nav-pills .nav-link {
+    margin: 4px !important;
+    padding: 0.75rem 1rem !important;
+    border: 2px solid #cccccc !important;
+    border-radius: 0 !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+}
+
+html.eink-mode .nav-tabs .nav-link.active {
+    background: #000000 !important;
+    color: #ffffff !important;
+}
+
+html.eink-mode .form-check {
+    margin: 8px 0 !important;
+}
+
+html.eink-mode .form-check-input {
+    width: 24px !important;
+    height: 24px !important;
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+}
+
+html.eink-mode .form-check-input:checked {
+    background-color: #000000 !important;
+    border-color: #000000 !important;
+}
+
+/* ─── 4. Sync status display: bordered text labels, never color alone ─── */
+html.eink-mode .badge,
+html.eink-mode .health-dot,
+html.eink-mode .status-pill {
+    display: inline-block !important;
+    min-width: 72px !important;
+    padding: 6px 10px !important;
+    font-size: 0.9rem !important;
+    font-weight: bold !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    vertical-align: middle !important;
+}
+
+/* Active / error / warning states → solid black fill + white text */
+html.eink-mode .badge.bg-primary,
+html.eink-mode .badge.bg-danger,
+html.eink-mode .badge.bg-warning,
+html.eink-mode .badge.bg-info,
+html.eink-mode .health-dot.error {
+    background: #000000 !important;
+    border-color: #000000 !important;
+    color: #ffffff !important;
+}
+
+/* Healthy / idle / secondary → white fill + black border */
+html.eink-mode .badge.bg-success,
+html.eink-mode .badge.bg-secondary,
+html.eink-mode .health-dot.healthy,
+html.eink-mode .health-dot.unknown {
+    background: #ffffff !important;
+    border-color: #000000 !important;
+    color: #000000 !important;
+}
+
+/* Replace color-only dots with visible text markers */
+html.eink-mode .health-dot.healthy::after { content: "OK"; }
+html.eink-mode .health-dot.error::after { content: "ERR"; }
+html.eink-mode .health-dot.unknown::after { content: "?"; }
+html.eink-mode .health-dot {
+    width: auto !important;
+    height: auto !important;
+    border-radius: 0 !important;
+    border: 2px solid #000000 !important;
+    padding: 2px 6px !important;
+    font-size: 0.7rem !important;
+    font-weight: bold !important;
+}
+
+/* ─── 5. Tables: min sizes, solid horizontal borders, no alternating rows ─── */
+html.eink-mode .table {
+    font-size: 1rem !important;
+    background: #ffffff !important;
+    border-collapse: collapse !important;
+}
+
+html.eink-mode .table thead th {
+    font-size: 1rem !important;
+    font-weight: bold !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    border-bottom: 3px solid #000000 !important;
+    text-transform: uppercase !important;
+}
+
+html.eink-mode .table tbody td,
+html.eink-mode .table td,
+html.eink-mode .table th {
+    font-size: 0.9375rem !important; /* min 15px */
+    color: #000000 !important;
+    background: #ffffff !important;
+    border-top: 1px solid #cccccc !important;
+    border-bottom: 1px solid #cccccc !important;
+    vertical-align: middle !important;
+}
+
+html.eink-mode .table tbody tr {
+    background: #ffffff !important;
+}
+
+html.eink-mode .table tbody tr:nth-child(even),
+html.eink-mode .table-striped tbody tr:nth-of-type(odd),
+html.eink-mode .card-table tr:nth-child(even) {
+    background: #ffffff !important;
+}
+
+html.eink-mode .table-hover tbody tr:hover {
+    background: #f2f2f2 !important;
+    color: #000000 !important;
+}
+
+/* ─── 6. No hover tooltips — inline info only ─── */
+html.eink-mode .health-tooltip,
+html.eink-mode [data-bs-toggle="tooltip"] {
+    display: none !important;
+    position: static !important;
+}
+
+html.eink-mode [title]::after { content: none !important; }
+
+/* ─── 7. Larger fonts for readability at a distance ─── */
+html.eink-mode body,
+html.eink-mode .container-fluid {
+    font-size: 1.05rem !important;
+}
+
+html.eink-mode .stat-card .fs-2 {
+    font-size: 2.5rem !important;
+}
+
+html.eink-mode .fs-5 { font-size: 1.25rem !important; }
+html.eink-mode .form-label { font-size: 1rem !important; font-weight: bold !important; }
+
+/* ─── 8. Wallboard mode: grid of large status cards ─── */
+html.eink-mode.eink-wallboard .stat-card {
+    border: 3px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    min-height: 180px !important;
+}
+
+html.eink-mode.eink-wallboard .stat-card .card-body {
+    padding: 1.5rem !important;
+}
+
+html.eink-mode.eink-wallboard .stat-card .text-uppercase {
+    font-size: 1.375rem !important; /* service name 22px */
+    font-weight: bold !important;
+    color: #000000 !important;
+    text-transform: uppercase !important;
+}
+
+html.eink-mode.eink-wallboard .stat-card .fs-2 {
+    font-size: 3.5rem !important; /* 56px metrics */
+    font-weight: bold !important;
+}
+
+html.eink-mode.eink-wallboard .badge,
+html.eink-mode.eink-wallboard .health-dot {
+    min-width: 90px !important;
+    font-size: 1.25rem !important; /* large status label min 20px */
+    padding: 10px 14px !important;
+}
+
+/* Key metrics as large numbers */
+html.eink-mode.eink-wallboard .stat-card .fs-5 {
+    font-size: 1.75rem !important;
+}
+
+/* Wallboard: grid of cards, min 2 per row, no animations */
+html.eink-mode.eink-wallboard .row.g-3 {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 16px !important;
+}
+
+html.eink-mode.eink-wallboard .row.g-3 .col-md-3,
+html.eink-mode.eink-wallboard .row.g-3 .col-md-4,
+html.eink-mode.eink-wallboard .row.g-3 .col-12,
+html.eink-mode.eink-wallboard .row.g-3 .col-md-6 {
+    width: auto !important;
+    flex: none !important;
+    max-width: none !important;
+}
+
+/* Health check rows: check name + status label, plain text response times */
+html.eink-mode .monitor-detail .row,
+html.eink-mode #monitor-detail-body .row {
+    display: block !important;
+}
+
+html.eink-mode #monitor-detail-body .col-md-4 {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    border-bottom: 1px solid #cccccc !important;
+    padding: 10px 0 !important;
+    width: 100% !important;
+}
+
+html.eink-mode #monitor-detail-body .small.text-muted {
+    font-size: 1rem !important;
+}
+
+html.eink-mode #monitor-detail-body .fs-5.fw-bold {
+    font-size: 1.25rem !important;
+    color: #000000 !important;
+}
+
+/* Failed checks → bold FAIL label with solid black background */
+html.eink-mode .badge.bg-danger {
+    background: #000000 !important;
+    color: #ffffff !important;
+    font-weight: bold !important;
+    border: 2px solid #000000 !important;
+}
+
+html.eink-mode .text-danger {
+    color: #000000 !important;
+    font-weight: bold !important;
+}
+
+/* ─── Login / setup cards ─── */
+html.eink-mode .login-card,
+html.eink-mode .setup-card {
+    background: #ffffff !important;
+    border: 3px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: #000000 !important;
+}
+
+html.eink-mode .alert {
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* Modals */
+html.eink-mode .modal-content {
+    border: 3px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+
+/* Progress bar → solid blocks only */
+html.eink-mode .progress,
+html.eink-mode .progress-bar {
+    border-radius: 0 !important;
+    border: 2px solid #000000 !important;
+}
+
+html.eink-mode .progress-bar {
+    background: #000000 !important;
+    background-image: none !important;
+    color: #ffffff !important;
+}
+
+/* Spinners are motion — render as static text in e-ink mode */
+html.eink-mode .spinner-border,
+html.eink-mode .spinner-sm {
+    animation: none !important;
+    border-color: #000000 #cccccc #000000 #cccccc !important;
+}
+
+/* Links: underline for clarity */
+html.eink-mode a {
+    color: #000000 !important;
+    text-decoration: underline !important;
+}

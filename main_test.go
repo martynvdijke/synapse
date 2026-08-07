@@ -383,6 +383,70 @@ func TestSaveSettingsOnlySentFields(t *testing.T) {
 	}
 }
 
+func TestEinkEnabledSaveAndLoad(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Default: eink_enabled should be false
+	req0 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w0 := httptest.NewRecorder()
+	r.ServeHTTP(w0, req0)
+	var s0 map[string]any
+	json.NewDecoder(w0.Body).Decode(&s0)
+	if s0["eink_enabled"] != false {
+		t.Errorf("default eink_enabled should be false: got %v", s0["eink_enabled"])
+	}
+
+	// Seed compose_path, then enable eink — compose_path must be preserved
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"compose_path": "/docker/compose.yml",
+	}); err != nil {
+		t.Fatalf("seed compose_path: %v", err)
+	}
+
+	body := `{"eink_enabled":true}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+
+	if s["eink_enabled"] != true {
+		t.Errorf("eink_enabled should be true after save: got %v", s["eink_enabled"])
+	}
+	if s["compose_path"] != "/docker/compose.yml" {
+		t.Errorf("compose_path should be preserved: expected %q, got %v", "/docker/compose.yml", s["compose_path"])
+	}
+
+	// Toggle back off via only-sent-fields
+	body2 := `{"eink_enabled":false}`
+	req3 := authRequest(t, "POST", "/api/settings", body2, sessionID)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("post settings (off): expected 200, got %d: %s", w3.Code, w3.Body.String())
+	}
+
+	req4 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w4 := httptest.NewRecorder()
+	r.ServeHTTP(w4, req4)
+	var s4 map[string]any
+	json.NewDecoder(w4.Body).Decode(&s4)
+	if s4["eink_enabled"] != false {
+		t.Errorf("eink_enabled should be false after toggling off: got %v", s4["eink_enabled"])
+	}
+	if s4["compose_path"] != "/docker/compose.yml" {
+		t.Errorf("compose_path should remain preserved: expected %q, got %v", "/docker/compose.yml", s4["compose_path"])
+	}
+}
+
 func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)

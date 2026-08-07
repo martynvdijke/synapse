@@ -1,5 +1,6 @@
 // Synapse Dashboard — Entry point
 import './dashboard.css';
+import './eink';
 import './api';
 import { toast, setLoading } from './toast';
 import { connectSSE, setRefreshAll } from './sse';

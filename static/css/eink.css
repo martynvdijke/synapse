@@ -1,0 +1,65 @@
+/* E-ink mode for login/setup pages (no Vite bundle — standalone stylesheet).
+   Same palette/effects rules as src/eink.css, gated under html.eink-mode. */
+
+html.eink-mode,
+html.eink-mode body {
+    background: #ffffff !important;
+    color: #000000 !important;
+}
+
+html.eink-mode .text-muted { color: #333333 !important; opacity: 1 !important; }
+
+html.eink-mode .login-card,
+html.eink-mode .setup-card {
+    background: #ffffff !important;
+    border: 3px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+
+html.eink-mode .alert {
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* No motion / no effects */
+html.eink-mode *,
+html.eink-mode *::before,
+html.eink-mode *::after {
+    transition: none !important;
+    animation: none !important;
+    animation-duration: 0s !important;
+}
+
+html.eink-mode * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    filter: none !important;
+    background-image: none !important;
+}
+
+/* Large touch targets */
+html.eink-mode .form-control,
+html.eink-mode .btn {
+    min-height: 48px !important;
+    font-size: 1rem !important;
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+}
+
+html.eink-mode .form-control { background: #ffffff !important; color: #000000 !important; }
+
+html.eink-mode .btn-primary {
+    background: #000000 !important;
+    color: #ffffff !important;
+    border-color: #000000 !important;
+}
+
+html.eink-mode a {
+    color: #000000 !important;
+    text-decoration: underline !important;
+}

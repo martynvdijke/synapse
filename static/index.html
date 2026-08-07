@@ -14,6 +14,7 @@
     <span class="navbar-brand mb-0 h1">Synapse</span>
     <span class="text-light opacity-75 small">v{{ .Version }}</span>
     <div>
+        <button class="btn btn-outline-light btn-sm me-2" id="btn-eink" title="Toggle e-ink mode">E-ink: Off</button>
         <button class="btn btn-outline-light btn-sm" id="btn-logout">Logout</button>
     </div>
 </nav>
@@ -636,6 +637,15 @@
                             <div class="mb-2">
                                 <label class="form-label">Compose File Path</label>
                                 <input class="form-control form-control-sm" id="s-compose-path" placeholder="docker-compose.yml" style="max-width:400px">
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <h6 class="mb-3">Display</h6>
+                            <div class="mb-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="s-eink-enabled">
+                                    <label class="form-check-label" for="s-eink-enabled">E-ink mode (high-contrast, no animations — for e-paper displays)</label>
+                                </div>
                             </div>
                         </div>
                     </div>

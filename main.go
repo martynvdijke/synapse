@@ -112,6 +112,7 @@ func (app *App) settings() db.Settings {
 		AutheliaDefaultPolicy: getEnv("AUTHELIA_DEFAULT_POLICY", authelia.DefaultPolicy),
 		OTelEndpoint:          getEnv("OTEL_ENDPOINT", ""),
 		OTelEnabled:           getEnv("OTEL_ENABLED", "") == "true",
+		EinkEnabled:           getEnv("EINK_ENABLED", "") == "true",
 	})
 }
 
@@ -420,6 +421,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"authelia_migrated":       autheliaMigrated,
 		"otel_endpoint":           s.OTelEndpoint,
 		"otel_enabled":            s.OTelEnabled,
+		"eink_enabled":            s.EinkEnabled,
 	})
 }
 
@@ -471,6 +473,10 @@ func (app *App) SaveSettings(c *gin.Context) {
 	if v, ok := raw["otel_enabled"]; ok {
 		var val bool; json.Unmarshal(v, &val)
 		pairs["otel_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["eink_enabled"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["eink_enabled"] = strconv.FormatBool(val)
 	}
 
 	if err := app.database.SaveSettingsMap(pairs); err != nil {

@@ -72,6 +72,9 @@ declare function connectLogSSE(): void;
 // ── main.js ─────────────────────────────────────────────────────
 declare function startSync(source: string): void;
 
+// ── eink.js ─────────────────────────────────────────────────────
+declare function toggleEink(): void;
+
 // Bootstrap (loaded from CDN via HTML)
 declare namespace bootstrap {
   class Modal {

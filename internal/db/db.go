@@ -124,6 +124,7 @@ type Settings struct {
 	AutheliaSyncOverrides string `json:"authelia_sync_overrides"`
 	OTelEndpoint          string `json:"otel_endpoint"`
 	OTelEnabled           bool   `json:"otel_enabled"`
+	EinkEnabled           bool   `json:"eink_enabled"`
 }
 
 type DB struct {
@@ -805,6 +806,8 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.OTelEndpoint = row.Value
 		case "otel_enabled":
 			s.OTelEnabled = row.Value == "true"
+		case "eink_enabled":
+			s.EinkEnabled = row.Value == "true"
 		}
 	}
 	return s
@@ -851,6 +854,7 @@ func (db *DB) SaveSettings(s Settings) error {
 		"authelia_sync_overrides": s.AutheliaSyncOverrides,
 		"otel_endpoint":           s.OTelEndpoint,
 		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
+		"eink_enabled":            strconv.FormatBool(s.EinkEnabled),
 	})
 }
 

@@ -1,5 +1,6 @@
 // SSE connection for sync progress
 import type { ProgressEvent } from './types';
+import { refreshDue } from './eink';
 
 export function connectSSE(): void {
     var retryDelay = 1000;
@@ -21,7 +22,7 @@ export function connectSSE(): void {
                 (document.getElementById('btn-docker') as HTMLButtonElement).disabled = false;
                 (document.getElementById('btn-npm') as HTMLButtonElement).disabled = false;
                 document.getElementById('stat-status')!.innerHTML = '<span class="badge bg-secondary">Idle</span>';
-                setTimeout(refreshAll, 500);
+                if (refreshDue()) setTimeout(refreshAll, 500);
             }
         };
         es.onerror = function() {

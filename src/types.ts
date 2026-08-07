@@ -116,6 +116,7 @@ export interface SettingsResponse {
   authelia_sync_enabled: boolean;
   authelia_default_policy: string;
   authelia_sync_overrides: string;
+  eink_enabled?: boolean;
   [key: string]: unknown;
 }
 

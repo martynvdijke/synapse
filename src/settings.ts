@@ -9,6 +9,8 @@ export function loadSettings(): void {
         (document.getElementById('s-auth-sync-enabled') as HTMLInputElement).checked = !!(s.authelia_sync_enabled);
         (document.getElementById('s-auth-default-policy') as HTMLSelectElement).value = (s.authelia_default_policy as string) || 'one_factor';
         (document.getElementById('s-auth-overrides') as HTMLTextAreaElement).value = (s.authelia_sync_overrides as string) || '';
+        var eink = document.getElementById('s-eink-enabled') as HTMLInputElement | null;
+        if (eink) eink.checked = !!(s.eink_enabled);
     });
 }
 
@@ -25,7 +27,8 @@ export function saveSettings(e: Event): void {
         authelia_db_path: (document.getElementById('s-auth-db-path') as HTMLInputElement)?.value || '',
         authelia_sync_enabled: (document.getElementById('s-auth-sync-enabled') as HTMLInputElement)?.checked || false,
         authelia_default_policy: (document.getElementById('s-auth-default-policy') as HTMLSelectElement)?.value || 'one_factor',
-        authelia_sync_overrides: (document.getElementById('s-auth-overrides') as HTMLTextAreaElement)?.value || ''
+        authelia_sync_overrides: (document.getElementById('s-auth-overrides') as HTMLTextAreaElement)?.value || '',
+        eink_enabled: (document.getElementById('s-eink-enabled') as HTMLInputElement)?.checked || false
     };
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })

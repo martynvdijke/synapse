@@ -32,6 +32,7 @@ export const MOCK_SETTINGS = {
   npm_migrated: true,
   authelia_config_path: '/config/configuration.yml', authelia_db_path: '/config/db.sqlite3',
   authelia_sync_enabled: true, authelia_default_policy: 'one_factor', authelia_sync_overrides: '{"admin.example.com":"bypass"}',
+  eink_enabled: false,
 };
 
 export const MOCK_SYNC_HISTORY = [
