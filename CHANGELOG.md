@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/martynvdijke/synapse/compare/v1.10.0...v1.11.0) (2026-08-07)
+
+
+### Features
+
+* add e-ink mode for e-paper displays ([25555eb](https://github.com/martynvdijke/synapse/commit/25555ebe77b5e7f95d64cecc3e144be783e06a21)), closes [Hi#contrast](https://github.com/Hi/issues/contrast)
+
 # [1.10.0](https://github.com/martynvdijke/synapse/compare/v1.9.24...v1.10.0) (2026-08-07)
 
 
