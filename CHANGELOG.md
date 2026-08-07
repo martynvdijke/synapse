@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/martynvdijke/synapse/compare/v1.9.24...v1.10.0) (2026-08-07)
+
+
+### Features
+
+* complete OTel observability — metrics, logs, and DB query tracing ([77a868e](https://github.com/martynvdijke/synapse/commit/77a868ee6edf31e7cbcbcb27ec66061d33fbb4ae))
+
 ## [1.9.24](https://github.com/martynvdijke/synapse/compare/v1.9.23...v1.9.24) (2026-08-05)
 
 
