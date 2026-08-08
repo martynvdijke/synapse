@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/martynvdijke/synapse/compare/v1.11.2...v1.12.0) (2026-08-08)
+
+
+### Features
+
+* add TRMNL stats display plugin ([ee7dba8](https://github.com/martynvdijke/synapse/commit/ee7dba80f657bd3b08c98b57c98c1961d7e95df2))
+
 ## [1.11.2](https://github.com/martynvdijke/synapse/compare/v1.11.1...v1.11.2) (2026-08-08)
 
 ## [1.11.1](https://github.com/martynvdijke/synapse/compare/v1.11.0...v1.11.1) (2026-08-07)
