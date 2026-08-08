@@ -1,0 +1,107 @@
+<div class="layout layout--col gap">
+  <div class="grid grid--cols-3 gap">
+    <div class="item">
+      <div class="meta">Monitors</div>
+      <div class="content">
+        <span class="value value--large">{{ IDX_0.monitor_count }}</span>
+      </div>
+    </div>
+    <div class="item">
+      <div class="meta">Services</div>
+      <div class="content">
+        <span class="value value--large">{{ IDX_0.docker_count }}</span>
+      </div>
+    </div>
+    <div class="item">
+      <div class="meta">Proxies</div>
+      <div class="content">
+        <span class="value value--large">{{ IDX_0.npm_count }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="hr"></div>
+  <div class="grid grid--cols-3 gap">
+    <div class="col col--start gap">
+      <div class="item">
+        <div class="meta">Docker</div>
+        <div class="content">
+          {% if IDX_0.docker_ok %}
+            <span class="label label--success">OK</span>
+          {% else %}
+            <span class="label label--danger">ERROR</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">NPM</div>
+        <div class="content">
+          {% if IDX_0.npm_ok %}
+            <span class="label label--success">OK</span>
+          {% else %}
+            <span class="label label--danger">ERROR</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Kuma</div>
+        <div class="content">
+          {% if IDX_0.kuma_ok %}
+            <span class="label label--success">OK</span>
+          {% else %}
+            <span class="label label--danger">ERROR</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col col--start gap">
+      <div class="item">
+        <div class="meta">Up</div>
+        <div class="content">
+          <span class="value value--medium">{{ IDX_0.up }}</span>
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Down</div>
+        <div class="content">
+          <span class="value value--medium">{{ IDX_0.down }}</span>
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Sync</div>
+        <div class="content">
+          {% if IDX_0.running %}
+            <span class="label label--warning">RUNNING</span>
+          {% else %}
+            <span class="label">IDLE</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col col--start gap">
+      <div class="item">
+        <div class="meta">Last Docker sync</div>
+        <div class="content">
+          {% if IDX_0.last_docker %}
+            <span class="label">{{ IDX_0.last_docker.started_at }}</span>
+          {% else %}
+            <span class="label">Never</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Last NPM sync</div>
+        <div class="content">
+          {% if IDX_0.last_npm %}
+            <span class="label">{{ IDX_0.last_npm.started_at }}</span>
+          {% else %}
+            <span class="label">Never</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="title_bar">
+  <span class="title">Synapse</span>
+</div>

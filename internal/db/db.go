@@ -125,6 +125,7 @@ type Settings struct {
 	OTelEndpoint          string `json:"otel_endpoint"`
 	OTelEnabled           bool   `json:"otel_enabled"`
 	EinkEnabled           bool   `json:"eink_enabled"`
+	TrmnlApiToken         string `json:"trmnl_api_token"`
 }
 
 type DB struct {
@@ -808,6 +809,8 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.OTelEnabled = row.Value == "true"
 		case "eink_enabled":
 			s.EinkEnabled = row.Value == "true"
+		case "trmnl_api_token":
+			s.TrmnlApiToken = row.Value
 		}
 	}
 	return s
@@ -855,6 +858,7 @@ func (db *DB) SaveSettings(s Settings) error {
 		"otel_endpoint":           s.OTelEndpoint,
 		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
 		"eink_enabled":            strconv.FormatBool(s.EinkEnabled),
+		"trmnl_api_token":         s.TrmnlApiToken,
 	})
 }
 

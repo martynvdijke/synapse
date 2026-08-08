@@ -647,6 +647,16 @@
                                     <label class="form-check-label" for="s-eink-enabled">E-ink mode (high-contrast, no animations — for e-paper displays)</label>
                                 </div>
                             </div>
+                            <div class="mb-2">
+                                <label class="form-label">TRMNL API Token</label>
+                                <input class="form-control form-control-sm" type="password" id="s-trmnl-token" placeholder="Set a token to secure the TRMNL stats endpoint" style="max-width:400px" autocomplete="new-password">
+                                <div class="form-text">Used to authenticate TRMNL e-ink devices polling <code>/api/v1/trmnl/stats</code>.</div>
+                            </div>
+                            <div class="mb-2 d-none" id="trmnl-url-section">
+                                <label class="form-label">TRMNL Polling URLs</label>
+                                <div class="form-text mb-2">Paste one of these into your TRMNL device's polling URL (with the token as a <code>Bearer</code> header or <code>?token=</code> query):</div>
+                                <div id="trmnl-url-list" class="mb-2"></div>
+                            </div>
                         </div>
                     </div>
                     <div class="mt-3">

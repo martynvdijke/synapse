@@ -11,6 +11,41 @@ export function loadSettings(): void {
         (document.getElementById('s-auth-overrides') as HTMLTextAreaElement).value = (s.authelia_sync_overrides as string) || '';
         var eink = document.getElementById('s-eink-enabled') as HTMLInputElement | null;
         if (eink) eink.checked = !!(s.eink_enabled);
+        var trmnlToken = document.getElementById('s-trmnl-token') as HTMLInputElement | null;
+        if (trmnlToken) trmnlToken.value = (s.trmnl_api_token as string) || '';
+        renderTrmnlUrls(s.trmnl_api_token || '');
+    });
+}
+
+function renderTrmnlUrls(token: string): void {
+    var section = document.getElementById('trmnl-url-section');
+    var list = document.getElementById('trmnl-url-list');
+    if (!section || !list) return;
+    if (!token) { section.classList.add('d-none'); list.innerHTML = ''; return; }
+    section.classList.remove('d-none');
+    var base = window.location.origin + '/api/v1/trmnl/stats?token=' + encodeURIComponent(token);
+    var layouts = ['full', 'half_horizontal', 'half_vertical', 'quadrant'];
+    var html = '';
+    layouts.forEach(function(layout) {
+        var url = base + '&layout=' + layout;
+        html += '<div class="input-group input-group-sm mb-1">'
+            + '<span class="input-group-text" style="min-width:120px">' + layout + '</span>'
+            + '<input class="form-control" type="text" readonly value="' + url + '">'
+            + '<button type="button" class="btn btn-outline-secondary" onclick="copyTrmnlUrl(this)">Copy</button>'
+            + '</div>';
+    });
+    list.innerHTML = html;
+}
+
+export function copyTrmnlUrl(btn: HTMLElement): void {
+    var input = btn.previousElementSibling as HTMLInputElement;
+    if (!input) return;
+    navigator.clipboard.writeText(input.value).then(function() {
+        toast('Polling URL copied', 'success');
+    }).catch(function() {
+        input.select();
+        document.execCommand('copy');
+        toast('Polling URL copied', 'success');
     });
 }
 
@@ -30,6 +65,10 @@ export function saveSettings(e: Event): void {
         authelia_sync_overrides: (document.getElementById('s-auth-overrides') as HTMLTextAreaElement)?.value || '',
         eink_enabled: (document.getElementById('s-eink-enabled') as HTMLInputElement)?.checked || false
     };
+    // Only send the TRMNL token when it has a value, so unrelated saves
+    // never wipe a previously configured token (backend is only-sent-fields).
+    var trmnlToken = (document.getElementById('s-trmnl-token') as HTMLInputElement)?.value || '';
+    if (trmnlToken) payload.trmnl_api_token = trmnlToken;
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
         .then(function() { toast('Settings saved', 'success'); })
@@ -448,6 +487,7 @@ export function testAutheliaInstance(id: number): void {
 
 window.loadSettings = loadSettings;
 window.saveSettings = saveSettings;
+window.copyTrmnlUrl = copyTrmnlUrl;
 window.testConnection = testConnection;
 window.loadKumaInstances = loadKumaInstances;
 window.showKumaInstanceForm = showKumaInstanceForm;

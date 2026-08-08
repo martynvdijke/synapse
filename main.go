@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -113,6 +114,7 @@ func (app *App) settings() db.Settings {
 		OTelEndpoint:          getEnv("OTEL_ENDPOINT", ""),
 		OTelEnabled:           getEnv("OTEL_ENABLED", "") == "true",
 		EinkEnabled:           getEnv("EINK_ENABLED", "") == "true",
+		TrmnlApiToken:         getEnv("TRMNL_API_TOKEN", ""),
 	})
 }
 
@@ -235,6 +237,13 @@ func main() {
 
 	r.GET("/api/check-setup", app.HandleCheckSetup)
 	r.POST("/api/login", app.HandleLogin)
+
+	// Public v1 API group. TRMNL devices poll /trmnl/stats without a session;
+	// the handler performs its own token verification.
+	apiV1 := r.Group("/api/v1")
+	{
+		apiV1.GET("/trmnl/stats", app.TrmnlStats)
+	}
 
 	api := r.Group("/api")
 	api.Use(authMiddleware())
@@ -422,6 +431,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"otel_endpoint":           s.OTelEndpoint,
 		"otel_enabled":            s.OTelEnabled,
 		"eink_enabled":            s.EinkEnabled,
+		"trmnl_api_token":         s.TrmnlApiToken,
 	})
 }
 
@@ -477,6 +487,10 @@ func (app *App) SaveSettings(c *gin.Context) {
 	if v, ok := raw["eink_enabled"]; ok {
 		var val bool; json.Unmarshal(v, &val)
 		pairs["eink_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["trmnl_api_token"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["trmnl_api_token"] = val
 	}
 
 	if err := app.database.SaveSettingsMap(pairs); err != nil {
@@ -1152,6 +1166,101 @@ func (app *App) Status(c *gin.Context) {
 		"last_npm":           lastNPM,
 		"running":            app.running,
 		"connection_health":  connectionHealth,
+	})
+}
+
+// requireTrmnlToken verifies the TRMNL API token from the Authorization
+// Bearer header or ?token= query param. It writes the error response and
+// returns false when the request is not authorized.
+func (app *App) requireTrmnlToken(c *gin.Context) bool {
+	configured := app.settings().TrmnlApiToken
+	if configured == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "TRMNL API token not configured"})
+		return false
+	}
+	submitted := ""
+	if auth := c.GetHeader("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		submitted = strings.TrimPrefix(auth, "Bearer ")
+	} else if tok, ok := c.GetQuery("token"); ok {
+		submitted = tok
+	}
+	if submitted == "" || subtle.ConstantTimeCompare([]byte(submitted), []byte(configured)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
+// TrmnlStats returns a flat, TRMNL-template-friendly stats payload for
+// e-ink wall displays. It reuses the Status computation path but flattens
+// the response so Liquid templates can read IDX_0.<field> directly.
+func (app *App) TrmnlStats(c *gin.Context) {
+	if !app.requireTrmnlToken(c) {
+		return
+	}
+
+	s := app.settings()
+
+	// Docker health
+	var dockerErr string
+	services, err := synclib.LoadServices(s.ComposePath)
+	dockerCount := 0
+	if err == nil {
+		dockerCount = len(services)
+	} else {
+		dockerErr = err.Error()
+	}
+
+	// NPM health
+	clients, _ := app.kumaRegistry.All()
+	npmClients, _ := app.npmRegistry.All()
+	npmCount := 0
+	npmErr := ""
+	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+	if npmFetchErr == nil {
+		npmCount = len(npmProxies)
+	} else {
+		npmErr = npmFetchErr.Error()
+	}
+
+	// Kuma health — ok only if ALL enabled instances are reachable.
+	kumaErr := ""
+	kumaInstances, _ := app.database.GetEnabledKumaInstances()
+	if len(kumaInstances) == 0 {
+		kumaErr = "no Kuma instances configured"
+	} else {
+		for _, inst := range kumaInstances {
+			if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
+				if kumaErr == "" {
+					kumaErr = err.Error()
+				} else {
+					kumaErr = inst.Name + ": " + err.Error()
+				}
+			}
+		}
+	}
+
+	monitorCount, _ := app.database.GetMonitorCount()
+
+	lastDocker, _ := app.database.GetLatestSyncRun("docker")
+	lastNPM, _ := app.database.GetLatestSyncRun("npm")
+
+	// Up/down degrade gracefully to counts when detail stats are unavailable.
+	up := monitorCount
+	down := 0
+
+	c.JSON(http.StatusOK, gin.H{
+		"docker_count":  dockerCount,
+		"npm_count":     npmCount,
+		"monitor_count": monitorCount,
+		"running":       app.running,
+		"last_docker":   lastDocker,
+		"last_npm":      lastNPM,
+		"docker_ok":     dockerErr == "",
+		"npm_ok":        npmErr == "",
+		"kuma_ok":       kumaErr == "",
+		"up":            up,
+		"down":          down,
 	})
 }
 

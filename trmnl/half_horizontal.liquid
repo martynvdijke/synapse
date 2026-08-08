@@ -1,0 +1,62 @@
+<div class="columns">
+  <div class="column">
+    <div class="grid grid--cols-3 gap">
+      <div class="item">
+        <div class="meta">Mon</div>
+        <div class="content">
+          <span class="value value--medium">{{ IDX_0.monitor_count }}</span>
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Svc</div>
+        <div class="content">
+          <span class="value value--medium">{{ IDX_0.docker_count }}</span>
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Prx</div>
+        <div class="content">
+          <span class="value value--medium">{{ IDX_0.npm_count }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="column">
+    <div class="col col--start gap">
+      <div class="item">
+        <div class="meta">Docker</div>
+        <div class="content">
+          {% if IDX_0.docker_ok %}
+            <span class="label label--success">OK</span>
+          {% else %}
+            <span class="label label--danger">ERR</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">NPM</div>
+        <div class="content">
+          {% if IDX_0.npm_ok %}
+            <span class="label label--success">OK</span>
+          {% else %}
+            <span class="label label--danger">ERR</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="item">
+        <div class="meta">Kuma</div>
+        <div class="content">
+          {% if IDX_0.kuma_ok %}
+            <span class="label label--success">OK</span>
+          {% else %}
+            <span class="label label--danger">ERR</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="title_bar">
+  <span class="title">Synapse</span>
+</div>

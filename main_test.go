@@ -447,6 +447,111 @@ func TestEinkEnabledSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestTrmnlApiTokenSaveAndLoad(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Default: no token configured
+	req0 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w0 := httptest.NewRecorder()
+	r.ServeHTTP(w0, req0)
+	var s0 map[string]any
+	json.NewDecoder(w0.Body).Decode(&s0)
+	if s0["trmnl_api_token"] != "" {
+		t.Errorf("default trmnl_api_token should be empty: got %v", s0["trmnl_api_token"])
+	}
+
+	// Seed compose_path, then save a token — compose_path must be preserved
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"compose_path": "/docker/compose.yml",
+	}); err != nil {
+		t.Fatalf("seed compose_path: %v", err)
+	}
+
+	body := `{"trmnl_api_token":"secret-token-123"}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+	if s["trmnl_api_token"] != "secret-token-123" {
+		t.Errorf("trmnl_api_token should round-trip: got %v", s["trmnl_api_token"])
+	}
+	if s["compose_path"] != "/docker/compose.yml" {
+		t.Errorf("compose_path should be preserved: expected %q, got %v", "/docker/compose.yml", s["compose_path"])
+	}
+}
+
+func TestTrmnlStatsEndpoint(t *testing.T) {
+	app, r := setupTest(t)
+
+	// No token configured → 503, no data leak
+	reqNoToken := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
+	wNoToken := httptest.NewRecorder()
+	r.ServeHTTP(wNoToken, reqNoToken)
+	if wNoToken.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no token configured: expected 503, got %d: %s", wNoToken.Code, wNoToken.Body.String())
+	}
+
+	// Configure token
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"trmnl_api_token": "sekret",
+	}); err != nil {
+		t.Fatalf("save token: %v", err)
+	}
+
+	// Missing token → 401
+	reqMissing := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
+	wMissing := httptest.NewRecorder()
+	r.ServeHTTP(wMissing, reqMissing)
+	if wMissing.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token: expected 401, got %d", wMissing.Code)
+	}
+
+	// Wrong token → 401
+	reqWrong := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
+	reqWrong.Header.Set("Authorization", "Bearer wrong")
+	wWrong := httptest.NewRecorder()
+	r.ServeHTTP(wWrong, reqWrong)
+	if wWrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: expected 401, got %d", wWrong.Code)
+	}
+
+	// Valid Bearer token → 200 + flat payload fields
+	reqOk := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
+	reqOk.Header.Set("Authorization", "Bearer sekret")
+	wOk := httptest.NewRecorder()
+	r.ServeHTTP(wOk, reqOk)
+	if wOk.Code != http.StatusOK {
+		t.Fatalf("valid bearer: expected 200, got %d: %s", wOk.Code, wOk.Body.String())
+	}
+	var s map[string]any
+	json.NewDecoder(wOk.Body).Decode(&s)
+	for _, field := range []string{"docker_count", "npm_count", "monitor_count", "running", "last_docker", "last_npm", "docker_ok", "npm_ok", "kuma_ok", "up", "down"} {
+		if _, ok := s[field]; !ok {
+			t.Errorf("payload missing field %q: %v", field, s)
+		}
+	}
+	if _, nested := s["connection_health"]; nested {
+		t.Errorf("payload must be flat, found connection_health: %v", s)
+	}
+
+	// Valid token via query param → 200
+	reqQuery := httptest.NewRequest("GET", "/api/v1/trmnl/stats?token=sekret", nil)
+	wQuery := httptest.NewRecorder()
+	r.ServeHTTP(wQuery, reqQuery)
+	if wQuery.Code != http.StatusOK {
+		t.Fatalf("valid query token: expected 200, got %d: %s", wQuery.Code, wQuery.Body.String())
+	}
+}
+
 func TestSaveSettingsPreservesEmptyPassword(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
@@ -749,6 +854,11 @@ func setupRouter(app *App) *gin.Engine {
 	r.GET("/setup", func(c *gin.Context) { c.HTML(http.StatusOK, "setup.html", nil) })
 	r.GET("/api/check-setup", app.HandleCheckSetup)
 	r.POST("/api/login", app.HandleLogin)
+
+	apiV1 := r.Group("/api/v1")
+	{
+		apiV1.GET("/trmnl/stats", app.TrmnlStats)
+	}
 
 	api := r.Group("/api")
 	api.Use(authMiddleware())

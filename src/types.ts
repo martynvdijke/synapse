@@ -117,6 +117,7 @@ export interface SettingsResponse {
   authelia_default_policy: string;
   authelia_sync_overrides: string;
   eink_enabled?: boolean;
+  trmnl_api_token?: string;
   [key: string]: unknown;
 }
 

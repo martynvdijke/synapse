@@ -27,6 +27,7 @@ declare function loadHistory(): void;
 // ── settings.js ─────────────────────────────────────────────────
 declare function loadSettings(): void;
 declare function saveSettings(e: Event): void;
+declare function copyTrmnlUrl(btn: HTMLElement): void;
 declare function testConnection(service: string): void;
 declare function loadKumaInstances(): void;
 declare function showKumaInstanceForm(editId: number | null): void;
