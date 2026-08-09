@@ -1,3 +1,10 @@
+## [1.12.3](https://github.com/martynvdijke/synapse/compare/v1.12.2...v1.12.3) (2026-08-09)
+
+
+### Bug Fixes
+
+* parse numeric uptime durations from Kuma ([7619c43](https://github.com/martynvdijke/synapse/commit/7619c43787d39f2748bdaaeee422aaa0b05cdde8))
+
 ## [1.12.2](https://github.com/martynvdijke/synapse/compare/v1.12.1...v1.12.2) (2026-08-09)
 
 
