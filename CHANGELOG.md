@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/martynvdijke/synapse/compare/v1.12.0...v1.12.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* use socket.io protocol v5 ack format for Kuma login ([9310122](https://github.com/martynvdijke/synapse/commit/9310122dfd35ed52e537752f56a4e32823a1c301))
+
 # [1.12.0](https://github.com/martynvdijke/synapse/compare/v1.11.2...v1.12.0) (2026-08-08)
 
 
