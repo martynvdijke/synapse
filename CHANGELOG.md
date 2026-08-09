@@ -1,3 +1,10 @@
+## [1.12.2](https://github.com/martynvdijke/synapse/compare/v1.12.1...v1.12.2) (2026-08-09)
+
+
+### Bug Fixes
+
+* parse monitorList, cache queries, and cut Kuma collection to 5s ([05e836a](https://github.com/martynvdijke/synapse/commit/05e836acb1ea39aaaa9be691e42fffb71002cd37))
+
 ## [1.12.1](https://github.com/martynvdijke/synapse/compare/v1.12.0...v1.12.1) (2026-08-09)
 
 
