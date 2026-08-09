@@ -3,6 +3,7 @@ package kuma
 import (
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -28,6 +29,10 @@ type Client struct {
 	client    *http.Client
 	tracer    trace.Tracer
 	testHooks *ClientTestHooks // only set in tests
+
+	mu            sync.Mutex
+	monCache      []KumaMonitor // cached monitor query result
+	monCacheAt    time.Time     // when monCache was populated
 }
 
 type Monitor struct {
@@ -107,20 +112,51 @@ func (c *Client) SetTestHooks(hooks *ClientTestHooks) {
 	c.testHooks = hooks
 }
 
+// monitorCacheTTL bounds how long a cached Socket.IO monitor query result is
+// reused. The dashboard fires several API calls in a burst (status, services,
+// proxies, monitors); without caching each call would open a fresh Socket.IO
+// connection and block for the full collection window. 15s keeps the burst
+// instant while still letting sync operations see recent changes.
+const monitorCacheTTL = 15 * time.Second
+
 // QueryMonitorsViaSocketIO fetches monitors from Kuma via Socket.IO using
-// the Client's stored credentials.
+// the Client's stored credentials. Results are cached for monitorCacheTTL so
+// the burst of dashboard requests shares a single Socket.IO collection.
 func (c *Client) QueryMonitorsViaSocketIO() ([]KumaMonitor, error) {
 	if c.testHooks != nil && c.testHooks.QueryMonitors != nil {
 		return c.testHooks.QueryMonitors()
 	}
-	return queryMonitorsFn(c.url, c.username, c.password)
+	c.mu.Lock()
+	if c.monCache != nil && time.Since(c.monCacheAt) < monitorCacheTTL {
+		out := c.monCache
+		c.mu.Unlock()
+		return out, nil
+	}
+	c.mu.Unlock()
+
+	monitors, err := queryMonitorsFn(c.url, c.username, c.password)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.monCache = monitors
+	c.monCacheAt = time.Now()
+	c.mu.Unlock()
+	return monitors, nil
 }
 
 // AddMonitorViaSocketIO creates a monitor in Kuma via Socket.IO using the
-// Client's stored credentials.
+// Client's stored credentials. A successful add invalidates the monitor query
+// cache so subsequent queries reflect the new monitor.
 func (c *Client) AddMonitorViaSocketIO(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
 	if c.testHooks != nil && c.testHooks.AddMonitor != nil {
 		return c.testHooks.AddMonitor(monitorType, name, url, dockerContainer, dockerHostID)
 	}
-	return addMonitorFn(c.url, c.username, c.password, monitorType, name, url, dockerContainer, dockerHostID)
+	id, err := addMonitorFn(c.url, c.username, c.password, monitorType, name, url, dockerContainer, dockerHostID)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return id, err
 }

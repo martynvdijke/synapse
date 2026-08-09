@@ -312,17 +312,27 @@ type MonitorStats struct {
 }
 
 type KumaMonitor struct {
-	ID        int     `json:"id"`
-	Name      string  `json:"name"`
-	URL       string  `json:"url,omitempty"`
-	Type      string  `json:"type"`
-	Status    int     `json:"status"`
-	Uptime24h float64 `json:"uptime_24h"`
-	Uptime7d  float64 `json:"uptime_7d"`
-	Uptime1y  float64 `json:"uptime_1y"`
-	Ping      float64 `json:"ping"`
-	LastMsg   string  `json:"last_msg,omitempty"`
+	ID              int     `json:"id"`
+	Name            string  `json:"name"`
+	URL             string  `json:"url,omitempty"`
+	Type            string  `json:"type"`
+	DockerContainer string  `json:"docker_container,omitempty"`
+	DockerHost      int     `json:"docker_host,omitempty"`
+	Status          int     `json:"status"`
+	Uptime24h       float64 `json:"uptime_24h"`
+	Uptime7d        float64 `json:"uptime_7d"`
+	Uptime1y        float64 `json:"uptime_1y"`
+	Ping            float64 `json:"ping"`
+	LastMsg         string  `json:"last_msg,omitempty"`
 }
+
+// dataCollectionWindow bounds how long a Socket.IO query collects events
+// after login. Empirically the full monitor list and the complete set of
+// uptime/avgPing events arrive within ~2s of login (61 monitors → 183
+// uptime events = 61 × 3 durations in the first 2s); a 5s window captures
+// everything with a 4x speedup over the historical 20s.
+// Kept as a var (not const) so tests can shorten the window.
+var dataCollectionWindow = 5 * time.Second
 
 func parseID(raw json.RawMessage) (int, bool) {
 	var s string
@@ -345,7 +355,10 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 		slog.String("kuma_url", kumaURL),
 	)
 
-	type named struct{ name, url, mtype string }
+	type named struct {
+		name, url, mtype, dockerContainer string
+		dockerHost                        int
+	}
 
 	var (
 		names    = make(map[int]named)
@@ -407,6 +420,41 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 						loginErr <- fmt.Errorf("login timeout")
 					}
 				}()
+			}
+		case "monitorList":
+			if len(ev.Args) >= 1 {
+				// Payload is a map keyed by monitor id string, e.g.
+				// {"1": {id:1, name:"vandijke.xyz", url:"http://vandijke.xyz",
+				//        type:"docker", docker_container:"vandijke",
+				//        docker_host:1, active:true, ...}}.
+				// It arrives ~130ms after login with the authoritative
+				// names/urls/types — far earlier than certInfo events.
+				var list map[string]struct {
+					ID              int    `json:"id"`
+					Name            string `json:"name"`
+					URL             string `json:"url"`
+					Type            string `json:"type"`
+					DockerContainer string `json:"docker_container"`
+					DockerHost      int    `json:"docker_host"`
+				}
+				if json.Unmarshal(ev.Args[0], &list) == nil {
+					for _, m := range list {
+						seen[m.ID] = true
+						names[m.ID] = named{
+							name:            m.Name,
+							url:             m.URL,
+							mtype:           m.Type,
+							dockerContainer: m.DockerContainer,
+							dockerHost:      m.DockerHost,
+						}
+					}
+				} else {
+					logging.LogWarn("kuma", "Socket.IO monitorList parse error",
+						slog.String("event_type", "monitorList"),
+						slog.String("parse_error", "failed to parse monitor map"),
+						slog.String("raw_snippet", snippet(ev.Args[0])),
+					)
+				}
 			}
 		case "uptime":
 			if len(ev.Args) >= 3 {
@@ -538,9 +586,9 @@ loop:
 		}
 	}
 
-	// Phase 2: collect data for 20 seconds
+	// Phase 2: collect data for the collection window
 	logging.LogDebug("kuma", "Socket.IO collecting monitor data")
-	dataTimer := time.After(20 * time.Second)
+	dataTimer := time.After(dataCollectionWindow)
 	eventCounts := make(map[string]int)
 collectLoop:
 	for {
@@ -586,6 +634,8 @@ collectLoop:
 			m.Name = n.name
 			m.URL = n.url
 			m.Type = n.mtype
+			m.DockerContainer = n.dockerContainer
+			m.DockerHost = n.dockerHost
 		} else {
 			m.Name = fmt.Sprintf("Monitor %d", id)
 			m.Type = "?"
@@ -764,9 +814,9 @@ loop:
 		}
 	}
 
-	// Phase 2: collect data for 20 seconds
+	// Phase 2: collect data for the collection window
 	logging.LogDebug("kuma", "Socket.IO collecting monitor stats")
-	dataTimer := time.After(20 * time.Second)
+	dataTimer := time.After(dataCollectionWindow)
 collectLoop:
 	for {
 		select {

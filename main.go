@@ -1325,7 +1325,10 @@ func (app *App) KumaMonitors(c *gin.Context) {
 
 	result := make([]KumaMonitorSummary, 0, len(clients)*10)
 	for _, ic := range clients {
-		monitors, err := ic.Client.GetMonitors()
+		// GetMonitors() is deprecated and always returns ErrRESTNotSupported
+		// (Uptime Kuma has no REST list endpoint); the Socket.IO query is the
+		// real path and also carries status/uptime/ping. Cached per client.
+		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
 		if err != nil {
 			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
 				slog.Int("instance_id", ic.InstanceID),
@@ -1341,10 +1344,14 @@ func (app *App) KumaMonitors(c *gin.Context) {
 				Type:            m.Type,
 				URL:             m.URL,
 				DockerContainer: m.DockerContainer,
-				// Status/uptime/ping require Socket.IO detail stats.
-				// The summary endpoint uses REST for speed.
-				InstanceID:   ic.InstanceID,
-				InstanceName: instanceName,
+				Status:          m.Status,
+				Uptime24h:       m.Uptime24h,
+				Uptime7d:        m.Uptime7d,
+				Uptime1y:        m.Uptime1y,
+				AvgPing:         m.Ping,
+				LastMsg:         m.LastMsg,
+				InstanceID:      ic.InstanceID,
+				InstanceName:    instanceName,
 			})
 		}
 	}
