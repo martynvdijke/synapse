@@ -349,6 +349,31 @@ func parseID(raw json.RawMessage) (int, bool) {
 	return 0, false
 }
 
+// parseDuration normalizes a Kuma uptime duration arg to its canonical
+// string form ("24", "720", "1y"). Kuma 2.5.0 sends durations as JSON
+// numbers (24, 720, 8760) in the "uptime" event, but some versions/history
+// events use strings ("24", "1y"). Accept both.
+func parseDuration(raw json.RawMessage) (string, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, true
+	}
+	var n float64
+	if json.Unmarshal(raw, &n) == nil {
+		switch n {
+		case 24:
+			return "24", true
+		case 720:
+			return "720", true
+		case 8760:
+			return "1y", true
+		default:
+			return fmt.Sprintf("%g", n), true
+		}
+	}
+	return "", false
+}
+
 func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
 	queryStart := time.Now()
 	logging.LogInfo("kuma", "Querying monitors via Socket.IO",
@@ -461,7 +486,8 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 				if id, ok := parseID(ev.Args[0]); ok {
 					var dur string
 					var val float64
-					if json.Unmarshal(ev.Args[1], &dur) == nil && json.Unmarshal(ev.Args[2], &val) == nil {
+					if d, ok := parseDuration(ev.Args[1]); ok && json.Unmarshal(ev.Args[2], &val) == nil {
+						dur = d
 						seen[id] = true
 						switch dur {
 						case "24":

@@ -217,10 +217,14 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 
 		// Stream monitorList (map keyed by id string) with docker info
 		c.WriteMessage(websocket.TextMessage, []byte(`42["monitorList",{"1":{"id":1,"name":"vandijke.xyz","url":"http://vandijke.xyz","type":"docker","docker_container":"vandijke","docker_host":1,"active":true},"2":{"id":2,"name":"heat","url":"http://heat.local","type":"http","active":true}}]`))
-		// uptime events: "24" => up for monitor 1
-		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime",1,"24",0.98]`))
-		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime",1,"720",0.95]`))
-		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime",2,"24",0]`))
+		// uptime events use the real Kuma wire format: id as string,
+		// duration as JSON number, value as number.
+		// "24" => up for monitor 1
+		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","1",24,0.98]`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","1",720,0.95]`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","1",8760,0.93]`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","2",24,0]`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["avgPing","1",1.5]`))
 
 		// Hold open for the collection window so the client can process
 		time.Sleep(600 * time.Millisecond)
@@ -261,6 +265,15 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 	}
 	if m1.Uptime24h != 0.98 {
 		t.Errorf("expected uptime24h 0.98, got %f", m1.Uptime24h)
+	}
+	if m1.Uptime7d != 0.95 {
+		t.Errorf("expected uptime7d 0.95, got %f", m1.Uptime7d)
+	}
+	if m1.Uptime1y != 0.93 {
+		t.Errorf("expected uptime1y 0.93 (numeric 8760 duration), got %f", m1.Uptime1y)
+	}
+	if m1.Ping != 1.5 {
+		t.Errorf("expected ping 1.5, got %f", m1.Ping)
 	}
 
 	// Monitor 2: name from monitorList, status down (uptime 24h == 0)
