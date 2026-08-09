@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -207,12 +208,23 @@ func (c *sioClient) handleEvent(data []byte) {
 }
 
 func (c *sioClient) handleAck(data []byte) {
-	var raw []json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil || len(raw) == 0 {
+	// Socket.IO protocol v5: ack id is in the packet header as leading
+	// digits, followed by the JSON args array. e.g. "1[{"ok":true}]"
+	// (full packet: 431[{"ok":true}]).
+	i := 0
+	for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+		i++
+	}
+	if i == 0 || i == len(data) {
 		return
 	}
-	var id int
-	if err := json.Unmarshal(raw[0], &id); err != nil {
+	id, err := strconv.Atoi(string(data[:i]))
+	if err != nil {
+		return
+	}
+
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data[i:], &raw); err != nil || len(raw) == 0 {
 		return
 	}
 
@@ -222,7 +234,7 @@ func (c *sioClient) handleAck(data []byte) {
 	c.mu.Unlock()
 
 	if ok {
-		ch <- raw[1:]
+		ch <- raw
 	}
 }
 
@@ -262,12 +274,18 @@ func (c *sioClient) emitWithAck(event string, data any) <-chan []json.RawMessage
 	ch := make(chan []json.RawMessage, 1)
 	c.pendingAcks[id] = ch
 
-	arr := []any{id, event}
+	arr := []any{event}
 	if data != nil {
 		arr = append(arr, data)
 	}
 	b, _ := json.Marshal(arr)
-	c.conn.WriteMessage(websocket.TextMessage, append([]byte("42"), b...))
+	// Socket.IO protocol v5: ack id goes in the packet header as digits
+	// between "42" and the JSON args array, e.g. "421["login",{...}]".
+	// (Protocol v4 put the id as the first element of the JSON array,
+	// which modern servers decode as an event named after the number.)
+	packet := append([]byte("42"), []byte(strconv.Itoa(id))...)
+	packet = append(packet, b...)
+	c.conn.WriteMessage(websocket.TextMessage, packet)
 	c.mu.Unlock()
 
 	return ch
