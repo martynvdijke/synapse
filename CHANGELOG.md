@@ -1,3 +1,10 @@
+## [1.12.4](https://github.com/martynvdijke/synapse/compare/v1.12.3...v1.12.4) (2026-08-11)
+
+
+### Bug Fixes
+
+* show live Kuma monitor count on dashboard ([60e9691](https://github.com/martynvdijke/synapse/commit/60e9691efecc6ba95b5630403de34353cf9aa1fc))
+
 ## [1.12.3](https://github.com/martynvdijke/synapse/compare/v1.12.2...v1.12.3) (2026-08-09)
 
 
