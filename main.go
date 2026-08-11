@@ -1115,7 +1115,7 @@ func (app *App) Status(c *gin.Context) {
 		kumaErr = "no Kuma instances configured"
 	}
 
-	monitorCount, _ := app.database.GetMonitorCount()
+	monitorCount, _ := app.kumaMonitorCount(clients)
 
 	lastDocker, _ := app.database.GetLatestSyncRun("docker")
 	lastNPM, _ := app.database.GetLatestSyncRun("npm")
@@ -1192,6 +1192,36 @@ func (app *App) requireTrmnlToken(c *gin.Context) bool {
 }
 
 // TrmnlStats returns a flat, TRMNL-template-friendly stats payload for
+// kumaMonitorCount returns the live monitor total (and how many are up)
+// across all connected Kuma instances — matching what the Kuma tab shows.
+// The local monitors table only holds monitors Synapse itself synced, so
+// using it here would show 0 even when Kuma has dozens of monitors.
+// When no instance can be reached it falls back to the sync table count
+// so the dashboard never shows a bogus 0.
+func (app *App) kumaMonitorCount(clients []kuma.InstanceClient) (total, up int) {
+	live := false
+	for _, ic := range clients {
+		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
+		if err != nil {
+			continue
+		}
+		live = true
+		total += len(monitors)
+		for _, m := range monitors {
+			if m.Status == 1 {
+				up++
+			}
+		}
+	}
+	if !live {
+		if n, err := app.database.GetMonitorCount(); err == nil {
+			total = n
+			up = n // degrade: per-monitor status unknown, report all up
+		}
+	}
+	return total, up
+}
+
 // e-ink wall displays. It reuses the Status computation path but flattens
 // the response so Liquid templates can read IDX_0.<field> directly.
 func (app *App) TrmnlStats(c *gin.Context) {
@@ -1240,14 +1270,13 @@ func (app *App) TrmnlStats(c *gin.Context) {
 		}
 	}
 
-	monitorCount, _ := app.database.GetMonitorCount()
+	monitorCount, up := app.kumaMonitorCount(clients)
 
 	lastDocker, _ := app.database.GetLatestSyncRun("docker")
 	lastNPM, _ := app.database.GetLatestSyncRun("npm")
 
 	// Up/down degrade gracefully to counts when detail stats are unavailable.
-	up := monitorCount
-	down := 0
+	down := monitorCount - up
 
 	c.JSON(http.StatusOK, gin.H{
 		"docker_count":  dockerCount,
