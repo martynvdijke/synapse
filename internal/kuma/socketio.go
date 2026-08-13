@@ -324,6 +324,9 @@ type KumaMonitor struct {
 	Uptime1y        float64 `json:"uptime_1y"`
 	Ping            float64 `json:"ping"`
 	LastMsg         string  `json:"last_msg,omitempty"`
+	Interval        int     `json:"interval,omitempty"`
+	RetryInterval   int     `json:"retryInterval,omitempty"`
+	MaxRetries      int     `json:"maxretries,omitempty"`
 }
 
 // dataCollectionWindow bounds how long a Socket.IO query collects events
@@ -372,6 +375,80 @@ func parseDuration(raw json.RawMessage) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// sioCommandSession dials Kuma over Socket.IO, performs the JWT login
+// handshake, and returns the connected client plus the event channel. Used by
+// one-shot command flows (add/delete/edit monitor).
+func sioCommandSession(kumaURL, username, password string) (*sioClient, <-chan rawEvent, error) {
+	events := make(chan rawEvent, 256)
+	cli, err := dialSIO(kumaURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("socket.io dial: %w", err)
+	}
+	cli.onEvent = func(ev rawEvent) {
+		events <- ev
+	}
+
+	loginErr := make(chan error, 1)
+	loginSent := false
+	loginTimer := time.After(10 * time.Second)
+
+loop:
+	for {
+		select {
+		case ev := <-events:
+			if ev.Name == "loginRequired" && !loginSent {
+				loginSent = true
+				ackCh := cli.emitWithAck("login", map[string]string{
+					"username": username,
+					"password": password,
+				})
+				go func() {
+					select {
+					case resp := <-ackCh:
+						if len(resp) > 0 {
+							var r struct {
+								Ok bool `json:"ok"`
+							}
+							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
+								loginErr <- nil
+								return
+							}
+						}
+						loginErr <- fmt.Errorf("login rejected")
+					case <-time.After(10 * time.Second):
+						loginErr <- fmt.Errorf("login timeout")
+					}
+				}()
+			}
+		case err := <-loginErr:
+			if err != nil {
+				cli.close()
+				return nil, nil, fmt.Errorf("login: %w", err)
+			}
+			break loop
+		case <-loginTimer:
+			cli.close()
+			return nil, nil, fmt.Errorf("login timeout")
+		}
+	}
+	return cli, events, nil
+}
+
+// parseOKAck decodes a Socket.IO ack of the shape {ok: bool, msg: string}.
+func parseOKAck(resp []json.RawMessage) (bool, string) {
+	if len(resp) == 0 {
+		return false, ""
+	}
+	var r struct {
+		Ok  bool   `json:"ok"`
+		Msg string `json:"msg"`
+	}
+	if json.Unmarshal(resp[0], &r) == nil {
+		return r.Ok, r.Msg
+	}
+	return false, ""
 }
 
 func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
@@ -461,6 +538,9 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 					Type            string `json:"type"`
 					DockerContainer string `json:"docker_container"`
 					DockerHost      int    `json:"docker_host"`
+					Interval        int    `json:"interval"`
+					RetryInterval   int    `json:"retryInterval"`
+					MaxRetries      int    `json:"maxretries"`
 				}
 				if json.Unmarshal(ev.Args[0], &list) == nil {
 					for _, m := range list {
@@ -998,5 +1078,63 @@ loop:
 		return 0, fmt.Errorf("add monitor: unexpected response format")
 	case <-time.After(10 * time.Second):
 		return 0, fmt.Errorf("add monitor response timeout")
+	}
+}
+
+// DeleteMonitorViaSocketIO removes a monitor from Kuma via Socket.IO. The
+// deleteMonitor event takes the monitor id and answers with {ok, msg}.
+func DeleteMonitorViaSocketIO(kumaURL, username, password string, monitorID int) error {
+	cli, _, err := sioCommandSession(kumaURL, username, password)
+	if err != nil {
+		return err
+	}
+	defer cli.close()
+
+	ackCh := cli.emitWithAck("deleteMonitor", monitorID)
+	select {
+	case resp := <-ackCh:
+		ok, msg := parseOKAck(resp)
+		if !ok {
+			if msg == "" {
+				msg = "unexpected response format"
+			}
+			return fmt.Errorf("delete monitor rejected: %s", msg)
+		}
+		logging.LogInfo("kuma", "Monitor deleted via Socket.IO",
+			slog.Int("monitor_id", monitorID),
+		)
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("delete monitor response timeout")
+	}
+}
+
+// EditMonitorViaSocketIO updates a monitor in Kuma via Socket.IO. payload is
+// the full monitor object (name, type, url, docker_container, docker_host,
+// interval, retryInterval, maxretries, conditions, ...) as Kuma's editMonitor
+// expects. Type change is an edit with a different "type" field.
+func EditMonitorViaSocketIO(kumaURL, username, password string, monitorID int, payload map[string]any) error {
+	cli, _, err := sioCommandSession(kumaURL, username, password)
+	if err != nil {
+		return err
+	}
+	defer cli.close()
+
+	ackCh := cli.emitWithAck("editMonitor", []any{monitorID, payload})
+	select {
+	case resp := <-ackCh:
+		ok, msg := parseOKAck(resp)
+		if !ok {
+			if msg == "" {
+				msg = "unexpected response format"
+			}
+			return fmt.Errorf("edit monitor rejected: %s", msg)
+		}
+		logging.LogInfo("kuma", "Monitor edited via Socket.IO",
+			slog.Int("monitor_id", monitorID),
+		)
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("edit monitor response timeout")
 	}
 }

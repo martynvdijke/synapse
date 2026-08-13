@@ -1,6 +1,7 @@
 package kuma
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -88,5 +89,77 @@ func TestClient_AddMonitorViaSocketIO_UsesFnVar(t *testing.T) {
 	}
 	if id != 42 {
 		t.Errorf("expected id 42, got %d", id)
+	}
+}
+
+func TestClientDeleteMonitorViaSocketIO(t *testing.T) {
+	restore := SetDeleteMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		if url != "http://kuma" || user != "u" || pass != "p" || monitorID != 7 {
+			return fmt.Errorf("unexpected args: %s %s %s %d", url, user, pass, monitorID)
+		}
+		return nil
+	})
+	defer restore()
+
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	if err := c.DeleteMonitorViaSocketIO(7); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+}
+
+func TestClientDeleteMonitorErrorPropagates(t *testing.T) {
+	restore := SetDeleteMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return fmt.Errorf("delete monitor rejected: boom")
+	})
+	defer restore()
+
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	err := c.DeleteMonitorViaSocketIO(1)
+	if err == nil || err.Error() != "delete monitor rejected: boom" {
+		t.Fatalf("expected propagated error, got %v", err)
+	}
+}
+
+func TestClientEditMonitorViaSocketIO(t *testing.T) {
+	var gotPayload map[string]any
+	var gotID int
+	restore := SetEditMonitorTestHook(func(url, user, pass string, monitorID int, payload map[string]any) error {
+		gotID = monitorID
+		gotPayload = payload
+		return nil
+	})
+	defer restore()
+
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	payload := map[string]any{"name": "renamed", "type": "http", "interval": 30}
+	if err := c.EditMonitorViaSocketIO(3, payload); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if gotID != 3 {
+		t.Fatalf("expected id 3, got %d", gotID)
+	}
+	if gotPayload["name"] != "renamed" || gotPayload["interval"] != 30 {
+		t.Fatalf("payload not forwarded: %+v", gotPayload)
+	}
+}
+
+func TestClientEditMonitorUsesClientTestHook(t *testing.T) {
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	called := false
+	c.SetTestHooks(&ClientTestHooks{
+		EditMonitor: func(monitorID int, payload map[string]any) error {
+			called = true
+			return nil
+		},
+	})
+	if err := c.EditMonitorViaSocketIO(5, map[string]any{}); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if !called {
+		t.Fatal("client-level hook not called")
 	}
 }

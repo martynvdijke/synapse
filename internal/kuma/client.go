@@ -19,6 +19,8 @@ var ErrRESTNotSupported = errors.New("REST API not supported by Uptime Kuma; use
 type ClientTestHooks struct {
 	QueryMonitors func() ([]KumaMonitor, error)
 	AddMonitor    func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error)
+	DeleteMonitor func(monitorID int) error
+	EditMonitor   func(monitorID int, payload map[string]any) error
 }
 
 type Client struct {
@@ -105,6 +107,29 @@ func SetAddMonitorTestHook(fn func(url, user, pass string, monitorType, name, mo
 	return func() { addMonitorFn = orig }
 }
 
+// deleteMonitorFn / editMonitorFn are package-level hooks overridable in
+// tests without a real Kuma Socket.IO server.
+var (
+	deleteMonitorFn = DeleteMonitorViaSocketIO
+	editMonitorFn   = EditMonitorViaSocketIO
+)
+
+// SetDeleteMonitorTestHook installs a package-level override for
+// DeleteMonitorViaSocketIO. Returns a restore func.
+func SetDeleteMonitorTestHook(fn func(url, user, pass string, monitorID int) error) func() {
+	orig := deleteMonitorFn
+	deleteMonitorFn = fn
+	return func() { deleteMonitorFn = orig }
+}
+
+// SetEditMonitorTestHook installs a package-level override for
+// EditMonitorViaSocketIO. Returns a restore func.
+func SetEditMonitorTestHook(fn func(url, user, pass string, monitorID int, payload map[string]any) error) func() {
+	orig := editMonitorFn
+	editMonitorFn = fn
+	return func() { editMonitorFn = orig }
+}
+
 // SetTestHooks installs per-client test overrides for Socket.IO methods.
 // Use in tests to avoid needing a real Kuma Socket.IO server.
 // Pass nil to clear hooks.
@@ -159,4 +184,34 @@ func (c *Client) AddMonitorViaSocketIO(monitorType, name, url, dockerContainer s
 		c.mu.Unlock()
 	}
 	return id, err
+}
+
+// DeleteMonitorViaSocketIO removes a monitor from Kuma using the Client's
+// stored credentials. A successful delete invalidates the monitor query cache.
+func (c *Client) DeleteMonitorViaSocketIO(monitorID int) error {
+	if c.testHooks != nil && c.testHooks.DeleteMonitor != nil {
+		return c.testHooks.DeleteMonitor(monitorID)
+	}
+	err := deleteMonitorFn(c.url, c.username, c.password, monitorID)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return err
+}
+
+// EditMonitorViaSocketIO updates a monitor in Kuma using the Client's stored
+// credentials. A successful edit invalidates the monitor query cache.
+func (c *Client) EditMonitorViaSocketIO(monitorID int, payload map[string]any) error {
+	if c.testHooks != nil && c.testHooks.EditMonitor != nil {
+		return c.testHooks.EditMonitor(monitorID, payload)
+	}
+	err := editMonitorFn(c.url, c.username, c.password, monitorID, payload)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return err
 }
