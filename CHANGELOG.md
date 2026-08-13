@@ -1,3 +1,15 @@
+# [1.14.0](https://github.com/martynvdijke/synapse/compare/v1.13.0...v1.14.0) (2026-08-13)
+
+
+### Features
+
+* add ServiceLink + DockerEvent entities and reconciliation settings ([3e97496](https://github.com/martynvdijke/synapse/commit/3e9749677850a4ee973e1cdddda6602c7e6ca88a))
+* **docker:** minimal Docker Engine client with event watcher ([23c5db9](https://github.com/martynvdijke/synapse/commit/23c5db9586ff617e50f9a4e23ce7334a4ce9981b))
+* **kuma:** delete and edit monitors via Socket.IO ([9061d48](https://github.com/martynvdijke/synapse/commit/9061d4858c5fc972d389a7c3bac3c18ef877b39e))
+* **notify:** EventNotifier with per-category toggles and cooldown dedup ([600fe37](https://github.com/martynvdijke/synapse/commit/600fe37b70f876c2869652f2357b9f7b3b433991))
+* **npm:** full proxy host details, create and update ([52fb857](https://github.com/martynvdijke/synapse/commit/52fb8579a1b0750206d0327ef36458a3b9c0b80f))
+* **sync:** reconciliation engine over service links ([35514bf](https://github.com/martynvdijke/synapse/commit/35514bfb63cd87851fe58a2eda18197aac614750))
+
 # [1.13.0](https://github.com/martynvdijke/synapse/compare/v1.12.4...v1.13.0) (2026-08-13)
 
 
