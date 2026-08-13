@@ -24,7 +24,7 @@ export const MOCK_NPM_INSTANCES = [
 
 export const MOCK_PROXIES = [
   { cname: 'example.com', container: 'web-app', in_kuma: true, source_instance_name: 'npm-edge' },
-  { cname: 'api.example.com', container: 'api', in_kuma: false, source_instance_name: 'npm-edge' },
+  { cname: 'api.example.com', container: '', in_kuma: false, source_instance_name: 'npm-edge' },
 ];
 
 export const MOCK_SETTINGS = {

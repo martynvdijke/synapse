@@ -520,8 +520,8 @@ func (app *App) TestNPM(c *gin.Context) {
 	}
 	clients, _ := app.kumaRegistry.All()
 	npmClients, _ := app.npmRegistry.All()
-	_, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-	if err != nil {
+	proxies, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+	if err != nil && len(proxies) == 0 {
 		logging.LogError("app", "NPM connection test failed",
 			slog.String("npm_host", s.NPMHost),
 			slog.String("error", err.Error()),
@@ -529,6 +529,12 @@ func (app *App) TestNPM(c *gin.Context) {
 		)
 		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
 		return
+	}
+	if err != nil {
+		logging.LogError("app", "Partial NPM fetch failure during connection test",
+			slog.String("npm_host", s.NPMHost),
+			slog.String("error", err.Error()),
+		)
 	}
 	logging.LogInfo("app", "NPM connection test successful",
 		slog.String("npm_host", s.NPMHost),
@@ -1081,9 +1087,9 @@ func (app *App) Status(c *gin.Context) {
 	npmCount := 0
 	npmErr := ""
 	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-	if npmFetchErr == nil {
-		npmCount = len(npmProxies)
-	} else {
+	// Partial results are still served when only some instances fail.
+	npmCount = len(npmProxies)
+	if npmFetchErr != nil {
 		npmErr = npmFetchErr.Error()
 	}
 
@@ -1247,9 +1253,9 @@ func (app *App) TrmnlStats(c *gin.Context) {
 	npmCount := 0
 	npmErr := ""
 	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-	if npmFetchErr == nil {
-		npmCount = len(npmProxies)
-	} else {
+	// Partial results are still served when only some instances fail.
+	npmCount = len(npmProxies)
+	if npmFetchErr != nil {
 		npmErr = npmFetchErr.Error()
 	}
 
@@ -1311,9 +1317,16 @@ func (app *App) Proxies(c *gin.Context) {
 	clients, _ := app.kumaRegistry.All()
 	npmClients, _ := app.npmRegistry.All()
 	result, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-	if err != nil {
+	if err != nil && len(result) == 0 {
+		// All instances failed — no partial results to serve.
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if err != nil {
+		// Partial failure: serve the results we have, log the aggregate error.
+		logging.LogError("app", "Partial NPM proxy fetch failure",
+			slog.String("error", err.Error()),
+		)
 	}
 	if result == nil {
 		result = []synclib.ProxyInfo{}
@@ -1815,10 +1828,14 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 	clients, _ := app.kumaRegistry.All()
 	npmClients, _ := app.npmRegistry.All()
 	proxies, npmErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-	if npmErr == nil {
-		for _, p := range proxies {
-			npmCNAMEs = append(npmCNAMEs, p.CNAME)
-		}
+	if npmErr != nil {
+		// Partial failure: use whatever was fetched, log the aggregate error.
+		logging.LogError("app", "Partial NPM proxy fetch failure in Authelia status",
+			slog.String("error", npmErr.Error()),
+		)
+	}
+	for _, p := range proxies {
+		npmCNAMEs = append(npmCNAMEs, p.CNAME)
 	}
 
 	matched, missing := authelia.CompareCNAMEs(npmCNAMEs, autheliaDomains)
@@ -2131,12 +2148,19 @@ func (app *App) AutheliaSync(c *gin.Context) {
 
 	npmClients, _ := app.npmRegistry.All()
 	npmEntries, err := synclib.GetNPMProxyEntries(npmClients)
-	if err != nil {
+	if err != nil && len(npmEntries) == 0 {
+		// All instances failed — nothing to sync.
 		logging.LogError("authelia", "Failed to fetch NPM entries for Authelia sync",
 			slog.String("error", err.Error()),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch NPM entries: " + err.Error()})
 		return
+	}
+	if err != nil {
+		// Partial failure: proceed with the entries we have.
+		logging.LogError("authelia", "Partial NPM fetch failure during Authelia sync",
+			slog.String("error", err.Error()),
+		)
 	}
 
 	var overrides map[string]string

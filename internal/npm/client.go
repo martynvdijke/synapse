@@ -20,26 +20,25 @@ import (
 	"synapse/internal/logging"
 )
 
+// ProxyHost mirrors the flattened shape returned by the NPM REST API
+// (GET /api/nginx/proxy-hosts). The API has no nested "forwarding" object and
+// no "container" field — forward_* fields are flat on the host.
 type ProxyHost struct {
-	ID          int              `json:"id"`
-	DomainNames []string         `json:"domain_names"`
-	Forwarding  ForwardingConfig `json:"forwarding"`
-}
-
-type ForwardingConfig struct {
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Container string `json:"container"`
-	Protocol  string `json:"protocol"`
+	ID            int      `json:"id"`
+	DomainNames   []string `json:"domain_names"`
+	ForwardHost   string   `json:"forward_host"`
+	ForwardPort   int      `json:"forward_port"`
+	ForwardScheme string   `json:"forward_scheme"`
+	Enabled       bool     `json:"enabled"`
 }
 
 type ProxyEntry struct {
-	CNAME     string `json:"cname"`
-	Container string `json:"container"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`
-	SourceInstanceID int `json:"source_instance_id,omitempty"`
+	CNAME            string `json:"cname"`
+	Container        string `json:"container"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	Protocol         string `json:"protocol"`
+	SourceInstanceID int    `json:"source_instance_id,omitempty"`
 }
 
 var ErrNPM2FARequired = errors.New("NPM account has 2FA enabled. Create a dedicated API account without 2FA for Synapse")
@@ -230,18 +229,16 @@ func (c *Client) GetProxyHosts() ([]ProxyEntry, error) {
 
 	var entries []ProxyEntry
 	for _, host := range hosts {
-		forwarding := host.Forwarding
-		if len(host.DomainNames) == 0 || forwarding.Container == "" {
+		if len(host.DomainNames) == 0 || !host.Enabled {
 			continue
 		}
 
 		for _, domain := range host.DomainNames {
 			entries = append(entries, ProxyEntry{
 				CNAME:     domain,
-				Container: forwarding.Container,
-				Host:      forwarding.Host,
-				Port:      forwarding.Port,
-				Protocol:  forwarding.Protocol,
+				Host:      host.ForwardHost,
+				Port:      host.ForwardPort,
+				Protocol:  host.ForwardScheme,
 			})
 		}
 	}

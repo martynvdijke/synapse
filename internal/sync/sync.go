@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -494,16 +495,20 @@ func GetDockerServicesWithStatus(composePath string, clients []kuma.InstanceClie
 }
 
 // GetNPMProxyEntries fetches proxy entries across all NPM instances, merged with dedup (first CNAME wins by instance ID order).
+// Per-instance fetch failures are logged and collected; when at least one instance fails the
+// aggregate error is returned together with any partial results (empty when all instances fail).
 func GetNPMProxyEntries(npmClients []npm.InstanceClient) ([]npm.ProxyEntry, error) {
 	seen := make(map[string]bool)
 	var result []npm.ProxyEntry
+	var errs []error
 	for _, nc := range npmClients {
 		entries, err := nc.Client.GetProxyHosts()
 		if err != nil {
-			logging.LogWarn("sync", "Failed to fetch proxy entries from NPM instance",
+			logging.LogError("sync", "Failed to fetch proxy entries from NPM instance",
 				slog.Int("instance_id", nc.InstanceID),
 				slog.String("error", err.Error()),
 			)
+			errs = append(errs, fmt.Errorf("instance %d: %w", nc.InstanceID, err))
 			continue
 		}
 		for _, e := range entries {
@@ -515,7 +520,10 @@ func GetNPMProxyEntries(npmClients []npm.InstanceClient) ([]npm.ProxyEntry, erro
 			result = append(result, e)
 		}
 	}
-	return result, nil
+	if len(errs) == 0 {
+		return result, nil
+	}
+	return result, errors.Join(errs...)
 }
 
 func GetNPMProxiesWithStatus(npmClients []npm.InstanceClient, clients []kuma.InstanceClient) ([]ProxyInfo, error) {
@@ -533,13 +541,15 @@ func GetNPMProxiesWithStatus(npmClients []npm.InstanceClient, clients []kuma.Ins
 	// Fan out across all NPM instances, merge with dedup (first CNAME wins by instance ID order).
 	seen := make(map[string]bool)
 	var npmEntries []npm.ProxyEntry
+	var npmErrs []error
 	for _, nc := range npmClients {
 		entries, err := nc.Client.GetProxyHosts()
 		if err != nil {
-			logging.LogWarn("sync", "Failed to fetch proxy hosts from NPM instance",
+			logging.LogError("sync", "Failed to fetch proxy hosts from NPM instance",
 				slog.Int("instance_id", nc.InstanceID),
 				slog.String("error", err.Error()),
 			)
+			npmErrs = append(npmErrs, fmt.Errorf("instance %d: %w", nc.InstanceID, err))
 			continue
 		}
 		for _, e := range entries {
@@ -590,7 +600,10 @@ func GetNPMProxiesWithStatus(npmClients []npm.InstanceClient, clients []kuma.Ins
 		slog.Int("proxy_count", len(result)),
 		slog.Duration("duration", time.Since(start)),
 	)
-	return result, nil
+	if len(npmErrs) == 0 {
+		return result, nil
+	}
+	return result, errors.Join(npmErrs...)
 }
 
 func RunDockerSync(composePath string, clients []kuma.InstanceClient, database *db.DB, onProgress ProgressFn) db.SyncRun {
@@ -892,6 +905,11 @@ func RunNPMSync(npmClients []npm.InstanceClient, clients []kuma.InstanceClient, 
 
 	for _, entry := range entries {
 		cname := entry.CNAME
+		serviceName := entry.Container
+		if serviceName == "" {
+			// NPM's API does not expose a container name; fall back to the CNAME.
+			serviceName = cname
+		}
 
 		for i := range states {
 			current++
@@ -937,7 +955,7 @@ func RunNPMSync(npmClients []npm.InstanceClient, clients []kuma.InstanceClient, 
 				)
 				database.AddMonitor(&db.Monitor{
 					Name:           cname,
-					ServiceName:    entry.Container,
+					ServiceName:    serviceName,
 					MonitorType:    "http",
 					URL:            fmt.Sprintf("http://%s", cname),
 					KumaID:         kumaID,

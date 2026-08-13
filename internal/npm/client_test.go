@@ -58,24 +58,20 @@ func TestGetProxyHosts_Success(t *testing.T) {
 	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		resp := []ProxyHost{
 			{
-				ID:          1,
-				DomainNames: []string{"app.example.com"},
-				Forwarding: ForwardingConfig{
-					Host:      "192.168.1.10",
-					Port:      8080,
-					Protocol:  "http",
-					Container: "myapp",
-				},
+				ID:            1,
+				DomainNames:   []string{"app.example.com"},
+				ForwardHost:   "192.168.1.10",
+				ForwardPort:   8080,
+				ForwardScheme: "http",
+				Enabled:       true,
 			},
 			{
-				ID:          2,
-				DomainNames: []string{"api.example.com", "api.internal"},
-				Forwarding: ForwardingConfig{
-					Host:      "192.168.1.11",
-					Port:      9000,
-					Protocol:  "http",
-					Container: "api",
-				},
+				ID:            2,
+				DomainNames:   []string{"api.example.com", "api.internal"},
+				ForwardHost:   "192.168.1.11",
+				ForwardPort:   9000,
+				ForwardScheme: "http",
+				Enabled:       true,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -92,17 +88,14 @@ func TestGetProxyHosts_Success(t *testing.T) {
 	}
 
 	expected := []ProxyEntry{
-		{CNAME: "app.example.com", Container: "myapp", Host: "192.168.1.10", Port: 8080, Protocol: "http"},
-		{CNAME: "api.example.com", Container: "api", Host: "192.168.1.11", Port: 9000, Protocol: "http"},
-		{CNAME: "api.internal", Container: "api", Host: "192.168.1.11", Port: 9000, Protocol: "http"},
+		{CNAME: "app.example.com", Host: "192.168.1.10", Port: 8080, Protocol: "http"},
+		{CNAME: "api.example.com", Host: "192.168.1.11", Port: 9000, Protocol: "http"},
+		{CNAME: "api.internal", Host: "192.168.1.11", Port: 9000, Protocol: "http"},
 	}
 
 	for i, e := range expected {
 		if entries[i].CNAME != e.CNAME {
 			t.Errorf("entry %d CNAME: expected %q, got %q", i, e.CNAME, entries[i].CNAME)
-		}
-		if entries[i].Container != e.Container {
-			t.Errorf("entry %d Container: expected %q, got %q", i, e.Container, entries[i].Container)
 		}
 		if entries[i].Host != e.Host {
 			t.Errorf("entry %d Host: expected %q, got %q", i, e.Host, entries[i].Host)
@@ -110,31 +103,70 @@ func TestGetProxyHosts_Success(t *testing.T) {
 		if entries[i].Port != e.Port {
 			t.Errorf("entry %d Port: expected %d, got %d", i, e.Port, entries[i].Port)
 		}
+		if entries[i].Protocol != e.Protocol {
+			t.Errorf("entry %d Protocol: expected %q, got %q", i, e.Protocol, entries[i].Protocol)
+		}
 	}
 }
 
-func TestGetProxyHosts_NoContainerSkips(t *testing.T) {
+func TestGetProxyHosts_NoContainerKept(t *testing.T) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
+		// The NPM API never returns a container field — hosts without one
+		// must be kept, not skipped.
+		resp := []ProxyHost{
+			{
+				ID:            1,
+				DomainNames:   []string{"app.example.com"},
+				ForwardHost:   "192.168.1.10",
+				ForwardPort:   8080,
+				ForwardScheme: "http",
+				Enabled:       true,
+			},
+			{
+				ID:            2,
+				DomainNames:   []string{"api.example.com"},
+				ForwardHost:   "192.168.1.11",
+				ForwardPort:   9000,
+				ForwardScheme: "http",
+				Enabled:       true,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	entries, err := GetProxyHosts(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (no-container hosts kept), got %d", len(entries))
+	}
+	for _, e := range entries {
+		if e.Container != "" {
+			t.Errorf("expected empty container for %q, got %q", e.CNAME, e.Container)
+		}
+	}
+}
+
+func TestGetProxyHosts_DisabledSkipped(t *testing.T) {
 	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		resp := []ProxyHost{
 			{
-				ID:          1,
-				DomainNames: []string{"orphan.example.com"},
-				Forwarding: ForwardingConfig{
-					Host:      "192.168.1.10",
-					Port:      8080,
-					Protocol:  "http",
-					Container: "", // no container → should be skipped
-				},
+				ID:            1,
+				DomainNames:   []string{"disabled.example.com"},
+				ForwardHost:   "192.168.1.10",
+				ForwardPort:   8080,
+				ForwardScheme: "http",
+				Enabled:       false,
 			},
 			{
-				ID:          2,
-				DomainNames: []string{"valid.example.com"},
-				Forwarding: ForwardingConfig{
-					Host:      "192.168.1.11",
-					Port:      9000,
-					Protocol:  "http",
-					Container: "myapp",
-				},
+				ID:            2,
+				DomainNames:   []string{"enabled.example.com"},
+				ForwardHost:   "192.168.1.11",
+				ForwardPort:   9000,
+				ForwardScheme: "https",
+				Enabled:       true,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -146,10 +178,13 @@ func TestGetProxyHosts_NoContainerSkips(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+		t.Fatalf("expected 1 entry (disabled skipped), got %d", len(entries))
 	}
-	if entries[0].CNAME != "valid.example.com" {
-		t.Errorf("expected CNAME valid.example.com, got %q", entries[0].CNAME)
+	if entries[0].CNAME != "enabled.example.com" {
+		t.Errorf("expected CNAME enabled.example.com, got %q", entries[0].CNAME)
+	}
+	if entries[0].Protocol != "https" {
+		t.Errorf("expected protocol https, got %q", entries[0].Protocol)
 	}
 }
 
@@ -157,14 +192,12 @@ func TestGetProxyHosts_NoDomainsSkips(t *testing.T) {
 	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
 		resp := []ProxyHost{
 			{
-				ID:          1,
-				DomainNames: []string{}, // no domains → should be skipped
-				Forwarding: ForwardingConfig{
-					Host:      "192.168.1.10",
-					Port:      8080,
-					Protocol:  "http",
-					Container: "myapp",
-				},
+				ID:            1,
+				DomainNames:   []string{}, // no domains → should be skipped
+				ForwardHost:   "192.168.1.10",
+				ForwardPort:   8080,
+				ForwardScheme: "http",
+				Enabled:       true,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")

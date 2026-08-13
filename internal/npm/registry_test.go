@@ -40,9 +40,12 @@ func mockNPMServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]ProxyHost{
 			{
-				ID:          1,
-				DomainNames: []string{"example.com"},
-				Forwarding:  ForwardingConfig{Host: "10.0.0.1", Port: 80, Container: "web", Protocol: "http"},
+				ID:            1,
+				DomainNames:   []string{"example.com"},
+				ForwardHost:   "10.0.0.1",
+				ForwardPort:   80,
+				ForwardScheme: "http",
+				Enabled:       true,
 			},
 		})
 	})

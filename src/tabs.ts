@@ -218,7 +218,7 @@ export function loadNPMProxies(): void {
                 + '<td data-label="Instance">' + (p.source_instance_name
                     ? '<span class="badge bg-secondary">' + esc(p.source_instance_name) + '</span>'
                     : '<span class="text-muted">\u2014</span>') + '</td>'
-                + '<td data-label="Container">' + esc(p.container) + '</td>'
+                + '<td data-label="Container">' + (p.container ? esc(p.container) : '<span class="text-muted">\u2014</span>') + '</td>'
                 + '<td data-label="In Kuma">' + (p.in_kuma
                     ? '<span class="badge bg-success">\u2713 In Kuma</span>'
                     : '<span class="badge bg-secondary">\u2717 Missing</span>') + '</td>'

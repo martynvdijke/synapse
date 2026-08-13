@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1258,22 +1259,44 @@ func mockNpmClient(t *testing.T, instanceID int, entries []npm.ProxyEntry) npm.I
 		})
 	})
 	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
-		// Convert ProxyEntry to ProxyHost response format for realistic mock
+		// Convert ProxyEntry to flattened ProxyHost response format matching the
+		// real NPM REST API (no nested forwarding object, no container field).
 		hosts := make([]npm.ProxyHost, len(entries))
 		for i, e := range entries {
 			hosts[i] = npm.ProxyHost{
-				ID:          i + 1,
-				DomainNames: []string{e.CNAME},
-				Forwarding: npm.ForwardingConfig{
-					Host:      e.Host,
-					Port:      e.Port,
-					Container: e.Container,
-					Protocol:  e.Protocol,
-				},
+				ID:            i + 1,
+				DomainNames:   []string{e.CNAME},
+				ForwardHost:   e.Host,
+				ForwardPort:   e.Port,
+				ForwardScheme: e.Protocol,
+				Enabled:       true,
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(hosts)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return npm.InstanceClient{
+		InstanceID: instanceID,
+		Client:     npm.NewClient(srv.URL, "user", "pass"),
+	}
+}
+
+// mockNpmClientFailing returns an npm.InstanceClient whose proxy-hosts
+// endpoint always fails (e.g. unreachable/unauthorized NPM instance).
+func mockNpmClientFailing(t *testing.T, instanceID int) npm.InstanceClient {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":   "test-jwt-token",
+			"expires": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		})
+	})
+	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -1315,6 +1338,42 @@ func TestGetNPMProxyEntries(t *testing.T) {
 	}
 	if found["internal.example.com"] != 2 {
 		t.Errorf("internal.example.com should be from instance 2, got instance %d", found["internal.example.com"])
+	}
+}
+
+func TestGetNPMProxyEntriesPartialFailure(t *testing.T) {
+	// Instance 1 fails, instance 2 succeeds: partial results + aggregate error.
+	c1 := mockNpmClientFailing(t, 1)
+	c2 := mockNpmClient(t, 2, []npm.ProxyEntry{
+		{CNAME: "app.example.com", Container: "app", Host: "10.0.0.2", Port: 8080, Protocol: "http"},
+	})
+
+	entries, err := GetNPMProxyEntries([]npm.InstanceClient{c1, c2})
+	if err == nil {
+		t.Fatal("expected aggregate error for failing instance 1")
+	}
+	if !strings.Contains(err.Error(), "instance 1") {
+		t.Errorf("expected error to mention instance 1, got %q", err.Error())
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 partial entry (from instance 2), got %d", len(entries))
+	}
+	if entries[0].CNAME != "app.example.com" || entries[0].SourceInstanceID != 2 {
+		t.Errorf("expected app.example.com from instance 2, got %+v", entries[0])
+	}
+}
+
+func TestGetNPMProxyEntriesAllFail(t *testing.T) {
+	// All instances fail: empty result + aggregate error.
+	c1 := mockNpmClientFailing(t, 1)
+	c2 := mockNpmClientFailing(t, 2)
+
+	entries, err := GetNPMProxyEntries([]npm.InstanceClient{c1, c2})
+	if err == nil {
+		t.Fatal("expected aggregate error")
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries when all instances fail, got %d", len(entries))
 	}
 }
 
@@ -1382,6 +1441,26 @@ func TestGetNPMProxiesWithStatusEmptyClients(t *testing.T) {
 	}
 	if len(proxies) != 0 {
 		t.Errorf("expected 0 proxies for nil clients, got %d", len(proxies))
+	}
+}
+
+func TestGetNPMProxiesWithStatusPartialFailure(t *testing.T) {
+	// Instance 1 fails, instance 2 succeeds: partial proxies + aggregate error.
+	c1 := mockNpmClientFailing(t, 1)
+	c2 := mockNpmClient(t, 2, []npm.ProxyEntry{
+		{CNAME: "api.example.com", Container: "api", Host: "10.0.0.2", Port: 8080, Protocol: "http"},
+	})
+	kumaClient := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 42, Name: "api.example.com", Type: "http"}})
+
+	proxies, err := GetNPMProxiesWithStatus([]npm.InstanceClient{c1, c2}, []kuma.InstanceClient{kumaClient})
+	if err == nil {
+		t.Fatal("expected aggregate error for failing instance 1")
+	}
+	if len(proxies) != 1 {
+		t.Fatalf("expected 1 partial proxy (from instance 2), got %d", len(proxies))
+	}
+	if proxies[0].CNAME != "api.example.com" || !proxies[0].InKuma || proxies[0].SourceInstanceID != 2 {
+		t.Errorf("expected api.example.com InKuma from instance 2, got %+v", proxies[0])
 	}
 }
 

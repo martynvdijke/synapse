@@ -182,6 +182,18 @@ test.describe('NPM tab — proxies table', () => {
     const firstRow = page.locator('#npm-tbody tr').first();
     await expect(firstRow.locator('.badge.bg-success')).toContainText('In Kuma');
   });
+
+  test('npm tab shows em-dash for proxy hosts without a container', async ({ page }) => {
+    await page.click('#tab-btn-npm');
+    await page.waitForFunction(() => {
+      const tbody = document.getElementById('npm-tbody');
+      return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelectorAll('tr').length === 2;
+    }, { timeout: 10000 });
+    // api.example.com (row 2) has no container in the mock — expect the em-dash placeholder.
+    const secondRow = page.locator('#npm-tbody tr').nth(1);
+    await expect(secondRow).toContainText('api.example.com');
+    await expect(secondRow.locator('.text-muted')).toHaveText('—');
+  });
 });
 
 test.describe('Sync History tab', () => {
