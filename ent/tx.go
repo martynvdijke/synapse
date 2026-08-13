@@ -16,12 +16,16 @@ type Tx struct {
 	AutheliaAlert *AutheliaAlertClient
 	// AutheliaInstance is the client for interacting with the AutheliaInstance builders.
 	AutheliaInstance *AutheliaInstanceClient
+	// DockerEvent is the client for interacting with the DockerEvent builders.
+	DockerEvent *DockerEventClient
 	// KumaInstance is the client for interacting with the KumaInstance builders.
 	KumaInstance *KumaInstanceClient
 	// Monitor is the client for interacting with the Monitor builders.
 	Monitor *MonitorClient
 	// NPMInstance is the client for interacting with the NPMInstance builders.
 	NPMInstance *NPMInstanceClient
+	// ServiceLink is the client for interacting with the ServiceLink builders.
+	ServiceLink *ServiceLinkClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
 	// SyncRun is the client for interacting with the SyncRun builders.
@@ -161,9 +165,11 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.AutheliaAlert = NewAutheliaAlertClient(tx.config)
 	tx.AutheliaInstance = NewAutheliaInstanceClient(tx.config)
+	tx.DockerEvent = NewDockerEventClient(tx.config)
 	tx.KumaInstance = NewKumaInstanceClient(tx.config)
 	tx.Monitor = NewMonitorClient(tx.config)
 	tx.NPMInstance = NewNPMInstanceClient(tx.config)
+	tx.ServiceLink = NewServiceLinkClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)
 	tx.SyncRun = NewSyncRunClient(tx.config)
 	tx.TempAccess = NewTempAccessClient(tx.config)

@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"synapse/ent/autheliaalert"
 	"synapse/ent/autheliainstance"
+	"synapse/ent/dockerevent"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
 	"synapse/ent/predicate"
+	"synapse/ent/servicelink"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 	"synapse/ent/tempaccess"
@@ -33,9 +35,11 @@ const (
 	// Node types.
 	TypeAutheliaAlert    = "AutheliaAlert"
 	TypeAutheliaInstance = "AutheliaInstance"
+	TypeDockerEvent      = "DockerEvent"
 	TypeKumaInstance     = "KumaInstance"
 	TypeMonitor          = "Monitor"
 	TypeNPMInstance      = "NPMInstance"
+	TypeServiceLink      = "ServiceLink"
 	TypeSettings         = "Settings"
 	TypeSyncRun          = "SyncRun"
 	TypeTempAccess       = "TempAccess"
@@ -1489,6 +1493,954 @@ func (m *AutheliaInstanceMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *AutheliaInstanceMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown AutheliaInstance edge %s", name)
+}
+
+// DockerEventMutation represents an operation that mutates the DockerEvent nodes in the graph.
+type DockerEventMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *int
+	event_type    *string
+	action        *string
+	actor_id      *string
+	actor_name    *string
+	image         *string
+	status        *string
+	image_old     *string
+	image_new     *string
+	payload       *string
+	created_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*DockerEvent, error)
+	predicates    []predicate.DockerEvent
+}
+
+var _ ent.Mutation = (*DockerEventMutation)(nil)
+
+// dockereventOption allows management of the mutation configuration using functional options.
+type dockereventOption func(*DockerEventMutation)
+
+// newDockerEventMutation creates new mutation for the DockerEvent entity.
+func newDockerEventMutation(c config, op Op, opts ...dockereventOption) *DockerEventMutation {
+	m := &DockerEventMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeDockerEvent,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withDockerEventID sets the ID field of the mutation.
+func withDockerEventID(id int) dockereventOption {
+	return func(m *DockerEventMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *DockerEvent
+		)
+		m.oldValue = func(ctx context.Context) (*DockerEvent, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().DockerEvent.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withDockerEvent sets the old DockerEvent of the mutation.
+func withDockerEvent(node *DockerEvent) dockereventOption {
+	return func(m *DockerEventMutation) {
+		m.oldValue = func(context.Context) (*DockerEvent, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m DockerEventMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m DockerEventMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *DockerEventMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *DockerEventMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().DockerEvent.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetEventType sets the "event_type" field.
+func (m *DockerEventMutation) SetEventType(s string) {
+	m.event_type = &s
+}
+
+// EventType returns the value of the "event_type" field in the mutation.
+func (m *DockerEventMutation) EventType() (r string, exists bool) {
+	v := m.event_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEventType returns the old "event_type" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldEventType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEventType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEventType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEventType: %w", err)
+	}
+	return oldValue.EventType, nil
+}
+
+// ResetEventType resets all changes to the "event_type" field.
+func (m *DockerEventMutation) ResetEventType() {
+	m.event_type = nil
+}
+
+// SetAction sets the "action" field.
+func (m *DockerEventMutation) SetAction(s string) {
+	m.action = &s
+}
+
+// Action returns the value of the "action" field in the mutation.
+func (m *DockerEventMutation) Action() (r string, exists bool) {
+	v := m.action
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAction returns the old "action" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldAction(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAction is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAction requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAction: %w", err)
+	}
+	return oldValue.Action, nil
+}
+
+// ResetAction resets all changes to the "action" field.
+func (m *DockerEventMutation) ResetAction() {
+	m.action = nil
+}
+
+// SetActorID sets the "actor_id" field.
+func (m *DockerEventMutation) SetActorID(s string) {
+	m.actor_id = &s
+}
+
+// ActorID returns the value of the "actor_id" field in the mutation.
+func (m *DockerEventMutation) ActorID() (r string, exists bool) {
+	v := m.actor_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActorID returns the old "actor_id" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldActorID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActorID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActorID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActorID: %w", err)
+	}
+	return oldValue.ActorID, nil
+}
+
+// ClearActorID clears the value of the "actor_id" field.
+func (m *DockerEventMutation) ClearActorID() {
+	m.actor_id = nil
+	m.clearedFields[dockerevent.FieldActorID] = struct{}{}
+}
+
+// ActorIDCleared returns if the "actor_id" field was cleared in this mutation.
+func (m *DockerEventMutation) ActorIDCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldActorID]
+	return ok
+}
+
+// ResetActorID resets all changes to the "actor_id" field.
+func (m *DockerEventMutation) ResetActorID() {
+	m.actor_id = nil
+	delete(m.clearedFields, dockerevent.FieldActorID)
+}
+
+// SetActorName sets the "actor_name" field.
+func (m *DockerEventMutation) SetActorName(s string) {
+	m.actor_name = &s
+}
+
+// ActorName returns the value of the "actor_name" field in the mutation.
+func (m *DockerEventMutation) ActorName() (r string, exists bool) {
+	v := m.actor_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActorName returns the old "actor_name" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldActorName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActorName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActorName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActorName: %w", err)
+	}
+	return oldValue.ActorName, nil
+}
+
+// ClearActorName clears the value of the "actor_name" field.
+func (m *DockerEventMutation) ClearActorName() {
+	m.actor_name = nil
+	m.clearedFields[dockerevent.FieldActorName] = struct{}{}
+}
+
+// ActorNameCleared returns if the "actor_name" field was cleared in this mutation.
+func (m *DockerEventMutation) ActorNameCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldActorName]
+	return ok
+}
+
+// ResetActorName resets all changes to the "actor_name" field.
+func (m *DockerEventMutation) ResetActorName() {
+	m.actor_name = nil
+	delete(m.clearedFields, dockerevent.FieldActorName)
+}
+
+// SetImage sets the "image" field.
+func (m *DockerEventMutation) SetImage(s string) {
+	m.image = &s
+}
+
+// Image returns the value of the "image" field in the mutation.
+func (m *DockerEventMutation) Image() (r string, exists bool) {
+	v := m.image
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldImage returns the old "image" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldImage(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldImage is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldImage requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldImage: %w", err)
+	}
+	return oldValue.Image, nil
+}
+
+// ClearImage clears the value of the "image" field.
+func (m *DockerEventMutation) ClearImage() {
+	m.image = nil
+	m.clearedFields[dockerevent.FieldImage] = struct{}{}
+}
+
+// ImageCleared returns if the "image" field was cleared in this mutation.
+func (m *DockerEventMutation) ImageCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldImage]
+	return ok
+}
+
+// ResetImage resets all changes to the "image" field.
+func (m *DockerEventMutation) ResetImage() {
+	m.image = nil
+	delete(m.clearedFields, dockerevent.FieldImage)
+}
+
+// SetStatus sets the "status" field.
+func (m *DockerEventMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *DockerEventMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ClearStatus clears the value of the "status" field.
+func (m *DockerEventMutation) ClearStatus() {
+	m.status = nil
+	m.clearedFields[dockerevent.FieldStatus] = struct{}{}
+}
+
+// StatusCleared returns if the "status" field was cleared in this mutation.
+func (m *DockerEventMutation) StatusCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldStatus]
+	return ok
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *DockerEventMutation) ResetStatus() {
+	m.status = nil
+	delete(m.clearedFields, dockerevent.FieldStatus)
+}
+
+// SetImageOld sets the "image_old" field.
+func (m *DockerEventMutation) SetImageOld(s string) {
+	m.image_old = &s
+}
+
+// ImageOld returns the value of the "image_old" field in the mutation.
+func (m *DockerEventMutation) ImageOld() (r string, exists bool) {
+	v := m.image_old
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldImageOld returns the old "image_old" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldImageOld(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldImageOld is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldImageOld requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldImageOld: %w", err)
+	}
+	return oldValue.ImageOld, nil
+}
+
+// ClearImageOld clears the value of the "image_old" field.
+func (m *DockerEventMutation) ClearImageOld() {
+	m.image_old = nil
+	m.clearedFields[dockerevent.FieldImageOld] = struct{}{}
+}
+
+// ImageOldCleared returns if the "image_old" field was cleared in this mutation.
+func (m *DockerEventMutation) ImageOldCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldImageOld]
+	return ok
+}
+
+// ResetImageOld resets all changes to the "image_old" field.
+func (m *DockerEventMutation) ResetImageOld() {
+	m.image_old = nil
+	delete(m.clearedFields, dockerevent.FieldImageOld)
+}
+
+// SetImageNew sets the "image_new" field.
+func (m *DockerEventMutation) SetImageNew(s string) {
+	m.image_new = &s
+}
+
+// ImageNew returns the value of the "image_new" field in the mutation.
+func (m *DockerEventMutation) ImageNew() (r string, exists bool) {
+	v := m.image_new
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldImageNew returns the old "image_new" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldImageNew(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldImageNew is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldImageNew requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldImageNew: %w", err)
+	}
+	return oldValue.ImageNew, nil
+}
+
+// ClearImageNew clears the value of the "image_new" field.
+func (m *DockerEventMutation) ClearImageNew() {
+	m.image_new = nil
+	m.clearedFields[dockerevent.FieldImageNew] = struct{}{}
+}
+
+// ImageNewCleared returns if the "image_new" field was cleared in this mutation.
+func (m *DockerEventMutation) ImageNewCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldImageNew]
+	return ok
+}
+
+// ResetImageNew resets all changes to the "image_new" field.
+func (m *DockerEventMutation) ResetImageNew() {
+	m.image_new = nil
+	delete(m.clearedFields, dockerevent.FieldImageNew)
+}
+
+// SetPayload sets the "payload" field.
+func (m *DockerEventMutation) SetPayload(s string) {
+	m.payload = &s
+}
+
+// Payload returns the value of the "payload" field in the mutation.
+func (m *DockerEventMutation) Payload() (r string, exists bool) {
+	v := m.payload
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPayload returns the old "payload" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldPayload(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPayload is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPayload requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPayload: %w", err)
+	}
+	return oldValue.Payload, nil
+}
+
+// ClearPayload clears the value of the "payload" field.
+func (m *DockerEventMutation) ClearPayload() {
+	m.payload = nil
+	m.clearedFields[dockerevent.FieldPayload] = struct{}{}
+}
+
+// PayloadCleared returns if the "payload" field was cleared in this mutation.
+func (m *DockerEventMutation) PayloadCleared() bool {
+	_, ok := m.clearedFields[dockerevent.FieldPayload]
+	return ok
+}
+
+// ResetPayload resets all changes to the "payload" field.
+func (m *DockerEventMutation) ResetPayload() {
+	m.payload = nil
+	delete(m.clearedFields, dockerevent.FieldPayload)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *DockerEventMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *DockerEventMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the DockerEvent entity.
+// If the DockerEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DockerEventMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *DockerEventMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the DockerEventMutation builder.
+func (m *DockerEventMutation) Where(ps ...predicate.DockerEvent) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the DockerEventMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *DockerEventMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.DockerEvent, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *DockerEventMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *DockerEventMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (DockerEvent).
+func (m *DockerEventMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *DockerEventMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.event_type != nil {
+		fields = append(fields, dockerevent.FieldEventType)
+	}
+	if m.action != nil {
+		fields = append(fields, dockerevent.FieldAction)
+	}
+	if m.actor_id != nil {
+		fields = append(fields, dockerevent.FieldActorID)
+	}
+	if m.actor_name != nil {
+		fields = append(fields, dockerevent.FieldActorName)
+	}
+	if m.image != nil {
+		fields = append(fields, dockerevent.FieldImage)
+	}
+	if m.status != nil {
+		fields = append(fields, dockerevent.FieldStatus)
+	}
+	if m.image_old != nil {
+		fields = append(fields, dockerevent.FieldImageOld)
+	}
+	if m.image_new != nil {
+		fields = append(fields, dockerevent.FieldImageNew)
+	}
+	if m.payload != nil {
+		fields = append(fields, dockerevent.FieldPayload)
+	}
+	if m.created_at != nil {
+		fields = append(fields, dockerevent.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *DockerEventMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case dockerevent.FieldEventType:
+		return m.EventType()
+	case dockerevent.FieldAction:
+		return m.Action()
+	case dockerevent.FieldActorID:
+		return m.ActorID()
+	case dockerevent.FieldActorName:
+		return m.ActorName()
+	case dockerevent.FieldImage:
+		return m.Image()
+	case dockerevent.FieldStatus:
+		return m.Status()
+	case dockerevent.FieldImageOld:
+		return m.ImageOld()
+	case dockerevent.FieldImageNew:
+		return m.ImageNew()
+	case dockerevent.FieldPayload:
+		return m.Payload()
+	case dockerevent.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *DockerEventMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case dockerevent.FieldEventType:
+		return m.OldEventType(ctx)
+	case dockerevent.FieldAction:
+		return m.OldAction(ctx)
+	case dockerevent.FieldActorID:
+		return m.OldActorID(ctx)
+	case dockerevent.FieldActorName:
+		return m.OldActorName(ctx)
+	case dockerevent.FieldImage:
+		return m.OldImage(ctx)
+	case dockerevent.FieldStatus:
+		return m.OldStatus(ctx)
+	case dockerevent.FieldImageOld:
+		return m.OldImageOld(ctx)
+	case dockerevent.FieldImageNew:
+		return m.OldImageNew(ctx)
+	case dockerevent.FieldPayload:
+		return m.OldPayload(ctx)
+	case dockerevent.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown DockerEvent field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *DockerEventMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case dockerevent.FieldEventType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEventType(v)
+		return nil
+	case dockerevent.FieldAction:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAction(v)
+		return nil
+	case dockerevent.FieldActorID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActorID(v)
+		return nil
+	case dockerevent.FieldActorName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActorName(v)
+		return nil
+	case dockerevent.FieldImage:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetImage(v)
+		return nil
+	case dockerevent.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case dockerevent.FieldImageOld:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetImageOld(v)
+		return nil
+	case dockerevent.FieldImageNew:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetImageNew(v)
+		return nil
+	case dockerevent.FieldPayload:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPayload(v)
+		return nil
+	case dockerevent.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown DockerEvent field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *DockerEventMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *DockerEventMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *DockerEventMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown DockerEvent numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *DockerEventMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(dockerevent.FieldActorID) {
+		fields = append(fields, dockerevent.FieldActorID)
+	}
+	if m.FieldCleared(dockerevent.FieldActorName) {
+		fields = append(fields, dockerevent.FieldActorName)
+	}
+	if m.FieldCleared(dockerevent.FieldImage) {
+		fields = append(fields, dockerevent.FieldImage)
+	}
+	if m.FieldCleared(dockerevent.FieldStatus) {
+		fields = append(fields, dockerevent.FieldStatus)
+	}
+	if m.FieldCleared(dockerevent.FieldImageOld) {
+		fields = append(fields, dockerevent.FieldImageOld)
+	}
+	if m.FieldCleared(dockerevent.FieldImageNew) {
+		fields = append(fields, dockerevent.FieldImageNew)
+	}
+	if m.FieldCleared(dockerevent.FieldPayload) {
+		fields = append(fields, dockerevent.FieldPayload)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *DockerEventMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *DockerEventMutation) ClearField(name string) error {
+	switch name {
+	case dockerevent.FieldActorID:
+		m.ClearActorID()
+		return nil
+	case dockerevent.FieldActorName:
+		m.ClearActorName()
+		return nil
+	case dockerevent.FieldImage:
+		m.ClearImage()
+		return nil
+	case dockerevent.FieldStatus:
+		m.ClearStatus()
+		return nil
+	case dockerevent.FieldImageOld:
+		m.ClearImageOld()
+		return nil
+	case dockerevent.FieldImageNew:
+		m.ClearImageNew()
+		return nil
+	case dockerevent.FieldPayload:
+		m.ClearPayload()
+		return nil
+	}
+	return fmt.Errorf("unknown DockerEvent nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *DockerEventMutation) ResetField(name string) error {
+	switch name {
+	case dockerevent.FieldEventType:
+		m.ResetEventType()
+		return nil
+	case dockerevent.FieldAction:
+		m.ResetAction()
+		return nil
+	case dockerevent.FieldActorID:
+		m.ResetActorID()
+		return nil
+	case dockerevent.FieldActorName:
+		m.ResetActorName()
+		return nil
+	case dockerevent.FieldImage:
+		m.ResetImage()
+		return nil
+	case dockerevent.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case dockerevent.FieldImageOld:
+		m.ResetImageOld()
+		return nil
+	case dockerevent.FieldImageNew:
+		m.ResetImageNew()
+		return nil
+	case dockerevent.FieldPayload:
+		m.ResetPayload()
+		return nil
+	case dockerevent.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown DockerEvent field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *DockerEventMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *DockerEventMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *DockerEventMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *DockerEventMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *DockerEventMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *DockerEventMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *DockerEventMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown DockerEvent unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *DockerEventMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown DockerEvent edge %s", name)
 }
 
 // KumaInstanceMutation represents an operation that mutates the KumaInstance nodes in the graph.
@@ -3497,6 +4449,1018 @@ func (m *NPMInstanceMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown NPMInstance edge %s", name)
 }
 
+// ServiceLinkMutation represents an operation that mutates the ServiceLink nodes in the graph.
+type ServiceLinkMutation struct {
+	config
+	op                  Op
+	typ                 string
+	id                  *int
+	service_name        *string
+	npm_instance_id     *int
+	addnpm_instance_id  *int
+	npm_host_name       *string
+	npm_details         *string
+	kuma_instance_id    *int
+	addkuma_instance_id *int
+	kuma_monitor_id     *int
+	addkuma_monitor_id  *int
+	kuma_monitor_name   *string
+	kuma_details        *string
+	created_at          *time.Time
+	updated_at          *time.Time
+	clearedFields       map[string]struct{}
+	done                bool
+	oldValue            func(context.Context) (*ServiceLink, error)
+	predicates          []predicate.ServiceLink
+}
+
+var _ ent.Mutation = (*ServiceLinkMutation)(nil)
+
+// servicelinkOption allows management of the mutation configuration using functional options.
+type servicelinkOption func(*ServiceLinkMutation)
+
+// newServiceLinkMutation creates new mutation for the ServiceLink entity.
+func newServiceLinkMutation(c config, op Op, opts ...servicelinkOption) *ServiceLinkMutation {
+	m := &ServiceLinkMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeServiceLink,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withServiceLinkID sets the ID field of the mutation.
+func withServiceLinkID(id int) servicelinkOption {
+	return func(m *ServiceLinkMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ServiceLink
+		)
+		m.oldValue = func(ctx context.Context) (*ServiceLink, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ServiceLink.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withServiceLink sets the old ServiceLink of the mutation.
+func withServiceLink(node *ServiceLink) servicelinkOption {
+	return func(m *ServiceLinkMutation) {
+		m.oldValue = func(context.Context) (*ServiceLink, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ServiceLinkMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ServiceLinkMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ServiceLinkMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ServiceLinkMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ServiceLink.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetServiceName sets the "service_name" field.
+func (m *ServiceLinkMutation) SetServiceName(s string) {
+	m.service_name = &s
+}
+
+// ServiceName returns the value of the "service_name" field in the mutation.
+func (m *ServiceLinkMutation) ServiceName() (r string, exists bool) {
+	v := m.service_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldServiceName returns the old "service_name" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldServiceName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldServiceName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldServiceName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldServiceName: %w", err)
+	}
+	return oldValue.ServiceName, nil
+}
+
+// ResetServiceName resets all changes to the "service_name" field.
+func (m *ServiceLinkMutation) ResetServiceName() {
+	m.service_name = nil
+}
+
+// SetNpmInstanceID sets the "npm_instance_id" field.
+func (m *ServiceLinkMutation) SetNpmInstanceID(i int) {
+	m.npm_instance_id = &i
+	m.addnpm_instance_id = nil
+}
+
+// NpmInstanceID returns the value of the "npm_instance_id" field in the mutation.
+func (m *ServiceLinkMutation) NpmInstanceID() (r int, exists bool) {
+	v := m.npm_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNpmInstanceID returns the old "npm_instance_id" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldNpmInstanceID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNpmInstanceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNpmInstanceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNpmInstanceID: %w", err)
+	}
+	return oldValue.NpmInstanceID, nil
+}
+
+// AddNpmInstanceID adds i to the "npm_instance_id" field.
+func (m *ServiceLinkMutation) AddNpmInstanceID(i int) {
+	if m.addnpm_instance_id != nil {
+		*m.addnpm_instance_id += i
+	} else {
+		m.addnpm_instance_id = &i
+	}
+}
+
+// AddedNpmInstanceID returns the value that was added to the "npm_instance_id" field in this mutation.
+func (m *ServiceLinkMutation) AddedNpmInstanceID() (r int, exists bool) {
+	v := m.addnpm_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetNpmInstanceID resets all changes to the "npm_instance_id" field.
+func (m *ServiceLinkMutation) ResetNpmInstanceID() {
+	m.npm_instance_id = nil
+	m.addnpm_instance_id = nil
+}
+
+// SetNpmHostName sets the "npm_host_name" field.
+func (m *ServiceLinkMutation) SetNpmHostName(s string) {
+	m.npm_host_name = &s
+}
+
+// NpmHostName returns the value of the "npm_host_name" field in the mutation.
+func (m *ServiceLinkMutation) NpmHostName() (r string, exists bool) {
+	v := m.npm_host_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNpmHostName returns the old "npm_host_name" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldNpmHostName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNpmHostName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNpmHostName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNpmHostName: %w", err)
+	}
+	return oldValue.NpmHostName, nil
+}
+
+// ClearNpmHostName clears the value of the "npm_host_name" field.
+func (m *ServiceLinkMutation) ClearNpmHostName() {
+	m.npm_host_name = nil
+	m.clearedFields[servicelink.FieldNpmHostName] = struct{}{}
+}
+
+// NpmHostNameCleared returns if the "npm_host_name" field was cleared in this mutation.
+func (m *ServiceLinkMutation) NpmHostNameCleared() bool {
+	_, ok := m.clearedFields[servicelink.FieldNpmHostName]
+	return ok
+}
+
+// ResetNpmHostName resets all changes to the "npm_host_name" field.
+func (m *ServiceLinkMutation) ResetNpmHostName() {
+	m.npm_host_name = nil
+	delete(m.clearedFields, servicelink.FieldNpmHostName)
+}
+
+// SetNpmDetails sets the "npm_details" field.
+func (m *ServiceLinkMutation) SetNpmDetails(s string) {
+	m.npm_details = &s
+}
+
+// NpmDetails returns the value of the "npm_details" field in the mutation.
+func (m *ServiceLinkMutation) NpmDetails() (r string, exists bool) {
+	v := m.npm_details
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNpmDetails returns the old "npm_details" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldNpmDetails(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNpmDetails is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNpmDetails requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNpmDetails: %w", err)
+	}
+	return oldValue.NpmDetails, nil
+}
+
+// ClearNpmDetails clears the value of the "npm_details" field.
+func (m *ServiceLinkMutation) ClearNpmDetails() {
+	m.npm_details = nil
+	m.clearedFields[servicelink.FieldNpmDetails] = struct{}{}
+}
+
+// NpmDetailsCleared returns if the "npm_details" field was cleared in this mutation.
+func (m *ServiceLinkMutation) NpmDetailsCleared() bool {
+	_, ok := m.clearedFields[servicelink.FieldNpmDetails]
+	return ok
+}
+
+// ResetNpmDetails resets all changes to the "npm_details" field.
+func (m *ServiceLinkMutation) ResetNpmDetails() {
+	m.npm_details = nil
+	delete(m.clearedFields, servicelink.FieldNpmDetails)
+}
+
+// SetKumaInstanceID sets the "kuma_instance_id" field.
+func (m *ServiceLinkMutation) SetKumaInstanceID(i int) {
+	m.kuma_instance_id = &i
+	m.addkuma_instance_id = nil
+}
+
+// KumaInstanceID returns the value of the "kuma_instance_id" field in the mutation.
+func (m *ServiceLinkMutation) KumaInstanceID() (r int, exists bool) {
+	v := m.kuma_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKumaInstanceID returns the old "kuma_instance_id" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldKumaInstanceID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKumaInstanceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKumaInstanceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKumaInstanceID: %w", err)
+	}
+	return oldValue.KumaInstanceID, nil
+}
+
+// AddKumaInstanceID adds i to the "kuma_instance_id" field.
+func (m *ServiceLinkMutation) AddKumaInstanceID(i int) {
+	if m.addkuma_instance_id != nil {
+		*m.addkuma_instance_id += i
+	} else {
+		m.addkuma_instance_id = &i
+	}
+}
+
+// AddedKumaInstanceID returns the value that was added to the "kuma_instance_id" field in this mutation.
+func (m *ServiceLinkMutation) AddedKumaInstanceID() (r int, exists bool) {
+	v := m.addkuma_instance_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetKumaInstanceID resets all changes to the "kuma_instance_id" field.
+func (m *ServiceLinkMutation) ResetKumaInstanceID() {
+	m.kuma_instance_id = nil
+	m.addkuma_instance_id = nil
+}
+
+// SetKumaMonitorID sets the "kuma_monitor_id" field.
+func (m *ServiceLinkMutation) SetKumaMonitorID(i int) {
+	m.kuma_monitor_id = &i
+	m.addkuma_monitor_id = nil
+}
+
+// KumaMonitorID returns the value of the "kuma_monitor_id" field in the mutation.
+func (m *ServiceLinkMutation) KumaMonitorID() (r int, exists bool) {
+	v := m.kuma_monitor_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKumaMonitorID returns the old "kuma_monitor_id" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldKumaMonitorID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKumaMonitorID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKumaMonitorID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKumaMonitorID: %w", err)
+	}
+	return oldValue.KumaMonitorID, nil
+}
+
+// AddKumaMonitorID adds i to the "kuma_monitor_id" field.
+func (m *ServiceLinkMutation) AddKumaMonitorID(i int) {
+	if m.addkuma_monitor_id != nil {
+		*m.addkuma_monitor_id += i
+	} else {
+		m.addkuma_monitor_id = &i
+	}
+}
+
+// AddedKumaMonitorID returns the value that was added to the "kuma_monitor_id" field in this mutation.
+func (m *ServiceLinkMutation) AddedKumaMonitorID() (r int, exists bool) {
+	v := m.addkuma_monitor_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetKumaMonitorID resets all changes to the "kuma_monitor_id" field.
+func (m *ServiceLinkMutation) ResetKumaMonitorID() {
+	m.kuma_monitor_id = nil
+	m.addkuma_monitor_id = nil
+}
+
+// SetKumaMonitorName sets the "kuma_monitor_name" field.
+func (m *ServiceLinkMutation) SetKumaMonitorName(s string) {
+	m.kuma_monitor_name = &s
+}
+
+// KumaMonitorName returns the value of the "kuma_monitor_name" field in the mutation.
+func (m *ServiceLinkMutation) KumaMonitorName() (r string, exists bool) {
+	v := m.kuma_monitor_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKumaMonitorName returns the old "kuma_monitor_name" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldKumaMonitorName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKumaMonitorName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKumaMonitorName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKumaMonitorName: %w", err)
+	}
+	return oldValue.KumaMonitorName, nil
+}
+
+// ClearKumaMonitorName clears the value of the "kuma_monitor_name" field.
+func (m *ServiceLinkMutation) ClearKumaMonitorName() {
+	m.kuma_monitor_name = nil
+	m.clearedFields[servicelink.FieldKumaMonitorName] = struct{}{}
+}
+
+// KumaMonitorNameCleared returns if the "kuma_monitor_name" field was cleared in this mutation.
+func (m *ServiceLinkMutation) KumaMonitorNameCleared() bool {
+	_, ok := m.clearedFields[servicelink.FieldKumaMonitorName]
+	return ok
+}
+
+// ResetKumaMonitorName resets all changes to the "kuma_monitor_name" field.
+func (m *ServiceLinkMutation) ResetKumaMonitorName() {
+	m.kuma_monitor_name = nil
+	delete(m.clearedFields, servicelink.FieldKumaMonitorName)
+}
+
+// SetKumaDetails sets the "kuma_details" field.
+func (m *ServiceLinkMutation) SetKumaDetails(s string) {
+	m.kuma_details = &s
+}
+
+// KumaDetails returns the value of the "kuma_details" field in the mutation.
+func (m *ServiceLinkMutation) KumaDetails() (r string, exists bool) {
+	v := m.kuma_details
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKumaDetails returns the old "kuma_details" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldKumaDetails(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKumaDetails is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKumaDetails requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKumaDetails: %w", err)
+	}
+	return oldValue.KumaDetails, nil
+}
+
+// ClearKumaDetails clears the value of the "kuma_details" field.
+func (m *ServiceLinkMutation) ClearKumaDetails() {
+	m.kuma_details = nil
+	m.clearedFields[servicelink.FieldKumaDetails] = struct{}{}
+}
+
+// KumaDetailsCleared returns if the "kuma_details" field was cleared in this mutation.
+func (m *ServiceLinkMutation) KumaDetailsCleared() bool {
+	_, ok := m.clearedFields[servicelink.FieldKumaDetails]
+	return ok
+}
+
+// ResetKumaDetails resets all changes to the "kuma_details" field.
+func (m *ServiceLinkMutation) ResetKumaDetails() {
+	m.kuma_details = nil
+	delete(m.clearedFields, servicelink.FieldKumaDetails)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ServiceLinkMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ServiceLinkMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ServiceLinkMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ServiceLinkMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ServiceLinkMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ServiceLink entity.
+// If the ServiceLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServiceLinkMutation) OldUpdatedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ClearUpdatedAt clears the value of the "updated_at" field.
+func (m *ServiceLinkMutation) ClearUpdatedAt() {
+	m.updated_at = nil
+	m.clearedFields[servicelink.FieldUpdatedAt] = struct{}{}
+}
+
+// UpdatedAtCleared returns if the "updated_at" field was cleared in this mutation.
+func (m *ServiceLinkMutation) UpdatedAtCleared() bool {
+	_, ok := m.clearedFields[servicelink.FieldUpdatedAt]
+	return ok
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ServiceLinkMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+	delete(m.clearedFields, servicelink.FieldUpdatedAt)
+}
+
+// Where appends a list predicates to the ServiceLinkMutation builder.
+func (m *ServiceLinkMutation) Where(ps ...predicate.ServiceLink) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ServiceLinkMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ServiceLinkMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ServiceLink, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ServiceLinkMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ServiceLinkMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ServiceLink).
+func (m *ServiceLinkMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ServiceLinkMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.service_name != nil {
+		fields = append(fields, servicelink.FieldServiceName)
+	}
+	if m.npm_instance_id != nil {
+		fields = append(fields, servicelink.FieldNpmInstanceID)
+	}
+	if m.npm_host_name != nil {
+		fields = append(fields, servicelink.FieldNpmHostName)
+	}
+	if m.npm_details != nil {
+		fields = append(fields, servicelink.FieldNpmDetails)
+	}
+	if m.kuma_instance_id != nil {
+		fields = append(fields, servicelink.FieldKumaInstanceID)
+	}
+	if m.kuma_monitor_id != nil {
+		fields = append(fields, servicelink.FieldKumaMonitorID)
+	}
+	if m.kuma_monitor_name != nil {
+		fields = append(fields, servicelink.FieldKumaMonitorName)
+	}
+	if m.kuma_details != nil {
+		fields = append(fields, servicelink.FieldKumaDetails)
+	}
+	if m.created_at != nil {
+		fields = append(fields, servicelink.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, servicelink.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ServiceLinkMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case servicelink.FieldServiceName:
+		return m.ServiceName()
+	case servicelink.FieldNpmInstanceID:
+		return m.NpmInstanceID()
+	case servicelink.FieldNpmHostName:
+		return m.NpmHostName()
+	case servicelink.FieldNpmDetails:
+		return m.NpmDetails()
+	case servicelink.FieldKumaInstanceID:
+		return m.KumaInstanceID()
+	case servicelink.FieldKumaMonitorID:
+		return m.KumaMonitorID()
+	case servicelink.FieldKumaMonitorName:
+		return m.KumaMonitorName()
+	case servicelink.FieldKumaDetails:
+		return m.KumaDetails()
+	case servicelink.FieldCreatedAt:
+		return m.CreatedAt()
+	case servicelink.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ServiceLinkMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case servicelink.FieldServiceName:
+		return m.OldServiceName(ctx)
+	case servicelink.FieldNpmInstanceID:
+		return m.OldNpmInstanceID(ctx)
+	case servicelink.FieldNpmHostName:
+		return m.OldNpmHostName(ctx)
+	case servicelink.FieldNpmDetails:
+		return m.OldNpmDetails(ctx)
+	case servicelink.FieldKumaInstanceID:
+		return m.OldKumaInstanceID(ctx)
+	case servicelink.FieldKumaMonitorID:
+		return m.OldKumaMonitorID(ctx)
+	case servicelink.FieldKumaMonitorName:
+		return m.OldKumaMonitorName(ctx)
+	case servicelink.FieldKumaDetails:
+		return m.OldKumaDetails(ctx)
+	case servicelink.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case servicelink.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ServiceLink field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ServiceLinkMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case servicelink.FieldServiceName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetServiceName(v)
+		return nil
+	case servicelink.FieldNpmInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNpmInstanceID(v)
+		return nil
+	case servicelink.FieldNpmHostName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNpmHostName(v)
+		return nil
+	case servicelink.FieldNpmDetails:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNpmDetails(v)
+		return nil
+	case servicelink.FieldKumaInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKumaInstanceID(v)
+		return nil
+	case servicelink.FieldKumaMonitorID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKumaMonitorID(v)
+		return nil
+	case servicelink.FieldKumaMonitorName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKumaMonitorName(v)
+		return nil
+	case servicelink.FieldKumaDetails:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKumaDetails(v)
+		return nil
+	case servicelink.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case servicelink.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ServiceLink field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ServiceLinkMutation) AddedFields() []string {
+	var fields []string
+	if m.addnpm_instance_id != nil {
+		fields = append(fields, servicelink.FieldNpmInstanceID)
+	}
+	if m.addkuma_instance_id != nil {
+		fields = append(fields, servicelink.FieldKumaInstanceID)
+	}
+	if m.addkuma_monitor_id != nil {
+		fields = append(fields, servicelink.FieldKumaMonitorID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ServiceLinkMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case servicelink.FieldNpmInstanceID:
+		return m.AddedNpmInstanceID()
+	case servicelink.FieldKumaInstanceID:
+		return m.AddedKumaInstanceID()
+	case servicelink.FieldKumaMonitorID:
+		return m.AddedKumaMonitorID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ServiceLinkMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case servicelink.FieldNpmInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddNpmInstanceID(v)
+		return nil
+	case servicelink.FieldKumaInstanceID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddKumaInstanceID(v)
+		return nil
+	case servicelink.FieldKumaMonitorID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddKumaMonitorID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ServiceLink numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ServiceLinkMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(servicelink.FieldNpmHostName) {
+		fields = append(fields, servicelink.FieldNpmHostName)
+	}
+	if m.FieldCleared(servicelink.FieldNpmDetails) {
+		fields = append(fields, servicelink.FieldNpmDetails)
+	}
+	if m.FieldCleared(servicelink.FieldKumaMonitorName) {
+		fields = append(fields, servicelink.FieldKumaMonitorName)
+	}
+	if m.FieldCleared(servicelink.FieldKumaDetails) {
+		fields = append(fields, servicelink.FieldKumaDetails)
+	}
+	if m.FieldCleared(servicelink.FieldUpdatedAt) {
+		fields = append(fields, servicelink.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ServiceLinkMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ServiceLinkMutation) ClearField(name string) error {
+	switch name {
+	case servicelink.FieldNpmHostName:
+		m.ClearNpmHostName()
+		return nil
+	case servicelink.FieldNpmDetails:
+		m.ClearNpmDetails()
+		return nil
+	case servicelink.FieldKumaMonitorName:
+		m.ClearKumaMonitorName()
+		return nil
+	case servicelink.FieldKumaDetails:
+		m.ClearKumaDetails()
+		return nil
+	case servicelink.FieldUpdatedAt:
+		m.ClearUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ServiceLink nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ServiceLinkMutation) ResetField(name string) error {
+	switch name {
+	case servicelink.FieldServiceName:
+		m.ResetServiceName()
+		return nil
+	case servicelink.FieldNpmInstanceID:
+		m.ResetNpmInstanceID()
+		return nil
+	case servicelink.FieldNpmHostName:
+		m.ResetNpmHostName()
+		return nil
+	case servicelink.FieldNpmDetails:
+		m.ResetNpmDetails()
+		return nil
+	case servicelink.FieldKumaInstanceID:
+		m.ResetKumaInstanceID()
+		return nil
+	case servicelink.FieldKumaMonitorID:
+		m.ResetKumaMonitorID()
+		return nil
+	case servicelink.FieldKumaMonitorName:
+		m.ResetKumaMonitorName()
+		return nil
+	case servicelink.FieldKumaDetails:
+		m.ResetKumaDetails()
+		return nil
+	case servicelink.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case servicelink.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ServiceLink field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ServiceLinkMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ServiceLinkMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ServiceLinkMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ServiceLinkMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ServiceLinkMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ServiceLinkMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ServiceLinkMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ServiceLink unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ServiceLinkMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ServiceLink edge %s", name)
+}
+
 // SettingsMutation represents an operation that mutates the Settings nodes in the graph.
 type SettingsMutation struct {
 	config
@@ -3896,6 +5860,7 @@ type SyncRunMutation struct {
 	failed            *int
 	addfailed         *int
 	error_message     *string
+	dry_run           *bool
 	clearedFields     map[string]struct{}
 	done              bool
 	oldValue          func(context.Context) (*SyncRun, error)
@@ -4430,6 +6395,55 @@ func (m *SyncRunMutation) ResetErrorMessage() {
 	delete(m.clearedFields, syncrun.FieldErrorMessage)
 }
 
+// SetDryRun sets the "dry_run" field.
+func (m *SyncRunMutation) SetDryRun(b bool) {
+	m.dry_run = &b
+}
+
+// DryRun returns the value of the "dry_run" field in the mutation.
+func (m *SyncRunMutation) DryRun() (r bool, exists bool) {
+	v := m.dry_run
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDryRun returns the old "dry_run" field's value of the SyncRun entity.
+// If the SyncRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SyncRunMutation) OldDryRun(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDryRun is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDryRun requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDryRun: %w", err)
+	}
+	return oldValue.DryRun, nil
+}
+
+// ClearDryRun clears the value of the "dry_run" field.
+func (m *SyncRunMutation) ClearDryRun() {
+	m.dry_run = nil
+	m.clearedFields[syncrun.FieldDryRun] = struct{}{}
+}
+
+// DryRunCleared returns if the "dry_run" field was cleared in this mutation.
+func (m *SyncRunMutation) DryRunCleared() bool {
+	_, ok := m.clearedFields[syncrun.FieldDryRun]
+	return ok
+}
+
+// ResetDryRun resets all changes to the "dry_run" field.
+func (m *SyncRunMutation) ResetDryRun() {
+	m.dry_run = nil
+	delete(m.clearedFields, syncrun.FieldDryRun)
+}
+
 // Where appends a list predicates to the SyncRunMutation builder.
 func (m *SyncRunMutation) Where(ps ...predicate.SyncRun) {
 	m.predicates = append(m.predicates, ps...)
@@ -4464,7 +6478,7 @@ func (m *SyncRunMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SyncRunMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 10)
 	if m.source != nil {
 		fields = append(fields, syncrun.FieldSource)
 	}
@@ -4492,6 +6506,9 @@ func (m *SyncRunMutation) Fields() []string {
 	if m.error_message != nil {
 		fields = append(fields, syncrun.FieldErrorMessage)
 	}
+	if m.dry_run != nil {
+		fields = append(fields, syncrun.FieldDryRun)
+	}
 	return fields
 }
 
@@ -4518,6 +6535,8 @@ func (m *SyncRunMutation) Field(name string) (ent.Value, bool) {
 		return m.Failed()
 	case syncrun.FieldErrorMessage:
 		return m.ErrorMessage()
+	case syncrun.FieldDryRun:
+		return m.DryRun()
 	}
 	return nil, false
 }
@@ -4545,6 +6564,8 @@ func (m *SyncRunMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldFailed(ctx)
 	case syncrun.FieldErrorMessage:
 		return m.OldErrorMessage(ctx)
+	case syncrun.FieldDryRun:
+		return m.OldDryRun(ctx)
 	}
 	return nil, fmt.Errorf("unknown SyncRun field %s", name)
 }
@@ -4616,6 +6637,13 @@ func (m *SyncRunMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetErrorMessage(v)
+		return nil
+	case syncrun.FieldDryRun:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDryRun(v)
 		return nil
 	}
 	return fmt.Errorf("unknown SyncRun field %s", name)
@@ -4704,6 +6732,9 @@ func (m *SyncRunMutation) ClearedFields() []string {
 	if m.FieldCleared(syncrun.FieldErrorMessage) {
 		fields = append(fields, syncrun.FieldErrorMessage)
 	}
+	if m.FieldCleared(syncrun.FieldDryRun) {
+		fields = append(fields, syncrun.FieldDryRun)
+	}
 	return fields
 }
 
@@ -4723,6 +6754,9 @@ func (m *SyncRunMutation) ClearField(name string) error {
 		return nil
 	case syncrun.FieldErrorMessage:
 		m.ClearErrorMessage()
+		return nil
+	case syncrun.FieldDryRun:
+		m.ClearDryRun()
 		return nil
 	}
 	return fmt.Errorf("unknown SyncRun nullable field %s", name)
@@ -4758,6 +6792,9 @@ func (m *SyncRunMutation) ResetField(name string) error {
 		return nil
 	case syncrun.FieldErrorMessage:
 		m.ResetErrorMessage()
+		return nil
+	case syncrun.FieldDryRun:
+		m.ResetDryRun()
 		return nil
 	}
 	return fmt.Errorf("unknown SyncRun field %s", name)

@@ -32,6 +32,18 @@ func (f AutheliaInstanceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.V
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AutheliaInstanceMutation", m)
 }
 
+// The DockerEventFunc type is an adapter to allow the use of ordinary
+// function as DockerEvent mutator.
+type DockerEventFunc func(context.Context, *ent.DockerEventMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f DockerEventFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.DockerEventMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.DockerEventMutation", m)
+}
+
 // The KumaInstanceFunc type is an adapter to allow the use of ordinary
 // function as KumaInstance mutator.
 type KumaInstanceFunc func(context.Context, *ent.KumaInstanceMutation) (ent.Value, error)
@@ -66,6 +78,18 @@ func (f NPMInstanceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value,
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.NPMInstanceMutation", m)
+}
+
+// The ServiceLinkFunc type is an adapter to allow the use of ordinary
+// function as ServiceLink mutator.
+type ServiceLinkFunc func(context.Context, *ent.ServiceLinkMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ServiceLinkFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ServiceLinkMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ServiceLinkMutation", m)
 }
 
 // The SettingsFunc type is an adapter to allow the use of ordinary

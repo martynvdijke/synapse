@@ -194,6 +194,26 @@ func (_u *SyncRunUpdate) ClearErrorMessage() *SyncRunUpdate {
 	return _u
 }
 
+// SetDryRun sets the "dry_run" field.
+func (_u *SyncRunUpdate) SetDryRun(v bool) *SyncRunUpdate {
+	_u.mutation.SetDryRun(v)
+	return _u
+}
+
+// SetNillableDryRun sets the "dry_run" field if the given value is not nil.
+func (_u *SyncRunUpdate) SetNillableDryRun(v *bool) *SyncRunUpdate {
+	if v != nil {
+		_u.SetDryRun(*v)
+	}
+	return _u
+}
+
+// ClearDryRun clears the value of the "dry_run" field.
+func (_u *SyncRunUpdate) ClearDryRun() *SyncRunUpdate {
+	_u.mutation.ClearDryRun()
+	return _u
+}
+
 // Mutation returns the SyncRunMutation object of the builder.
 func (_u *SyncRunUpdate) Mutation() *SyncRunMutation {
 	return _u.mutation
@@ -279,6 +299,12 @@ func (_u *SyncRunUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ErrorMessageCleared() {
 		_spec.ClearField(syncrun.FieldErrorMessage, field.TypeString)
+	}
+	if value, ok := _u.mutation.DryRun(); ok {
+		_spec.SetField(syncrun.FieldDryRun, field.TypeBool, value)
+	}
+	if _u.mutation.DryRunCleared() {
+		_spec.ClearField(syncrun.FieldDryRun, field.TypeBool)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -466,6 +492,26 @@ func (_u *SyncRunUpdateOne) ClearErrorMessage() *SyncRunUpdateOne {
 	return _u
 }
 
+// SetDryRun sets the "dry_run" field.
+func (_u *SyncRunUpdateOne) SetDryRun(v bool) *SyncRunUpdateOne {
+	_u.mutation.SetDryRun(v)
+	return _u
+}
+
+// SetNillableDryRun sets the "dry_run" field if the given value is not nil.
+func (_u *SyncRunUpdateOne) SetNillableDryRun(v *bool) *SyncRunUpdateOne {
+	if v != nil {
+		_u.SetDryRun(*v)
+	}
+	return _u
+}
+
+// ClearDryRun clears the value of the "dry_run" field.
+func (_u *SyncRunUpdateOne) ClearDryRun() *SyncRunUpdateOne {
+	_u.mutation.ClearDryRun()
+	return _u
+}
+
 // Mutation returns the SyncRunMutation object of the builder.
 func (_u *SyncRunUpdateOne) Mutation() *SyncRunMutation {
 	return _u.mutation
@@ -581,6 +627,12 @@ func (_u *SyncRunUpdateOne) sqlSave(ctx context.Context) (_node *SyncRun, err er
 	}
 	if _u.mutation.ErrorMessageCleared() {
 		_spec.ClearField(syncrun.FieldErrorMessage, field.TypeString)
+	}
+	if value, ok := _u.mutation.DryRun(); ok {
+		_spec.SetField(syncrun.FieldDryRun, field.TypeBool, value)
+	}
+	if _u.mutation.DryRunCleared() {
+		_spec.ClearField(syncrun.FieldDryRun, field.TypeBool)
 	}
 	_node = &SyncRun{config: _u.config}
 	_spec.Assign = _node.assignValues

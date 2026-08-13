@@ -99,6 +99,11 @@ func ErrorMessage(v string) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldEQ(FieldErrorMessage, v))
 }
 
+// DryRun applies equality check predicate on the "dry_run" field. It's identical to DryRunEQ.
+func DryRun(v bool) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldEQ(FieldDryRun, v))
+}
+
 // SourceEQ applies the EQ predicate on the "source" field.
 func SourceEQ(v string) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldEQ(FieldSource, v))
@@ -552,6 +557,26 @@ func ErrorMessageEqualFold(v string) predicate.SyncRun {
 // ErrorMessageContainsFold applies the ContainsFold predicate on the "error_message" field.
 func ErrorMessageContainsFold(v string) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldContainsFold(FieldErrorMessage, v))
+}
+
+// DryRunEQ applies the EQ predicate on the "dry_run" field.
+func DryRunEQ(v bool) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldEQ(FieldDryRun, v))
+}
+
+// DryRunNEQ applies the NEQ predicate on the "dry_run" field.
+func DryRunNEQ(v bool) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldNEQ(FieldDryRun, v))
+}
+
+// DryRunIsNil applies the IsNil predicate on the "dry_run" field.
+func DryRunIsNil() predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldIsNull(FieldDryRun))
+}
+
+// DryRunNotNil applies the NotNil predicate on the "dry_run" field.
+func DryRunNotNil() predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldNotNull(FieldDryRun))
 }
 
 // And groups predicates with the AND operator between them.

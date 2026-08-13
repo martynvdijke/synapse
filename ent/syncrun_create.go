@@ -138,6 +138,20 @@ func (_c *SyncRunCreate) SetNillableErrorMessage(v *string) *SyncRunCreate {
 	return _c
 }
 
+// SetDryRun sets the "dry_run" field.
+func (_c *SyncRunCreate) SetDryRun(v bool) *SyncRunCreate {
+	_c.mutation.SetDryRun(v)
+	return _c
+}
+
+// SetNillableDryRun sets the "dry_run" field if the given value is not nil.
+func (_c *SyncRunCreate) SetNillableDryRun(v *bool) *SyncRunCreate {
+	if v != nil {
+		_c.SetDryRun(*v)
+	}
+	return _c
+}
+
 // Mutation returns the SyncRunMutation object of the builder.
 func (_c *SyncRunCreate) Mutation() *SyncRunMutation {
 	return _c.mutation
@@ -200,6 +214,10 @@ func (_c *SyncRunCreate) defaults() {
 	if _, ok := _c.mutation.ErrorMessage(); !ok {
 		v := syncrun.DefaultErrorMessage
 		_c.mutation.SetErrorMessage(v)
+	}
+	if _, ok := _c.mutation.DryRun(); !ok {
+		v := syncrun.DefaultDryRun
+		_c.mutation.SetDryRun(v)
 	}
 }
 
@@ -287,6 +305,10 @@ func (_c *SyncRunCreate) createSpec() (*SyncRun, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ErrorMessage(); ok {
 		_spec.SetField(syncrun.FieldErrorMessage, field.TypeString, value)
 		_node.ErrorMessage = value
+	}
+	if value, ok := _c.mutation.DryRun(); ok {
+		_spec.SetField(syncrun.FieldDryRun, field.TypeBool, value)
+		_node.DryRun = value
 	}
 	return _node, _spec
 }

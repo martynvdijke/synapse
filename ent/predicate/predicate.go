@@ -12,6 +12,9 @@ type AutheliaAlert func(*sql.Selector)
 // AutheliaInstance is the predicate function for autheliainstance builders.
 type AutheliaInstance func(*sql.Selector)
 
+// DockerEvent is the predicate function for dockerevent builders.
+type DockerEvent func(*sql.Selector)
+
 // KumaInstance is the predicate function for kumainstance builders.
 type KumaInstance func(*sql.Selector)
 
@@ -20,6 +23,9 @@ type Monitor func(*sql.Selector)
 
 // NPMInstance is the predicate function for npminstance builders.
 type NPMInstance func(*sql.Selector)
+
+// ServiceLink is the predicate function for servicelink builders.
+type ServiceLink func(*sql.Selector)
 
 // Settings is the predicate function for settings builders.
 type Settings func(*sql.Selector)

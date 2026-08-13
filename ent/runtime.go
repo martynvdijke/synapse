@@ -5,10 +5,12 @@ package ent
 import (
 	"synapse/ent/autheliaalert"
 	"synapse/ent/autheliainstance"
+	"synapse/ent/dockerevent"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
 	"synapse/ent/schema"
+	"synapse/ent/servicelink"
 	"synapse/ent/syncrun"
 	"synapse/ent/tempaccess"
 )
@@ -45,6 +47,44 @@ func init() {
 	autheliainstanceDescEnabled := autheliainstanceFields[7].Descriptor()
 	// autheliainstance.DefaultEnabled holds the default value on creation for the enabled field.
 	autheliainstance.DefaultEnabled = autheliainstanceDescEnabled.Default.(bool)
+	dockereventFields := schema.DockerEvent{}.Fields()
+	_ = dockereventFields
+	// dockereventDescEventType is the schema descriptor for event_type field.
+	dockereventDescEventType := dockereventFields[0].Descriptor()
+	// dockerevent.DefaultEventType holds the default value on creation for the event_type field.
+	dockerevent.DefaultEventType = dockereventDescEventType.Default.(string)
+	// dockereventDescAction is the schema descriptor for action field.
+	dockereventDescAction := dockereventFields[1].Descriptor()
+	// dockerevent.DefaultAction holds the default value on creation for the action field.
+	dockerevent.DefaultAction = dockereventDescAction.Default.(string)
+	// dockereventDescActorID is the schema descriptor for actor_id field.
+	dockereventDescActorID := dockereventFields[2].Descriptor()
+	// dockerevent.DefaultActorID holds the default value on creation for the actor_id field.
+	dockerevent.DefaultActorID = dockereventDescActorID.Default.(string)
+	// dockereventDescActorName is the schema descriptor for actor_name field.
+	dockereventDescActorName := dockereventFields[3].Descriptor()
+	// dockerevent.DefaultActorName holds the default value on creation for the actor_name field.
+	dockerevent.DefaultActorName = dockereventDescActorName.Default.(string)
+	// dockereventDescImage is the schema descriptor for image field.
+	dockereventDescImage := dockereventFields[4].Descriptor()
+	// dockerevent.DefaultImage holds the default value on creation for the image field.
+	dockerevent.DefaultImage = dockereventDescImage.Default.(string)
+	// dockereventDescStatus is the schema descriptor for status field.
+	dockereventDescStatus := dockereventFields[5].Descriptor()
+	// dockerevent.DefaultStatus holds the default value on creation for the status field.
+	dockerevent.DefaultStatus = dockereventDescStatus.Default.(string)
+	// dockereventDescImageOld is the schema descriptor for image_old field.
+	dockereventDescImageOld := dockereventFields[6].Descriptor()
+	// dockerevent.DefaultImageOld holds the default value on creation for the image_old field.
+	dockerevent.DefaultImageOld = dockereventDescImageOld.Default.(string)
+	// dockereventDescImageNew is the schema descriptor for image_new field.
+	dockereventDescImageNew := dockereventFields[7].Descriptor()
+	// dockerevent.DefaultImageNew holds the default value on creation for the image_new field.
+	dockerevent.DefaultImageNew = dockereventDescImageNew.Default.(string)
+	// dockereventDescPayload is the schema descriptor for payload field.
+	dockereventDescPayload := dockereventFields[8].Descriptor()
+	// dockerevent.DefaultPayload holds the default value on creation for the payload field.
+	dockerevent.DefaultPayload = dockereventDescPayload.Default.(string)
 	kumainstanceFields := schema.KumaInstance{}.Fields()
 	_ = kumainstanceFields
 	// kumainstanceDescEnabled is the schema descriptor for enabled field.
@@ -75,6 +115,36 @@ func init() {
 	npminstanceDescEnabled := npminstanceFields[4].Descriptor()
 	// npminstance.DefaultEnabled holds the default value on creation for the enabled field.
 	npminstance.DefaultEnabled = npminstanceDescEnabled.Default.(bool)
+	servicelinkFields := schema.ServiceLink{}.Fields()
+	_ = servicelinkFields
+	// servicelinkDescNpmInstanceID is the schema descriptor for npm_instance_id field.
+	servicelinkDescNpmInstanceID := servicelinkFields[1].Descriptor()
+	// servicelink.DefaultNpmInstanceID holds the default value on creation for the npm_instance_id field.
+	servicelink.DefaultNpmInstanceID = servicelinkDescNpmInstanceID.Default.(int)
+	// servicelinkDescNpmHostName is the schema descriptor for npm_host_name field.
+	servicelinkDescNpmHostName := servicelinkFields[2].Descriptor()
+	// servicelink.DefaultNpmHostName holds the default value on creation for the npm_host_name field.
+	servicelink.DefaultNpmHostName = servicelinkDescNpmHostName.Default.(string)
+	// servicelinkDescNpmDetails is the schema descriptor for npm_details field.
+	servicelinkDescNpmDetails := servicelinkFields[3].Descriptor()
+	// servicelink.DefaultNpmDetails holds the default value on creation for the npm_details field.
+	servicelink.DefaultNpmDetails = servicelinkDescNpmDetails.Default.(string)
+	// servicelinkDescKumaInstanceID is the schema descriptor for kuma_instance_id field.
+	servicelinkDescKumaInstanceID := servicelinkFields[4].Descriptor()
+	// servicelink.DefaultKumaInstanceID holds the default value on creation for the kuma_instance_id field.
+	servicelink.DefaultKumaInstanceID = servicelinkDescKumaInstanceID.Default.(int)
+	// servicelinkDescKumaMonitorID is the schema descriptor for kuma_monitor_id field.
+	servicelinkDescKumaMonitorID := servicelinkFields[5].Descriptor()
+	// servicelink.DefaultKumaMonitorID holds the default value on creation for the kuma_monitor_id field.
+	servicelink.DefaultKumaMonitorID = servicelinkDescKumaMonitorID.Default.(int)
+	// servicelinkDescKumaMonitorName is the schema descriptor for kuma_monitor_name field.
+	servicelinkDescKumaMonitorName := servicelinkFields[6].Descriptor()
+	// servicelink.DefaultKumaMonitorName holds the default value on creation for the kuma_monitor_name field.
+	servicelink.DefaultKumaMonitorName = servicelinkDescKumaMonitorName.Default.(string)
+	// servicelinkDescKumaDetails is the schema descriptor for kuma_details field.
+	servicelinkDescKumaDetails := servicelinkFields[7].Descriptor()
+	// servicelink.DefaultKumaDetails holds the default value on creation for the kuma_details field.
+	servicelink.DefaultKumaDetails = servicelinkDescKumaDetails.Default.(string)
 	syncrunFields := schema.SyncRun{}.Fields()
 	_ = syncrunFields
 	// syncrunDescSource is the schema descriptor for source field.
@@ -105,6 +175,10 @@ func init() {
 	syncrunDescErrorMessage := syncrunFields[8].Descriptor()
 	// syncrun.DefaultErrorMessage holds the default value on creation for the error_message field.
 	syncrun.DefaultErrorMessage = syncrunDescErrorMessage.Default.(string)
+	// syncrunDescDryRun is the schema descriptor for dry_run field.
+	syncrunDescDryRun := syncrunFields[9].Descriptor()
+	// syncrun.DefaultDryRun holds the default value on creation for the dry_run field.
+	syncrun.DefaultDryRun = syncrunDescDryRun.Default.(bool)
 	tempaccessFields := schema.TempAccess{}.Fields()
 	_ = tempaccessFields
 	// tempaccessDescReason is the schema descriptor for reason field.

@@ -9,9 +9,11 @@ import (
 	"reflect"
 	"synapse/ent/autheliaalert"
 	"synapse/ent/autheliainstance"
+	"synapse/ent/dockerevent"
 	"synapse/ent/kumainstance"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
+	"synapse/ent/servicelink"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
 	"synapse/ent/tempaccess"
@@ -82,9 +84,11 @@ func checkColumn(t, c string) error {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			autheliaalert.Table:    autheliaalert.ValidColumn,
 			autheliainstance.Table: autheliainstance.ValidColumn,
+			dockerevent.Table:      dockerevent.ValidColumn,
 			kumainstance.Table:     kumainstance.ValidColumn,
 			monitor.Table:          monitor.ValidColumn,
 			npminstance.Table:      npminstance.ValidColumn,
+			servicelink.Table:      servicelink.ValidColumn,
 			settings.Table:         settings.ValidColumn,
 			syncrun.Table:          syncrun.ValidColumn,
 			tempaccess.Table:       tempaccess.ValidColumn,

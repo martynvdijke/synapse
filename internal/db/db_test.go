@@ -665,3 +665,153 @@ func TestMigrateKumaInstancesEmptyURL(t *testing.T) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+func TestServiceLinkCRUD(t *testing.T) {
+	db := setupTestDB(t)
+
+	link := &ServiceLink{
+		ServiceName:     "jellyfin",
+		NPMInstanceID:   1,
+		NPMHostName:     "jellyfin.example.com",
+		NPMDetails:      `{"id":1}`,
+		KumaInstanceID:  2,
+		KumaMonitorID:   42,
+		KumaMonitorName: "jellyfin",
+		KumaDetails:     `{"interval":60}`,
+	}
+	created, err := db.CreateServiceLink(link)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.ID == 0 {
+		t.Fatal("expected non-zero id")
+	}
+
+	// Get by service name
+	byName, err := db.GetServiceLinkByService("jellyfin")
+	if err != nil {
+		t.Fatalf("get by service: %v", err)
+	}
+	if byName.KumaMonitorID != 42 || byName.NPMHostName != "jellyfin.example.com" {
+		t.Fatalf("unexpected link: %+v", byName)
+	}
+
+	// Get by id
+	byID, err := db.GetServiceLink(created.ID)
+	if err != nil {
+		t.Fatalf("get by id: %v", err)
+	}
+	if byID.ServiceName != "jellyfin" {
+		t.Fatalf("unexpected service name: %s", byID.ServiceName)
+	}
+
+	// Update
+	byID.NPMHostName = "jellyfin2.example.com"
+	if err := db.UpdateServiceLink(byID); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	updated, _ := db.GetServiceLink(created.ID)
+	if updated.NPMHostName != "jellyfin2.example.com" || updated.UpdatedAt == nil {
+		t.Fatalf("update not applied: %+v", updated)
+	}
+
+	// List
+	links, err := db.GetServiceLinks()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+
+	// Delete
+	if err := db.DeleteServiceLink(created.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	links, _ = db.GetServiceLinks()
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links after delete, got %d", len(links))
+	}
+}
+
+func TestUpsertServiceLink(t *testing.T) {
+	db := setupTestDB(t)
+
+	first, err := db.UpsertServiceLink(&ServiceLink{ServiceName: "plex", KumaMonitorID: 1})
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	// Second upsert on same service name must update, not duplicate
+	second, err := db.UpsertServiceLink(&ServiceLink{ServiceName: "plex", KumaMonitorID: 99, NPMHostName: "plex.example.com"})
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected same id, got %d vs %d", second.ID, first.ID)
+	}
+	if second.KumaMonitorID != 99 || second.NPMHostName != "plex.example.com" {
+		t.Fatalf("upsert did not update: %+v", second)
+	}
+	links, _ := db.GetServiceLinks()
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+}
+
+func TestDockerEventCRUD(t *testing.T) {
+	db := setupTestDB(t)
+
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	for _, ev := range []*DockerEvent{
+		{EventType: "container", Action: "die", ActorName: "web", Image: "nginx:latest", Status: "exited", CreatedAt: now},
+		{EventType: "container", Action: "restart", ActorName: "db", Image: "postgres:16", CreatedAt: now.Add(-1 * time.Minute)},
+		{EventType: "image", Action: "pull", ActorName: "", Image: "nginx:latest", CreatedAt: old},
+	} {
+		if err := db.CreateDockerEvent(ev); err != nil {
+			t.Fatalf("create event: %v", err)
+		}
+	}
+
+	// Filter by type
+	byType, err := db.ListDockerEvents(DockerEventFilter{EventType: "container"})
+	if err != nil {
+		t.Fatalf("list by type: %v", err)
+	}
+	if len(byType) != 2 {
+		t.Fatalf("expected 2 container events, got %d", len(byType))
+	}
+
+	// Filter by container
+	byContainer, err := db.ListDockerEvents(DockerEventFilter{Container: "web"})
+	if err != nil {
+		t.Fatalf("list by container: %v", err)
+	}
+	if len(byContainer) != 1 || byContainer[0].Action != "die" {
+		t.Fatalf("unexpected container filter result: %+v", byContainer)
+	}
+
+	// Filter by since + limit (newest first)
+	recent, err := db.ListDockerEvents(DockerEventFilter{Since: &old, Limit: 1})
+	if err != nil {
+		t.Fatalf("list since/limit: %v", err)
+	}
+	if len(recent) != 1 || recent[0].Action != "die" {
+		t.Fatalf("expected newest first with limit 1: %+v", recent)
+	}
+
+	// Purge removes only old rows
+	before := now.Add(-24 * time.Hour)
+	n, err := db.PurgeDockerEvents(before)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 purged, got %d", n)
+	}
+	remaining, _ := db.ListDockerEvents(DockerEventFilter{})
+	if len(remaining) != 2 {
+		t.Fatalf("expected 2 remaining, got %d", len(remaining))
+	}
+}

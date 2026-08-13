@@ -43,6 +43,33 @@ var (
 		Columns:    AutheliaInstancesColumns,
 		PrimaryKey: []*schema.Column{AutheliaInstancesColumns[0]},
 	}
+	// DockerEventsColumns holds the columns for the "docker_events" table.
+	DockerEventsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "event_type", Type: field.TypeString, Default: ""},
+		{Name: "action", Type: field.TypeString, Default: ""},
+		{Name: "actor_id", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "actor_name", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "image", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "status", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "image_old", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "image_new", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "payload", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// DockerEventsTable holds the schema information for the "docker_events" table.
+	DockerEventsTable = &schema.Table{
+		Name:       "docker_events",
+		Columns:    DockerEventsColumns,
+		PrimaryKey: []*schema.Column{DockerEventsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "dockerevent_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{DockerEventsColumns[10]},
+			},
+		},
+	}
 	// KumaInstancesColumns holds the columns for the "kuma_instances" table.
 	KumaInstancesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -100,6 +127,33 @@ var (
 		Columns:    NpmInstancesColumns,
 		PrimaryKey: []*schema.Column{NpmInstancesColumns[0]},
 	}
+	// ServiceLinksColumns holds the columns for the "service_links" table.
+	ServiceLinksColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "service_name", Type: field.TypeString, Unique: true},
+		{Name: "npm_instance_id", Type: field.TypeInt, Default: 0},
+		{Name: "npm_host_name", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "npm_details", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "kuma_instance_id", Type: field.TypeInt, Default: 0},
+		{Name: "kuma_monitor_id", Type: field.TypeInt, Default: 0},
+		{Name: "kuma_monitor_name", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "kuma_details", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime, Nullable: true},
+	}
+	// ServiceLinksTable holds the schema information for the "service_links" table.
+	ServiceLinksTable = &schema.Table{
+		Name:       "service_links",
+		Columns:    ServiceLinksColumns,
+		PrimaryKey: []*schema.Column{ServiceLinksColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "servicelink_service_name",
+				Unique:  true,
+				Columns: []*schema.Column{ServiceLinksColumns[1]},
+			},
+		},
+	}
 	// SettingsColumns holds the columns for the "settings" table.
 	SettingsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -131,6 +185,7 @@ var (
 		{Name: "skipped", Type: field.TypeInt, Default: 0},
 		{Name: "failed", Type: field.TypeInt, Default: 0},
 		{Name: "error_message", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "dry_run", Type: field.TypeBool, Nullable: true, Default: false},
 	}
 	// SyncRunsTable holds the schema information for the "sync_runs" table.
 	SyncRunsTable = &schema.Table{
@@ -158,9 +213,11 @@ var (
 	Tables = []*schema.Table{
 		AutheliaAlertsTable,
 		AutheliaInstancesTable,
+		DockerEventsTable,
 		KumaInstancesTable,
 		MonitorsTable,
 		NpmInstancesTable,
+		ServiceLinksTable,
 		SettingsTable,
 		SyncRunsTable,
 		TempAccessesTable,

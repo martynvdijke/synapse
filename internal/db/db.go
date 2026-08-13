@@ -14,6 +14,8 @@ import (
 	"synapse/ent/autheliainstance"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
+	"synapse/ent/servicelink"
+	"synapse/ent/dockerevent"
 
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/mattn/go-sqlite3"
@@ -42,6 +44,49 @@ type Monitor struct {
 	KumaID          int       `json:"kuma_id"`
 	KumaInstanceID  int       `json:"kuma_instance_id"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ServiceLink ties a compose service name to an NPM proxy host and a Kuma
+// monitor. npm_instance_id / kuma_instance_id of 0 mean "not linked" on that
+// side. npm_details / kuma_details are JSON snapshots of the integration's
+// cached configuration, refreshed via the link refresh endpoint.
+type ServiceLink struct {
+	ID              int64      `json:"id"`
+	ServiceName     string     `json:"service_name"`
+	NPMInstanceID   int        `json:"npm_instance_id"`
+	NPMHostName     string     `json:"npm_host_name,omitempty"`
+	NPMDetails      string     `json:"npm_details,omitempty"`
+	KumaInstanceID  int        `json:"kuma_instance_id"`
+	KumaMonitorID   int        `json:"kuma_monitor_id"`
+	KumaMonitorName string     `json:"kuma_monitor_name,omitempty"`
+	KumaDetails     string     `json:"kuma_details,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
+}
+
+// DockerEvent is a persisted event observed from the Docker Engine events
+// stream. image_old/image_new are set for synthesized "image updated" events.
+type DockerEvent struct {
+	ID         int64     `json:"id"`
+	EventType  string    `json:"event_type"`
+	Action     string    `json:"action"`
+	ActorID    string    `json:"actor_id,omitempty"`
+	ActorName  string    `json:"actor_name,omitempty"`
+	Image      string    `json:"image,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	ImageOld   string    `json:"image_old,omitempty"`
+	ImageNew   string    `json:"image_new,omitempty"`
+	Payload    string    `json:"payload,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// DockerEventFilter restricts a docker event listing query.
+type DockerEventFilter struct {
+	EventType string
+	Action    string
+	Container string
+	Since     *time.Time
+	Limit     int
 }
 
 // KumaInstance holds the connection details for a single Uptime Kuma
@@ -131,6 +176,17 @@ type Settings struct {
 	GotifyURL             string `json:"gotify_url"`
 	GotifyToken           string `json:"gotify_token"`
 	GotifyPriority        int    `json:"gotify_priority"`
+	DockerSocket          string `json:"docker_socket"`
+	DockerEventsEnabled   bool   `json:"docker_events_enabled"`
+	DockerEventsRetentionDays int `json:"docker_events_retention_days"`
+	ReconcileEnabled      bool   `json:"reconcile_enabled"`
+	ReconcileIntervalMinutes int `json:"reconcile_interval_minutes"`
+	ReconcileDryRunDefault bool  `json:"reconcile_dry_run_default"`
+	NotifyDockerDie       bool   `json:"notify_docker_die"`
+	NotifyDockerHealth    bool   `json:"notify_docker_health"`
+	NotifyDockerImage     bool   `json:"notify_docker_image"`
+	NotifyReconcile       bool   `json:"notify_reconcile"`
+	NotifyCooldownMinutes int    `json:"notify_cooldown_minutes"`
 }
 
 type DB struct {
@@ -395,6 +451,209 @@ func (db *DB) GetMonitors() ([]Monitor, error) {
 
 func (db *DB) GetMonitorCount() (int, error) {
 	return db.client.Monitor.Query().Count(context.Background())
+}
+
+// --- ServiceLink CRUD ---
+
+func toServiceLink(e *ent.ServiceLink) ServiceLink {
+	return ServiceLink{
+		ID:              int64(e.ID),
+		ServiceName:     e.ServiceName,
+		NPMInstanceID:   e.NpmInstanceID,
+		NPMHostName:     e.NpmHostName,
+		NPMDetails:      e.NpmDetails,
+		KumaInstanceID:  e.KumaInstanceID,
+		KumaMonitorID:   e.KumaMonitorID,
+		KumaMonitorName: e.KumaMonitorName,
+		KumaDetails:     e.KumaDetails,
+		CreatedAt:       e.CreatedAt,
+		UpdatedAt:       e.UpdatedAt,
+	}
+}
+
+// CreateServiceLink persists a new service link.
+func (db *DB) CreateServiceLink(l *ServiceLink) (*ServiceLink, error) {
+	now := time.Now()
+	q := db.client.ServiceLink.Create().
+		SetServiceName(l.ServiceName).
+		SetNpmInstanceID(l.NPMInstanceID).
+		SetNpmHostName(l.NPMHostName).
+		SetNpmDetails(l.NPMDetails).
+		SetKumaInstanceID(l.KumaInstanceID).
+		SetKumaMonitorID(l.KumaMonitorID).
+		SetKumaMonitorName(l.KumaMonitorName).
+		SetKumaDetails(l.KumaDetails).
+		SetCreatedAt(now)
+	if l.CreatedAt.IsZero() {
+		q.SetCreatedAt(now)
+	} else {
+		q.SetCreatedAt(l.CreatedAt)
+	}
+	e, err := q.Save(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	r := toServiceLink(e)
+	return &r, nil
+}
+
+// GetServiceLinks returns all service links ordered by id.
+func (db *DB) GetServiceLinks() ([]ServiceLink, error) {
+	entries, err := db.client.ServiceLink.Query().
+		Order(servicelink.ByID(entsql.OrderAsc())).
+		All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ServiceLink, len(entries))
+	for i, e := range entries {
+		result[i] = toServiceLink(e)
+	}
+	return result, nil
+}
+
+// GetServiceLink returns a single service link by id.
+func (db *DB) GetServiceLink(id int64) (*ServiceLink, error) {
+	e, err := db.client.ServiceLink.Query().
+		Where(servicelink.IDEQ(int(id))).
+		Only(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	r := toServiceLink(e)
+	return &r, nil
+}
+
+// GetServiceLinkByService returns the link for a compose service name, if any.
+func (db *DB) GetServiceLinkByService(name string) (*ServiceLink, error) {
+	e, err := db.client.ServiceLink.Query().
+		Where(servicelink.ServiceNameEQ(name)).
+		Only(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	r := toServiceLink(e)
+	return &r, nil
+}
+
+// UpdateServiceLink updates the mutable fields of a service link.
+func (db *DB) UpdateServiceLink(l *ServiceLink) error {
+	now := time.Now()
+	_, err := db.client.ServiceLink.Update().
+		Where(servicelink.IDEQ(int(l.ID))).
+		SetNpmInstanceID(l.NPMInstanceID).
+		SetNpmHostName(l.NPMHostName).
+		SetNpmDetails(l.NPMDetails).
+		SetKumaInstanceID(l.KumaInstanceID).
+		SetKumaMonitorID(l.KumaMonitorID).
+		SetKumaMonitorName(l.KumaMonitorName).
+		SetKumaDetails(l.KumaDetails).
+		SetNillableUpdatedAt(&now).
+		Save(context.Background())
+	return err
+}
+
+// DeleteServiceLink removes a service link by id.
+func (db *DB) DeleteServiceLink(id int64) error {
+	_, err := db.client.ServiceLink.Delete().
+		Where(servicelink.IDEQ(int(id))).
+		Exec(context.Background())
+	return err
+}
+
+// UpsertServiceLink inserts a link or updates the existing one with the same
+// service name. Returns the resulting link.
+func (db *DB) UpsertServiceLink(l *ServiceLink) (*ServiceLink, error) {
+	existing, err := db.GetServiceLinkByService(l.ServiceName)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return db.CreateServiceLink(l)
+		}
+		return nil, err
+	}
+	l.ID = existing.ID
+	if err := db.UpdateServiceLink(l); err != nil {
+		return nil, err
+	}
+	return db.GetServiceLink(l.ID)
+}
+
+// --- DockerEvent CRUD ---
+
+func toDockerEvent(e *ent.DockerEvent) DockerEvent {
+	return DockerEvent{
+		ID:        int64(e.ID),
+		EventType: e.EventType,
+		Action:    e.Action,
+		ActorID:   e.ActorID,
+		ActorName: e.ActorName,
+		Image:     e.Image,
+		Status:    e.Status,
+		ImageOld:  e.ImageOld,
+		ImageNew:  e.ImageNew,
+		Payload:   e.Payload,
+		CreatedAt: e.CreatedAt,
+	}
+}
+
+// CreateDockerEvent persists a docker event.
+func (db *DB) CreateDockerEvent(ev *DockerEvent) error {
+	_, err := db.client.DockerEvent.Create().
+		SetEventType(ev.EventType).
+		SetAction(ev.Action).
+		SetActorID(ev.ActorID).
+		SetActorName(ev.ActorName).
+		SetImage(ev.Image).
+		SetStatus(ev.Status).
+		SetImageOld(ev.ImageOld).
+		SetImageNew(ev.ImageNew).
+		SetPayload(ev.Payload).
+		SetCreatedAt(ev.CreatedAt).
+		Save(context.Background())
+	return err
+}
+
+// ListDockerEvents returns docker events matching the filter, newest first.
+func (db *DB) ListDockerEvents(f DockerEventFilter) ([]DockerEvent, error) {
+	q := db.client.DockerEvent.Query()
+	if f.EventType != "" {
+		q = q.Where(dockerevent.EventTypeEQ(f.EventType))
+	}
+	if f.Action != "" {
+		q = q.Where(dockerevent.ActionEQ(f.Action))
+	}
+	if f.Container != "" {
+		q = q.Where(
+			dockerevent.Or(
+				dockerevent.ActorNameContains(f.Container),
+				dockerevent.ActorIDContains(f.Container),
+			),
+		)
+	}
+	if f.Since != nil {
+		q = q.Where(dockerevent.CreatedAtGTE(*f.Since))
+	}
+	q = q.Order(dockerevent.ByCreatedAt(entsql.OrderDesc()))
+	if f.Limit > 0 {
+		q = q.Limit(f.Limit)
+	}
+	entries, err := q.All(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]DockerEvent, len(entries))
+	for i, e := range entries {
+		result[i] = toDockerEvent(e)
+	}
+	return result, nil
+}
+
+// PurgeDockerEvents deletes all docker events older than the given time.
+func (db *DB) PurgeDockerEvents(before time.Time) (int, error) {
+	n, err := db.client.DockerEvent.Delete().
+		Where(dockerevent.CreatedAtLT(before)).
+		Exec(context.Background())
+	return n, err
 }
 
 // --- KumaInstance CRUD ---
@@ -830,6 +1089,34 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			if v, err := strconv.Atoi(row.Value); err == nil {
 				s.GotifyPriority = v
 			}
+		case "docker_socket":
+			s.DockerSocket = row.Value
+		case "docker_events_enabled":
+			s.DockerEventsEnabled = row.Value == "true"
+		case "docker_events_retention_days":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.DockerEventsRetentionDays = v
+			}
+		case "reconcile_enabled":
+			s.ReconcileEnabled = row.Value == "true"
+		case "reconcile_interval_minutes":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.ReconcileIntervalMinutes = v
+			}
+		case "reconcile_dry_run_default":
+			s.ReconcileDryRunDefault = row.Value == "true"
+		case "notify_docker_die":
+			s.NotifyDockerDie = row.Value == "true"
+		case "notify_docker_health":
+			s.NotifyDockerHealth = row.Value == "true"
+		case "notify_docker_image":
+			s.NotifyDockerImage = row.Value == "true"
+		case "notify_reconcile":
+			s.NotifyReconcile = row.Value == "true"
+		case "notify_cooldown_minutes":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.NotifyCooldownMinutes = v
+			}
 		}
 	}
 	return s
@@ -883,6 +1170,17 @@ func (db *DB) SaveSettings(s Settings) error {
 		"gotify_url":              s.GotifyURL,
 		"gotify_token":            s.GotifyToken,
 		"gotify_priority":         strconv.Itoa(s.GotifyPriority),
+		"docker_socket":           s.DockerSocket,
+		"docker_events_enabled":   strconv.FormatBool(s.DockerEventsEnabled),
+		"docker_events_retention_days": strconv.Itoa(s.DockerEventsRetentionDays),
+		"reconcile_enabled":       strconv.FormatBool(s.ReconcileEnabled),
+		"reconcile_interval_minutes": strconv.Itoa(s.ReconcileIntervalMinutes),
+		"reconcile_dry_run_default": strconv.FormatBool(s.ReconcileDryRunDefault),
+		"notify_docker_die":       strconv.FormatBool(s.NotifyDockerDie),
+		"notify_docker_health":    strconv.FormatBool(s.NotifyDockerHealth),
+		"notify_docker_image":     strconv.FormatBool(s.NotifyDockerImage),
+		"notify_reconcile":        strconv.FormatBool(s.NotifyReconcile),
+		"notify_cooldown_minutes": strconv.Itoa(s.NotifyCooldownMinutes),
 	})
 }
 

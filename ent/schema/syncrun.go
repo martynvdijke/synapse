@@ -20,6 +20,7 @@ func (SyncRun) Fields() []ent.Field {
 		field.Int("skipped").Default(0),
 		field.Int("failed").Default(0),
 		field.String("error_message").Optional().Default(""),
+		field.Bool("dry_run").Optional().Default(false),
 	}
 }
 

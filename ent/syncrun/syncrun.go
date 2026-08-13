@@ -29,6 +29,8 @@ const (
 	FieldFailed = "failed"
 	// FieldErrorMessage holds the string denoting the error_message field in the database.
 	FieldErrorMessage = "error_message"
+	// FieldDryRun holds the string denoting the dry_run field in the database.
+	FieldDryRun = "dry_run"
 	// Table holds the table name of the syncrun in the database.
 	Table = "sync_runs"
 )
@@ -45,6 +47,7 @@ var Columns = []string{
 	FieldSkipped,
 	FieldFailed,
 	FieldErrorMessage,
+	FieldDryRun,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -72,6 +75,8 @@ var (
 	DefaultFailed int
 	// DefaultErrorMessage holds the default value on creation for the "error_message" field.
 	DefaultErrorMessage string
+	// DefaultDryRun holds the default value on creation for the "dry_run" field.
+	DefaultDryRun bool
 )
 
 // OrderOption defines the ordering options for the SyncRun queries.
@@ -125,4 +130,9 @@ func ByFailed(opts ...sql.OrderTermOption) OrderOption {
 // ByErrorMessage orders the results by the error_message field.
 func ByErrorMessage(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldErrorMessage, opts...).ToFunc()
+}
+
+// ByDryRun orders the results by the dry_run field.
+func ByDryRun(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDryRun, opts...).ToFunc()
 }
