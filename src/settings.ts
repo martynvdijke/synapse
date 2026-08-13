@@ -14,6 +14,17 @@ export function loadSettings(): void {
         var trmnlToken = document.getElementById('s-trmnl-token') as HTMLInputElement | null;
         if (trmnlToken) trmnlToken.value = (s.trmnl_api_token as string) || '';
         renderTrmnlUrls(s.trmnl_api_token || '');
+        var notifyEnabled = document.getElementById('s-notify-enabled') as HTMLInputElement | null;
+        if (notifyEnabled) notifyEnabled.checked = !!(s.notify_enabled);
+        var notifyInterval = document.getElementById('s-notify-interval') as HTMLInputElement | null;
+        if (notifyInterval) notifyInterval.value = String(s.notify_interval_minutes || 60);
+        var gotifyUrl = document.getElementById('s-gotify-url') as HTMLInputElement | null;
+        if (gotifyUrl) gotifyUrl.value = (s.gotify_url as string) || '';
+        var gotifyToken = document.getElementById('s-gotify-token') as HTMLInputElement | null;
+        if (gotifyToken) gotifyToken.value = (s.gotify_token as string) || '';
+        var gotifyPriority = document.getElementById('s-gotify-priority') as HTMLInputElement | null;
+        if (gotifyPriority) gotifyPriority.value = String(s.gotify_priority ?? 5);
+        loadNotifyMissing();
     });
 }
 
@@ -63,12 +74,19 @@ export function saveSettings(e: Event): void {
         authelia_sync_enabled: (document.getElementById('s-auth-sync-enabled') as HTMLInputElement)?.checked || false,
         authelia_default_policy: (document.getElementById('s-auth-default-policy') as HTMLSelectElement)?.value || 'one_factor',
         authelia_sync_overrides: (document.getElementById('s-auth-overrides') as HTMLTextAreaElement)?.value || '',
-        eink_enabled: (document.getElementById('s-eink-enabled') as HTMLInputElement)?.checked || false
+        eink_enabled: (document.getElementById('s-eink-enabled') as HTMLInputElement)?.checked || false,
+        notify_enabled: (document.getElementById('s-notify-enabled') as HTMLInputElement)?.checked || false,
+        notify_interval_minutes: parseInt((document.getElementById('s-notify-interval') as HTMLInputElement)?.value || '60', 10) || 60,
+        gotify_url: (document.getElementById('s-gotify-url') as HTMLInputElement)?.value || '',
+        gotify_priority: parseInt((document.getElementById('s-gotify-priority') as HTMLInputElement)?.value || '5', 10) || 5
     };
     // Only send the TRMNL token when it has a value, so unrelated saves
     // never wipe a previously configured token (backend is only-sent-fields).
     var trmnlToken = (document.getElementById('s-trmnl-token') as HTMLInputElement)?.value || '';
     if (trmnlToken) payload.trmnl_api_token = trmnlToken;
+    // Same for the Gotify token: omit when empty ("Leave blank to keep current").
+    var gotifyToken = (document.getElementById('s-gotify-token') as HTMLInputElement)?.value || '';
+    if (gotifyToken) payload.gotify_token = gotifyToken;
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
         .then(function() { toast('Settings saved', 'success'); })
@@ -485,8 +503,49 @@ export function testAutheliaInstance(id: number): void {
         .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
 }
 
+// ─── Notifications (Gotify) ────────────────────────────────────
+
+export function notifyTest(): void {
+    var btn = document.getElementById('btn-notify-test') as HTMLButtonElement;
+    btn.disabled = true;
+    apiFetch('/api/notify/test', { method: 'POST' })
+        .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string; error?: string}>; })
+        .then(function(d) {
+            if (d.ok) toast('Test notification sent', 'success');
+            else toast('Test failed: ' + (d.error || 'unknown error'), 'error');
+        })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Test notification failed', 'error'); })
+        .finally(function() { btn.disabled = false; });
+}
+
+export function loadNotifyMissing(): void {
+    var listEl = document.getElementById('notify-missing-list');
+    if (!listEl) return;
+    apiFetch('/api/notify/missing')
+        .then(function(r) { return r.json() as Promise<{docker: string[]; npm: string[]; degraded: boolean; reasons?: string[]}>; })
+        .then(function(d) {
+            var parts: string[] = [];
+            if (d.degraded) {
+                parts.push('<span class="text-warning">Degraded check — notifications skipped:</span> ' + esc((d.reasons || ['unknown']).join('; ')));
+            } else {
+                if (!d.docker.length && !d.npm.length) {
+                    parts.push('Nothing missing — all services and proxy hosts are covered by Uptime Kuma.');
+                }
+                if (d.docker.length) parts.push('<span class="fw-semibold">Docker services:</span><ul class="mb-0">' + d.docker.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>');
+                if (d.npm.length) parts.push('<span class="fw-semibold">NPM proxy hosts:</span><ul class="mb-0">' + d.npm.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>');
+            }
+            listEl.innerHTML = parts.join('<br>');
+        })
+        .catch(function(err: Error) {
+            if (err.message === 'not authenticated') return;
+            listEl.innerHTML = '<span class="text-danger">Failed to load missing items</span>';
+        });
+}
+
 window.loadSettings = loadSettings;
 window.saveSettings = saveSettings;
+window.notifyTest = notifyTest;
+window.loadNotifyMissing = loadNotifyMissing;
 window.copyTrmnlUrl = copyTrmnlUrl;
 window.testConnection = testConnection;
 window.loadKumaInstances = loadKumaInstances;

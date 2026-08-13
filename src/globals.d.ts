@@ -29,6 +29,8 @@ declare function loadSettings(): void;
 declare function saveSettings(e: Event): void;
 declare function copyTrmnlUrl(btn: HTMLElement): void;
 declare function testConnection(service: string): void;
+declare function notifyTest(): void;
+declare function loadNotifyMissing(): void;
 declare function loadKumaInstances(): void;
 declare function showKumaInstanceForm(editId: number | null): void;
 declare function hideKumaInstanceForm(): void;

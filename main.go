@@ -25,6 +25,7 @@ import (
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	"synapse/internal/logging"
+	"synapse/internal/notify"
 	"synapse/internal/npm"
 	synclib "synapse/internal/sync"
 	"synapse/internal/telemetry"
@@ -115,6 +116,11 @@ func (app *App) settings() db.Settings {
 		OTelEnabled:           getEnv("OTEL_ENABLED", "") == "true",
 		EinkEnabled:           getEnv("EINK_ENABLED", "") == "true",
 		TrmnlApiToken:         getEnv("TRMNL_API_TOKEN", ""),
+		NotifyEnabled:         getEnv("NOTIFY_ENABLED", "") == "true",
+		NotifyIntervalMinutes: getEnvInt("NOTIFY_INTERVAL_MINUTES", 60),
+		GotifyURL:             getEnv("GOTIFY_URL", ""),
+		GotifyToken:           getEnv("GOTIFY_TOKEN", ""),
+		GotifyPriority:        getEnvInt("GOTIFY_PRIORITY", 5),
 	})
 }
 
@@ -272,6 +278,10 @@ func main() {
 		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
 		api.GET("/status", app.Status)
 
+		// Notification endpoints
+		api.POST("/notify/test", app.NotifyTest)
+		api.GET("/notify/missing", app.NotifyMissing)
+
 		// Logs endpoints
 		api.GET("/logs", app.LogsHandler)
 		api.GET("/logs/stream", app.LogsStreamSSE)
@@ -295,6 +305,12 @@ func main() {
 	syncInterval := getEnvInt("SYNC_INTERVAL", 0)
 	if syncInterval > 0 {
 		go app.startSyncScheduler(ctx, syncInterval)
+	}
+
+	// Start recurrent missing-items notification scheduler (if enabled & configured)
+	startupSettings := app.settings()
+	if startupSettings.NotifyEnabled && startupSettings.GotifyURL != "" && startupSettings.GotifyToken != "" {
+		go app.startNotifyScheduler(ctx)
 	}
 
 	// Session cleanup goroutine
@@ -432,6 +448,11 @@ func (app *App) GetSettings(c *gin.Context) {
 		"otel_enabled":            s.OTelEnabled,
 		"eink_enabled":            s.EinkEnabled,
 		"trmnl_api_token":         s.TrmnlApiToken,
+		"notify_enabled":          s.NotifyEnabled,
+		"notify_interval_minutes": s.NotifyIntervalMinutes,
+		"gotify_url":              s.GotifyURL,
+		"gotify_token":            mask(s.GotifyToken),
+		"gotify_priority":         s.GotifyPriority,
 	})
 }
 
@@ -491,6 +512,39 @@ func (app *App) SaveSettings(c *gin.Context) {
 	if v, ok := raw["trmnl_api_token"]; ok {
 		var val string; json.Unmarshal(v, &val)
 		pairs["trmnl_api_token"] = val
+	}
+	if v, ok := raw["notify_enabled"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["notify_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_interval_minutes"]; ok {
+		var val int; json.Unmarshal(v, &val)
+		if val < 1 {
+			val = 1
+		}
+		pairs["notify_interval_minutes"] = strconv.Itoa(val)
+	}
+	if v, ok := raw["gotify_url"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["gotify_url"] = val
+	}
+	if v, ok := raw["gotify_token"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		// Masked token means "keep current" — skip writing so the stored
+		// value is preserved. An explicit empty string clears the token.
+		if val != "****" {
+			pairs["gotify_token"] = val
+		}
+	}
+	if v, ok := raw["gotify_priority"]; ok {
+		var val int; json.Unmarshal(v, &val)
+		if val < 0 {
+			val = 0
+		}
+		if val > 10 {
+			val = 10
+		}
+		pairs["gotify_priority"] = strconv.Itoa(val)
 	}
 
 	if err := app.database.SaveSettingsMap(pairs); err != nil {
@@ -1596,6 +1650,215 @@ func (app *App) runScheduledSync() {
 	})
 
 	log.Println("scheduler: periodic sync complete")
+}
+
+// startNotifyScheduler runs a recurrent checker that reports items missing
+// from Uptime Kuma via Gotify. Settings are re-read on every tick so changes
+// apply without a restart; when notifications are disabled or unconfigured the
+// goroutine idles (re-checking next tick) instead of exiting, so re-enabling
+// needs no restart.
+func (app *App) startNotifyScheduler(ctx context.Context) {
+	logging.LogInfo("app", "Notify scheduler started")
+	defer logging.LogInfo("app", "Notify scheduler stopped")
+
+	for {
+		s := app.settings()
+		interval := s.NotifyIntervalMinutes
+		if interval < 1 {
+			interval = 1
+		}
+
+		timer := time.NewTimer(time.Duration(interval) * time.Minute)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			if !s.NotifyEnabled || s.GotifyURL == "" || s.GotifyToken == "" {
+				continue // idle — re-check settings next tick
+			}
+			app.runNotifyCheck(ctx)
+		}
+	}
+}
+
+// runNotifyCheck computes items missing from Uptime Kuma and sends a Gotify
+// notification. Degraded runs (no Kuma monitors enumerated, compose load
+// failure, no reachable NPM clients while instances are configured) skip the
+// notification to avoid false "everything is missing" alarms.
+func (app *App) runNotifyCheck(ctx context.Context) {
+	s := app.settings()
+	start := time.Now()
+
+	clients, _ := app.kumaRegistry.All()
+	npmClients, _ := app.npmRegistry.All()
+
+	degraded := false
+	var reasons []string
+
+	// If instances are configured but none produced clients, the Kuma picture
+	// is untrustworthy — do not report "everything missing".
+	enabledKuma, _ := app.database.GetEnabledKumaInstances()
+	if len(enabledKuma) > 0 && len(clients) == 0 {
+		degraded = true
+		reasons = append(reasons, "no Kuma instances reachable")
+	}
+	enabledNPM, _ := app.database.GetEnabledNPMInstances()
+	if len(enabledNPM) > 0 && len(npmClients) == 0 {
+		degraded = true
+		reasons = append(reasons, "no NPM instances reachable")
+	}
+
+	// Build instance name maps for NPM proxy labels.
+	npmNameMap := make(map[int]string)
+	for _, inst := range enabledNPM {
+		npmNameMap[int(inst.ID)] = inst.Name
+	}
+
+	var dockerItems []notify.Item
+	if !degraded {
+		services, err := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
+		if err != nil {
+			degraded = true
+			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", err))
+		} else {
+			for _, svc := range services {
+				dockerItems = append(dockerItems, notify.Item{
+					Name:   svc.ContainerName,
+					InKuma: svc.InKuma,
+				})
+			}
+		}
+	}
+
+	var npmItems []notify.Item
+	if !degraded {
+		proxies, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+		if err != nil {
+			degraded = true
+			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", err))
+		} else {
+			for _, p := range proxies {
+				npmItems = append(npmItems, notify.Item{
+					Name:     p.CNAME,
+					InKuma:   p.InKuma,
+					Instance: npmNameMap[p.SourceInstanceID],
+				})
+			}
+		}
+	}
+
+	report := notify.ComputeMissing(dockerItems, npmItems, degraded, reasons)
+	if report.Degraded {
+		logging.LogWarn("notify", "Skipping missing-items notification — degraded check",
+			slog.Any("reasons", report.Reasons),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return
+	}
+	if report.Total() == 0 {
+		logging.LogInfo("notify", "No items missing from Uptime Kuma",
+			slog.Duration("duration", time.Since(start)),
+		)
+		return
+	}
+
+	title, body := notify.FormatMessage(report)
+	client := notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority)
+	if err := client.SendMessage(ctx, title, body); err != nil {
+		logging.LogError("notify", "Failed to send missing-items notification",
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	logging.LogInfo("notify", "Sent missing-items notification",
+		slog.Int("missing_count", report.Total()),
+		slog.Duration("duration", time.Since(start)),
+	)
+}
+
+// NotifyTest sends a fixed test message to verify Gotify configuration.
+func (app *App) NotifyTest(c *gin.Context) {
+	s := app.settings()
+	if s.GotifyURL == "" || s.GotifyToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "Gotify is not configured — set the URL and app token in Settings"})
+		return
+	}
+	client := notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority)
+	if err := client.SendMessage(c.Request.Context(), "Synapse test notification", "Synapse test notification — your configuration is working"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Test notification sent"})
+}
+
+// NotifyMissing returns the current items missing from Uptime Kuma.
+func (app *App) NotifyMissing(c *gin.Context) {
+	s := app.settings()
+
+	clients, _ := app.kumaRegistry.All()
+	npmClients, _ := app.npmRegistry.All()
+
+	degraded := false
+	var reasons []string
+
+	enabledKuma, _ := app.database.GetEnabledKumaInstances()
+	if len(enabledKuma) > 0 && len(clients) == 0 {
+		degraded = true
+		reasons = append(reasons, "no Kuma instances reachable")
+	}
+	enabledNPM, _ := app.database.GetEnabledNPMInstances()
+	if len(enabledNPM) > 0 && len(npmClients) == 0 {
+		degraded = true
+		reasons = append(reasons, "no NPM instances reachable")
+	}
+
+	npmNameMap := make(map[int]string)
+	for _, inst := range enabledNPM {
+		npmNameMap[int(inst.ID)] = inst.Name
+	}
+
+	var dockerItems []notify.Item
+	if !degraded {
+		services, err := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
+		if err != nil {
+			degraded = true
+			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", err))
+		} else {
+			for _, svc := range services {
+				dockerItems = append(dockerItems, notify.Item{
+					Name:   svc.ContainerName,
+					InKuma: svc.InKuma,
+				})
+			}
+		}
+	}
+
+	var npmItems []notify.Item
+	if !degraded {
+		proxies, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+		if err != nil {
+			degraded = true
+			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", err))
+		} else {
+			for _, p := range proxies {
+				npmItems = append(npmItems, notify.Item{
+					Name:     p.CNAME,
+					InKuma:   p.InKuma,
+					Instance: npmNameMap[p.SourceInstanceID],
+				})
+			}
+		}
+	}
+
+	report := notify.ComputeMissing(dockerItems, npmItems, degraded, reasons)
+	c.JSON(http.StatusOK, gin.H{
+		"docker":     report.Docker,
+		"npm":        report.NPM,
+		"fetched_at": report.FetchedAt,
+		"degraded":   report.Degraded,
+		"reasons":    report.Reasons,
+	})
 }
 
 func (app *App) ProgressSSE(c *gin.Context) {

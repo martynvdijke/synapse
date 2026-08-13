@@ -33,6 +33,14 @@ export const MOCK_SETTINGS = {
   authelia_config_path: '/config/configuration.yml', authelia_db_path: '/config/db.sqlite3',
   authelia_sync_enabled: true, authelia_default_policy: 'one_factor', authelia_sync_overrides: '{"admin.example.com":"bypass"}',
   eink_enabled: false,
+  notify_enabled: true, notify_interval_minutes: 30, gotify_url: 'http://gotify:8080', gotify_token: '****', gotify_priority: 5,
+};
+
+export const MOCK_NOTIFY_MISSING = {
+  docker: ['synapse-api-1', 'synapse-db-1'],
+  npm: ['api.example.com (npm-edge)'],
+  fetched_at: new Date().toISOString(),
+  degraded: false,
 };
 
 export const MOCK_SYNC_HISTORY = [
@@ -143,6 +151,12 @@ export async function setupBaseMocks(page: Page) {
   });
   await page.route('**/api/monitors/*/stats', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, status: 1, uptime_24h: 99.9, uptime_7d: 99.5, uptime_1y: 99.0, avg_ping: 45.2, last_msg: 'OK', cert_info: '' }) });
+  });
+  await page.route('**/api/notify/missing', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_NOTIFY_MISSING) });
+  });
+  await page.route('**/api/notify/test', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, message: 'Test notification sent' }) });
   });
 }
 

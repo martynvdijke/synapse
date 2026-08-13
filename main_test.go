@@ -882,6 +882,8 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/monitors", app.KumaMonitors)
 		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
+		api.POST("/notify/test", app.NotifyTest)
+		api.GET("/notify/missing", app.NotifyMissing)
 		api.GET("/authelia/status", app.AutheliaStatus)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
 		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
@@ -955,5 +957,207 @@ func TestNPMInstancesHandler_Test_2FAError(t *testing.T) {
 	}
 	if resp["message"] == nil || resp["message"] == "" {
 		t.Fatalf("expected error message for 2FA, got %+v", resp)
+	}
+}
+
+func TestNotifyTest_Unconfigured(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "POST", "/api/notify/test", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != false {
+		t.Errorf("expected ok=false, got %+v", resp)
+	}
+}
+
+func TestNotifyTest_Success(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	var gotPath, gotKey, gotTitle, gotMsg string
+	gotPriority := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotPath = req.URL.Path
+		gotKey = req.Header.Get("X-Gotify-Key")
+		var body map[string]any
+		json.NewDecoder(req.Body).Decode(&body)
+		gotTitle, _ = body["title"].(string)
+		gotMsg, _ = body["message"].(string)
+		if p, ok := body["priority"].(float64); ok {
+			gotPriority = int(p)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"gotify_url":      srv.URL,
+		"gotify_token":    "app-token",
+		"gotify_priority": "7",
+	}); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	req := authRequest(t, "POST", "/api/notify/test", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != true {
+		t.Fatalf("expected ok=true, got %+v", resp)
+	}
+	if gotPath != "/message" {
+		t.Errorf("expected POST /message, got %q", gotPath)
+	}
+	if gotKey != "app-token" {
+		t.Errorf("expected X-Gotify-Key app-token, got %q", gotKey)
+	}
+	if gotPriority != 7 {
+		t.Errorf("expected priority 7, got %d", gotPriority)
+	}
+	if gotTitle == "" || gotMsg == "" {
+		t.Errorf("expected title+message in payload, got %q / %q", gotTitle, gotMsg)
+	}
+}
+
+func TestNotifyEndpoints_RequireAuth(t *testing.T) {
+	_, r := setupTest(t)
+	for _, path := range []string{"/api/notify/test", "/api/notify/missing"} {
+		method := http.MethodGet
+		if strings.HasSuffix(path, "/test") {
+			method = http.MethodPost
+		}
+		req := httptest.NewRequest(method, path, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: expected 401, got %d", path, w.Code)
+		}
+	}
+}
+
+func TestNotifyMissing_ReportsMissingItems(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// No Kuma/NPM instances configured and testdata compose has 5 services,
+	// all of which are uncovered (no Kuma clients), so they are reported missing.
+	req := authRequest(t, "GET", "/api/notify/missing", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["degraded"] != false {
+		t.Errorf("expected degraded=false, got %+v", resp)
+	}
+	docker, ok := resp["docker"].([]any)
+	if !ok || len(docker) != 6 {
+		t.Errorf("expected 6 missing docker services, got %+v", resp["docker"])
+	}
+	if npm, ok := resp["npm"].([]any); !ok || len(npm) != 0 {
+		t.Errorf("expected empty npm list, got %+v", resp["npm"])
+	}
+	if resp["fetched_at"] == nil || resp["fetched_at"] == "" {
+		t.Errorf("expected fetched_at timestamp, got %+v", resp["fetched_at"])
+	}
+}
+
+func TestNotifyMissing_DegradedWhenComposeMissing(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+	t.Setenv("COMPOSE_PATH", "/nonexistent/docker-compose.yml")
+
+	req := authRequest(t, "GET", "/api/notify/missing", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["degraded"] != true {
+		t.Errorf("expected degraded=true, got %+v", resp)
+	}
+	reasons, ok := resp["reasons"].([]any)
+	if !ok || len(reasons) == 0 {
+		t.Errorf("expected reasons, got %+v", resp["reasons"])
+	}
+}
+
+func TestSettingsRoundTrip_NotifyFields(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Seed a token, then verify it is masked in GET responses.
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"gotify_token": "secret-token",
+	}); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+
+	// POST clamps: interval below 1 → 1, priority above 10 → 10.
+	body := `{"notify_enabled":true,"notify_interval_minutes":0,"gotify_url":"http://gotify:8080","gotify_priority":99}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+
+	if s["notify_enabled"] != true {
+		t.Errorf("notify_enabled: got %v", s["notify_enabled"])
+	}
+	if s["notify_interval_minutes"] != float64(1) {
+		t.Errorf("notify_interval_minutes clamp: got %v", s["notify_interval_minutes"])
+	}
+	if s["gotify_priority"] != float64(10) {
+		t.Errorf("gotify_priority clamp: got %v", s["gotify_priority"])
+	}
+	if s["gotify_url"] != "http://gotify:8080" {
+		t.Errorf("gotify_url: got %v", s["gotify_url"])
+	}
+	if s["gotify_token"] != "****" {
+		t.Errorf("gotify_token should be masked: got %v", s["gotify_token"])
+	}
+
+	// Sending "****" back must not overwrite the stored token.
+	body2 := `{"gotify_token":"****"}`
+	req3 := authRequest(t, "POST", "/api/settings", body2, sessionID)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("post settings (masked token): expected 200, got %d: %s", w3.Code, w3.Body.String())
+	}
+
+	req4 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w4 := httptest.NewRecorder()
+	r.ServeHTTP(w4, req4)
+	var s2 map[string]any
+	json.NewDecoder(w4.Body).Decode(&s2)
+	if s2["gotify_token"] != "****" {
+		t.Errorf("masked token should remain stored: got %v", s2["gotify_token"])
 	}
 }

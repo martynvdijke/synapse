@@ -118,7 +118,20 @@ export interface SettingsResponse {
   authelia_sync_overrides: string;
   eink_enabled?: boolean;
   trmnl_api_token?: string;
+  notify_enabled?: boolean;
+  notify_interval_minutes?: number;
+  gotify_url?: string;
+  gotify_token?: string;
+  gotify_priority?: number;
   [key: string]: unknown;
+}
+
+export interface NotifyMissingResponse {
+  docker: string[];
+  npm: string[];
+  fetched_at: string;
+  degraded: boolean;
+  reasons?: string[];
 }
 
 export interface SyncRun {

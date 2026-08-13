@@ -126,6 +126,11 @@ type Settings struct {
 	OTelEnabled           bool   `json:"otel_enabled"`
 	EinkEnabled           bool   `json:"eink_enabled"`
 	TrmnlApiToken         string `json:"trmnl_api_token"`
+	NotifyEnabled         bool   `json:"notify_enabled"`
+	NotifyIntervalMinutes int    `json:"notify_interval_minutes"`
+	GotifyURL             string `json:"gotify_url"`
+	GotifyToken           string `json:"gotify_token"`
+	GotifyPriority        int    `json:"gotify_priority"`
 }
 
 type DB struct {
@@ -811,6 +816,20 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.EinkEnabled = row.Value == "true"
 		case "trmnl_api_token":
 			s.TrmnlApiToken = row.Value
+		case "notify_enabled":
+			s.NotifyEnabled, _ = strconv.ParseBool(row.Value)
+		case "notify_interval_minutes":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.NotifyIntervalMinutes = v
+			}
+		case "gotify_url":
+			s.GotifyURL = row.Value
+		case "gotify_token":
+			s.GotifyToken = row.Value
+		case "gotify_priority":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.GotifyPriority = v
+			}
 		}
 	}
 	return s
@@ -859,6 +878,11 @@ func (db *DB) SaveSettings(s Settings) error {
 		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
 		"eink_enabled":            strconv.FormatBool(s.EinkEnabled),
 		"trmnl_api_token":         s.TrmnlApiToken,
+		"notify_enabled":          strconv.FormatBool(s.NotifyEnabled),
+		"notify_interval_minutes": strconv.Itoa(s.NotifyIntervalMinutes),
+		"gotify_url":              s.GotifyURL,
+		"gotify_token":            s.GotifyToken,
+		"gotify_priority":         strconv.Itoa(s.GotifyPriority),
 	})
 }
 
