@@ -96,6 +96,20 @@ func (_c *SyncRunCreate) SetNillableAdded(v *int) *SyncRunCreate {
 	return _c
 }
 
+// SetUpdated sets the "updated" field.
+func (_c *SyncRunCreate) SetUpdated(v int) *SyncRunCreate {
+	_c.mutation.SetUpdated(v)
+	return _c
+}
+
+// SetNillableUpdated sets the "updated" field if the given value is not nil.
+func (_c *SyncRunCreate) SetNillableUpdated(v *int) *SyncRunCreate {
+	if v != nil {
+		_c.SetUpdated(*v)
+	}
+	return _c
+}
+
 // SetSkipped sets the "skipped" field.
 func (_c *SyncRunCreate) SetSkipped(v int) *SyncRunCreate {
 	_c.mutation.SetSkipped(v)
@@ -203,6 +217,10 @@ func (_c *SyncRunCreate) defaults() {
 		v := syncrun.DefaultAdded
 		_c.mutation.SetAdded(v)
 	}
+	if _, ok := _c.mutation.Updated(); !ok {
+		v := syncrun.DefaultUpdated
+		_c.mutation.SetUpdated(v)
+	}
 	if _, ok := _c.mutation.Skipped(); !ok {
 		v := syncrun.DefaultSkipped
 		_c.mutation.SetSkipped(v)
@@ -237,6 +255,9 @@ func (_c *SyncRunCreate) check() error {
 	}
 	if _, ok := _c.mutation.Added(); !ok {
 		return &ValidationError{Name: "added", err: errors.New(`ent: missing required field "SyncRun.added"`)}
+	}
+	if _, ok := _c.mutation.Updated(); !ok {
+		return &ValidationError{Name: "updated", err: errors.New(`ent: missing required field "SyncRun.updated"`)}
 	}
 	if _, ok := _c.mutation.Skipped(); !ok {
 		return &ValidationError{Name: "skipped", err: errors.New(`ent: missing required field "SyncRun.skipped"`)}
@@ -293,6 +314,10 @@ func (_c *SyncRunCreate) createSpec() (*SyncRun, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Added(); ok {
 		_spec.SetField(syncrun.FieldAdded, field.TypeInt, value)
 		_node.Added = value
+	}
+	if value, ok := _c.mutation.Updated(); ok {
+		_spec.SetField(syncrun.FieldUpdated, field.TypeInt, value)
+		_node.Updated = value
 	}
 	if value, ok := _c.mutation.Skipped(); ok {
 		_spec.SetField(syncrun.FieldSkipped, field.TypeInt, value)

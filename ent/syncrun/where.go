@@ -84,6 +84,11 @@ func Added(v int) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldEQ(FieldAdded, v))
 }
 
+// Updated applies equality check predicate on the "updated" field. It's identical to UpdatedEQ.
+func Updated(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldEQ(FieldUpdated, v))
+}
+
 // Skipped applies equality check predicate on the "skipped" field. It's identical to SkippedEQ.
 func Skipped(v int) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldEQ(FieldSkipped, v))
@@ -402,6 +407,46 @@ func AddedLT(v int) predicate.SyncRun {
 // AddedLTE applies the LTE predicate on the "added" field.
 func AddedLTE(v int) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldLTE(FieldAdded, v))
+}
+
+// UpdatedEQ applies the EQ predicate on the "updated" field.
+func UpdatedEQ(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldEQ(FieldUpdated, v))
+}
+
+// UpdatedNEQ applies the NEQ predicate on the "updated" field.
+func UpdatedNEQ(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldNEQ(FieldUpdated, v))
+}
+
+// UpdatedIn applies the In predicate on the "updated" field.
+func UpdatedIn(vs ...int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldIn(FieldUpdated, vs...))
+}
+
+// UpdatedNotIn applies the NotIn predicate on the "updated" field.
+func UpdatedNotIn(vs ...int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldNotIn(FieldUpdated, vs...))
+}
+
+// UpdatedGT applies the GT predicate on the "updated" field.
+func UpdatedGT(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldGT(FieldUpdated, v))
+}
+
+// UpdatedGTE applies the GTE predicate on the "updated" field.
+func UpdatedGTE(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldGTE(FieldUpdated, v))
+}
+
+// UpdatedLT applies the LT predicate on the "updated" field.
+func UpdatedLT(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldLT(FieldUpdated, v))
+}
+
+// UpdatedLTE applies the LTE predicate on the "updated" field.
+func UpdatedLTE(v int) predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldLTE(FieldUpdated, v))
 }
 
 // SkippedEQ applies the EQ predicate on the "skipped" field.

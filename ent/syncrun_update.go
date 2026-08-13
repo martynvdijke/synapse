@@ -132,6 +132,27 @@ func (_u *SyncRunUpdate) AddAdded(v int) *SyncRunUpdate {
 	return _u
 }
 
+// SetUpdated sets the "updated" field.
+func (_u *SyncRunUpdate) SetUpdated(v int) *SyncRunUpdate {
+	_u.mutation.ResetUpdated()
+	_u.mutation.SetUpdated(v)
+	return _u
+}
+
+// SetNillableUpdated sets the "updated" field if the given value is not nil.
+func (_u *SyncRunUpdate) SetNillableUpdated(v *int) *SyncRunUpdate {
+	if v != nil {
+		_u.SetUpdated(*v)
+	}
+	return _u
+}
+
+// AddUpdated adds value to the "updated" field.
+func (_u *SyncRunUpdate) AddUpdated(v int) *SyncRunUpdate {
+	_u.mutation.AddUpdated(v)
+	return _u
+}
+
 // SetSkipped sets the "skipped" field.
 func (_u *SyncRunUpdate) SetSkipped(v int) *SyncRunUpdate {
 	_u.mutation.ResetSkipped()
@@ -282,6 +303,12 @@ func (_u *SyncRunUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedAdded(); ok {
 		_spec.AddField(syncrun.FieldAdded, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.Updated(); ok {
+		_spec.SetField(syncrun.FieldUpdated, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedUpdated(); ok {
+		_spec.AddField(syncrun.FieldUpdated, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.Skipped(); ok {
 		_spec.SetField(syncrun.FieldSkipped, field.TypeInt, value)
 	}
@@ -427,6 +454,27 @@ func (_u *SyncRunUpdateOne) SetNillableAdded(v *int) *SyncRunUpdateOne {
 // AddAdded adds value to the "added" field.
 func (_u *SyncRunUpdateOne) AddAdded(v int) *SyncRunUpdateOne {
 	_u.mutation.AddAdded(v)
+	return _u
+}
+
+// SetUpdated sets the "updated" field.
+func (_u *SyncRunUpdateOne) SetUpdated(v int) *SyncRunUpdateOne {
+	_u.mutation.ResetUpdated()
+	_u.mutation.SetUpdated(v)
+	return _u
+}
+
+// SetNillableUpdated sets the "updated" field if the given value is not nil.
+func (_u *SyncRunUpdateOne) SetNillableUpdated(v *int) *SyncRunUpdateOne {
+	if v != nil {
+		_u.SetUpdated(*v)
+	}
+	return _u
+}
+
+// AddUpdated adds value to the "updated" field.
+func (_u *SyncRunUpdateOne) AddUpdated(v int) *SyncRunUpdateOne {
+	_u.mutation.AddUpdated(v)
 	return _u
 }
 
@@ -609,6 +657,12 @@ func (_u *SyncRunUpdateOne) sqlSave(ctx context.Context) (_node *SyncRun, err er
 	}
 	if value, ok := _u.mutation.AddedAdded(); ok {
 		_spec.AddField(syncrun.FieldAdded, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.Updated(); ok {
+		_spec.SetField(syncrun.FieldUpdated, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedUpdated(); ok {
+		_spec.AddField(syncrun.FieldUpdated, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.Skipped(); ok {
 		_spec.SetField(syncrun.FieldSkipped, field.TypeInt, value)

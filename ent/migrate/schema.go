@@ -182,6 +182,7 @@ var (
 		{Name: "finished_at", Type: field.TypeTime, Nullable: true},
 		{Name: "total_services", Type: field.TypeInt, Default: 0},
 		{Name: "added", Type: field.TypeInt, Default: 0},
+		{Name: "updated", Type: field.TypeInt, Default: 0},
 		{Name: "skipped", Type: field.TypeInt, Default: 0},
 		{Name: "failed", Type: field.TypeInt, Default: 0},
 		{Name: "error_message", Type: field.TypeString, Nullable: true, Default: ""},

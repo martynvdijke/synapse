@@ -23,6 +23,8 @@ const (
 	FieldTotalServices = "total_services"
 	// FieldAdded holds the string denoting the added field in the database.
 	FieldAdded = "added"
+	// FieldUpdated holds the string denoting the updated field in the database.
+	FieldUpdated = "updated"
 	// FieldSkipped holds the string denoting the skipped field in the database.
 	FieldSkipped = "skipped"
 	// FieldFailed holds the string denoting the failed field in the database.
@@ -44,6 +46,7 @@ var Columns = []string{
 	FieldFinishedAt,
 	FieldTotalServices,
 	FieldAdded,
+	FieldUpdated,
 	FieldSkipped,
 	FieldFailed,
 	FieldErrorMessage,
@@ -69,6 +72,8 @@ var (
 	DefaultTotalServices int
 	// DefaultAdded holds the default value on creation for the "added" field.
 	DefaultAdded int
+	// DefaultUpdated holds the default value on creation for the "updated" field.
+	DefaultUpdated int
 	// DefaultSkipped holds the default value on creation for the "skipped" field.
 	DefaultSkipped int
 	// DefaultFailed holds the default value on creation for the "failed" field.
@@ -115,6 +120,11 @@ func ByTotalServices(opts ...sql.OrderTermOption) OrderOption {
 // ByAdded orders the results by the added field.
 func ByAdded(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAdded, opts...).ToFunc()
+}
+
+// ByUpdated orders the results by the updated field.
+func ByUpdated(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpdated, opts...).ToFunc()
 }
 
 // BySkipped orders the results by the skipped field.

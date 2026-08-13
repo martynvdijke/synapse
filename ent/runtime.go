@@ -163,20 +163,24 @@ func init() {
 	syncrunDescAdded := syncrunFields[5].Descriptor()
 	// syncrun.DefaultAdded holds the default value on creation for the added field.
 	syncrun.DefaultAdded = syncrunDescAdded.Default.(int)
+	// syncrunDescUpdated is the schema descriptor for updated field.
+	syncrunDescUpdated := syncrunFields[6].Descriptor()
+	// syncrun.DefaultUpdated holds the default value on creation for the updated field.
+	syncrun.DefaultUpdated = syncrunDescUpdated.Default.(int)
 	// syncrunDescSkipped is the schema descriptor for skipped field.
-	syncrunDescSkipped := syncrunFields[6].Descriptor()
+	syncrunDescSkipped := syncrunFields[7].Descriptor()
 	// syncrun.DefaultSkipped holds the default value on creation for the skipped field.
 	syncrun.DefaultSkipped = syncrunDescSkipped.Default.(int)
 	// syncrunDescFailed is the schema descriptor for failed field.
-	syncrunDescFailed := syncrunFields[7].Descriptor()
+	syncrunDescFailed := syncrunFields[8].Descriptor()
 	// syncrun.DefaultFailed holds the default value on creation for the failed field.
 	syncrun.DefaultFailed = syncrunDescFailed.Default.(int)
 	// syncrunDescErrorMessage is the schema descriptor for error_message field.
-	syncrunDescErrorMessage := syncrunFields[8].Descriptor()
+	syncrunDescErrorMessage := syncrunFields[9].Descriptor()
 	// syncrun.DefaultErrorMessage holds the default value on creation for the error_message field.
 	syncrun.DefaultErrorMessage = syncrunDescErrorMessage.Default.(string)
 	// syncrunDescDryRun is the schema descriptor for dry_run field.
-	syncrunDescDryRun := syncrunFields[9].Descriptor()
+	syncrunDescDryRun := syncrunFields[10].Descriptor()
 	// syncrun.DefaultDryRun holds the default value on creation for the dry_run field.
 	syncrun.DefaultDryRun = syncrunDescDryRun.Default.(bool)
 	tempaccessFields := schema.TempAccess{}.Fields()

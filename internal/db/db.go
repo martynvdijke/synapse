@@ -29,8 +29,10 @@ type SyncRun struct {
 	FinishedAt    *time.Time `json:"finished_at,omitempty"`
 	TotalServices int        `json:"total_services"`
 	Added         int        `json:"added"`
+	Updated       int        `json:"updated"`
 	Skipped       int        `json:"skipped"`
 	Failed        int        `json:"failed"`
+	DryRun        bool       `json:"dry_run"`
 	ErrorMessage  string     `json:"error_message,omitempty"`
 }
 
@@ -290,8 +292,10 @@ func toSyncRun(e *ent.SyncRun) SyncRun {
 		StartedAt:     e.StartedAt,
 		TotalServices: e.TotalServices,
 		Added:         e.Added,
+		Updated:       e.Updated,
 		Skipped:       e.Skipped,
 		Failed:        e.Failed,
+		DryRun:        e.DryRun,
 		ErrorMessage:  e.ErrorMessage,
 	}
 	if e.FinishedAt != nil {
@@ -360,8 +364,10 @@ func (db *DB) CreateSyncRun(run *SyncRun) (int64, error) {
 		SetStartedAt(run.StartedAt).
 		SetTotalServices(run.TotalServices).
 		SetAdded(run.Added).
+		SetUpdated(run.Updated).
 		SetSkipped(run.Skipped).
-		SetFailed(run.Failed)
+		SetFailed(run.Failed).
+		SetDryRun(run.DryRun)
 	if run.ErrorMessage != "" {
 		q.SetErrorMessage(run.ErrorMessage)
 	}
@@ -377,6 +383,21 @@ func (db *DB) FinishSyncRun(id int64, status string, added, skipped, failed int,
 		SetStatus(status).
 		SetFinishedAt(time.Now()).
 		SetAdded(added).
+		SetSkipped(skipped).
+		SetFailed(failed).
+		SetErrorMessage(errMsg).
+		Save(context.Background())
+	return err
+}
+
+// FinishReconcileRun completes a reconcile run, including the updated counter
+// that only reconcile produces.
+func (db *DB) FinishReconcileRun(id int64, status string, added, updated, skipped, failed int, errMsg string) error {
+	_, err := db.client.SyncRun.UpdateOneID(int(id)).
+		SetStatus(status).
+		SetFinishedAt(time.Now()).
+		SetAdded(added).
+		SetUpdated(updated).
 		SetSkipped(skipped).
 		SetFailed(failed).
 		SetErrorMessage(errMsg).

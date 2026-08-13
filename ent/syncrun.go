@@ -29,6 +29,8 @@ type SyncRun struct {
 	TotalServices int `json:"total_services,omitempty"`
 	// Added holds the value of the "added" field.
 	Added int `json:"added,omitempty"`
+	// Updated holds the value of the "updated" field.
+	Updated int `json:"updated,omitempty"`
 	// Skipped holds the value of the "skipped" field.
 	Skipped int `json:"skipped,omitempty"`
 	// Failed holds the value of the "failed" field.
@@ -47,7 +49,7 @@ func (*SyncRun) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case syncrun.FieldDryRun:
 			values[i] = new(sql.NullBool)
-		case syncrun.FieldID, syncrun.FieldTotalServices, syncrun.FieldAdded, syncrun.FieldSkipped, syncrun.FieldFailed:
+		case syncrun.FieldID, syncrun.FieldTotalServices, syncrun.FieldAdded, syncrun.FieldUpdated, syncrun.FieldSkipped, syncrun.FieldFailed:
 			values[i] = new(sql.NullInt64)
 		case syncrun.FieldSource, syncrun.FieldStatus, syncrun.FieldErrorMessage:
 			values[i] = new(sql.NullString)
@@ -110,6 +112,12 @@ func (_m *SyncRun) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field added", values[i])
 			} else if value.Valid {
 				_m.Added = int(value.Int64)
+			}
+		case syncrun.FieldUpdated:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field updated", values[i])
+			} else if value.Valid {
+				_m.Updated = int(value.Int64)
 			}
 		case syncrun.FieldSkipped:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -190,6 +198,9 @@ func (_m *SyncRun) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("added=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Added))
+	builder.WriteString(", ")
+	builder.WriteString("updated=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Updated))
 	builder.WriteString(", ")
 	builder.WriteString("skipped=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Skipped))

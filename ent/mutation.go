@@ -5855,6 +5855,8 @@ type SyncRunMutation struct {
 	addtotal_services *int
 	added             *int
 	addadded          *int
+	updated           *int
+	addupdated        *int
 	skipped           *int
 	addskipped        *int
 	failed            *int
@@ -6234,6 +6236,62 @@ func (m *SyncRunMutation) ResetAdded() {
 	m.addadded = nil
 }
 
+// SetUpdated sets the "updated" field.
+func (m *SyncRunMutation) SetUpdated(i int) {
+	m.updated = &i
+	m.addupdated = nil
+}
+
+// Updated returns the value of the "updated" field in the mutation.
+func (m *SyncRunMutation) Updated() (r int, exists bool) {
+	v := m.updated
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdated returns the old "updated" field's value of the SyncRun entity.
+// If the SyncRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SyncRunMutation) OldUpdated(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdated is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdated requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdated: %w", err)
+	}
+	return oldValue.Updated, nil
+}
+
+// AddUpdated adds i to the "updated" field.
+func (m *SyncRunMutation) AddUpdated(i int) {
+	if m.addupdated != nil {
+		*m.addupdated += i
+	} else {
+		m.addupdated = &i
+	}
+}
+
+// AddedUpdated returns the value that was added to the "updated" field in this mutation.
+func (m *SyncRunMutation) AddedUpdated() (r int, exists bool) {
+	v := m.addupdated
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUpdated resets all changes to the "updated" field.
+func (m *SyncRunMutation) ResetUpdated() {
+	m.updated = nil
+	m.addupdated = nil
+}
+
 // SetSkipped sets the "skipped" field.
 func (m *SyncRunMutation) SetSkipped(i int) {
 	m.skipped = &i
@@ -6478,7 +6536,7 @@ func (m *SyncRunMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SyncRunMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
 	if m.source != nil {
 		fields = append(fields, syncrun.FieldSource)
 	}
@@ -6496,6 +6554,9 @@ func (m *SyncRunMutation) Fields() []string {
 	}
 	if m.added != nil {
 		fields = append(fields, syncrun.FieldAdded)
+	}
+	if m.updated != nil {
+		fields = append(fields, syncrun.FieldUpdated)
 	}
 	if m.skipped != nil {
 		fields = append(fields, syncrun.FieldSkipped)
@@ -6529,6 +6590,8 @@ func (m *SyncRunMutation) Field(name string) (ent.Value, bool) {
 		return m.TotalServices()
 	case syncrun.FieldAdded:
 		return m.Added()
+	case syncrun.FieldUpdated:
+		return m.Updated()
 	case syncrun.FieldSkipped:
 		return m.Skipped()
 	case syncrun.FieldFailed:
@@ -6558,6 +6621,8 @@ func (m *SyncRunMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldTotalServices(ctx)
 	case syncrun.FieldAdded:
 		return m.OldAdded(ctx)
+	case syncrun.FieldUpdated:
+		return m.OldUpdated(ctx)
 	case syncrun.FieldSkipped:
 		return m.OldSkipped(ctx)
 	case syncrun.FieldFailed:
@@ -6617,6 +6682,13 @@ func (m *SyncRunMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAdded(v)
 		return nil
+	case syncrun.FieldUpdated:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdated(v)
+		return nil
 	case syncrun.FieldSkipped:
 		v, ok := value.(int)
 		if !ok {
@@ -6659,6 +6731,9 @@ func (m *SyncRunMutation) AddedFields() []string {
 	if m.addadded != nil {
 		fields = append(fields, syncrun.FieldAdded)
 	}
+	if m.addupdated != nil {
+		fields = append(fields, syncrun.FieldUpdated)
+	}
 	if m.addskipped != nil {
 		fields = append(fields, syncrun.FieldSkipped)
 	}
@@ -6677,6 +6752,8 @@ func (m *SyncRunMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedTotalServices()
 	case syncrun.FieldAdded:
 		return m.AddedAdded()
+	case syncrun.FieldUpdated:
+		return m.AddedUpdated()
 	case syncrun.FieldSkipped:
 		return m.AddedSkipped()
 	case syncrun.FieldFailed:
@@ -6703,6 +6780,13 @@ func (m *SyncRunMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAdded(v)
+		return nil
+	case syncrun.FieldUpdated:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpdated(v)
 		return nil
 	case syncrun.FieldSkipped:
 		v, ok := value.(int)
@@ -6783,6 +6867,9 @@ func (m *SyncRunMutation) ResetField(name string) error {
 		return nil
 	case syncrun.FieldAdded:
 		m.ResetAdded()
+		return nil
+	case syncrun.FieldUpdated:
+		m.ResetUpdated()
 		return nil
 	case syncrun.FieldSkipped:
 		m.ResetSkipped()

@@ -17,6 +17,7 @@ func (SyncRun) Fields() []ent.Field {
 		field.Time("finished_at").Optional().Nillable(),
 		field.Int("total_services").Default(0),
 		field.Int("added").Default(0),
+		field.Int("updated").Default(0),
 		field.Int("skipped").Default(0),
 		field.Int("failed").Default(0),
 		field.String("error_message").Optional().Default(""),
