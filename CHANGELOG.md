@@ -1,3 +1,15 @@
+# [1.13.0](https://github.com/martynvdijke/synapse/compare/v1.12.4...v1.13.0) (2026-08-13)
+
+
+### Bug Fixes
+
+* parse flattened NPM proxy host responses ([8481c2d](https://github.com/martynvdijke/synapse/commit/8481c2d57fc4436e1a0d389c4e10578c791dfe34))
+
+
+### Features
+
+* recurrent Gotify notifications for items missing from Uptime Kuma ([6e827de](https://github.com/martynvdijke/synapse/commit/6e827de68f074a8c580a311c1b596bc871d43641))
+
 ## [1.12.4](https://github.com/martynvdijke/synapse/compare/v1.12.3...v1.12.4) (2026-08-11)
 
 
