@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -261,5 +262,179 @@ func TestGetProxyHosts_InvalidJSON(t *testing.T) {
 	_, err := GetProxyHosts(srv.URL, "admin", "secret")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// mockNPMWrite handles POST/PUT /api/nginx/proxy-hosts for create/update.
+func mockNPMWrite(t *testing.T, method string, status int, handler func(r *http.Request)) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":   "jwt-test-token",
+			"expires": "2030-01-01T00:00:00Z",
+		})
+	})
+	mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			t.Errorf("expected %s, got %s", method, r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer jwt-test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if handler != nil {
+			handler(r)
+		}
+		w.WriteHeader(status)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ProxyHost{
+			ID: 10, DomainNames: []string{"app.example.com"},
+			ForwardHost: "web", ForwardPort: 80, ForwardScheme: "http", Enabled: true,
+		})
+	})
+	mux.HandleFunc("/api/nginx/proxy-hosts/10", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			t.Errorf("expected %s, got %s", method, r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if handler != nil {
+			handler(r)
+		}
+		w.WriteHeader(status)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ProxyHost{
+			ID: 10, DomainNames: []string{"app.example.com"},
+			ForwardHost: "web2", ForwardPort: 8080, ForwardScheme: "http", Enabled: true,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestGetProxyHostsFull(t *testing.T) {
+	// Include a disabled host: GetProxyHostsFull must return it.
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
+		resp := []ProxyHost{
+			{
+				ID: 1, DomainNames: []string{"app.example.com"},
+				ForwardHost: "192.168.1.10", ForwardPort: 8080, ForwardScheme: "http",
+				Enabled: true, SSLForced: true, CertificateID: 5,
+				AdvancedConfig: "# custom\n", AccessListID: 3,
+				Locations: []ProxyLocation{{Path: "/api", ForwardHost: "api", ForwardPort: 9000, ForwardScheme: "http"}},
+				Meta:      map[string]any{"letsencrypt_agree": true},
+			},
+			{ID: 2, DomainNames: []string{"old.example.com"}, ForwardHost: "x", ForwardPort: 1, ForwardScheme: "http", Enabled: false},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+	c := NewClient(srv.URL, "admin", "secret")
+	hosts, err := c.GetProxyHostsFull()
+	if err != nil {
+		t.Fatalf("GetProxyHostsFull: %v", err)
+	}
+	if len(hosts) != 2 {
+		t.Fatalf("expected 2 hosts incl. disabled, got %d", len(hosts))
+	}
+	h := hosts[0]
+	if !h.SSLForced || h.CertificateID != 5 || h.AdvancedConfig != "# custom\n" || h.AccessListID != 3 {
+		t.Fatalf("full fields not captured: %+v", h)
+	}
+	if len(h.Locations) != 1 || h.Locations[0].Path != "/api" {
+		t.Fatalf("locations not captured: %+v", h.Locations)
+	}
+	if h.Meta["letsencrypt_agree"] != true {
+		t.Fatalf("meta not captured: %+v", h.Meta)
+	}
+}
+
+func TestCreateProxyHost(t *testing.T) {
+	var gotBody map[string]any
+	srv := mockNPMWrite(t, "POST", http.StatusCreated, func(r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode create body: %v", err)
+		}
+	})
+	c := NewClient(srv.URL, "admin", "secret")
+	created, err := c.CreateProxyHost(ProxyHostCreate{
+		DomainNames:   []string{"app.example.com"},
+		ForwardScheme: "http",
+		ForwardHost:   "web",
+		ForwardPort:   80,
+		Enabled:       true,
+		SSLForced:     true,
+		CertificateID: 7,
+	})
+	if err != nil {
+		t.Fatalf("CreateProxyHost: %v", err)
+	}
+	if created.ID != 10 {
+		t.Fatalf("expected id 10, got %d", created.ID)
+	}
+	domains, ok := gotBody["domain_names"].([]any)
+	if !ok || len(domains) != 1 || domains[0] != "app.example.com" {
+		t.Fatalf("domain_names missing from body: %+v", gotBody)
+	}
+	if gotBody["forward_host"] != "web" || gotBody["forward_port"] != float64(80) {
+		t.Fatalf("forward fields missing: %+v", gotBody)
+	}
+	if gotBody["certificate_id"] != float64(7) || gotBody["ssl_forced"] != true {
+		t.Fatalf("ssl fields missing: %+v", gotBody)
+	}
+}
+
+func TestUpdateProxyHost(t *testing.T) {
+	var gotBody map[string]any
+	srv := mockNPMWrite(t, "PUT", http.StatusOK, func(r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode update body: %v", err)
+		}
+	})
+	c := NewClient(srv.URL, "admin", "secret")
+	updated, err := c.UpdateProxyHost(10, ProxyHostCreate{
+		DomainNames:   []string{"app.example.com"},
+		ForwardScheme: "http",
+		ForwardHost:   "web2",
+		ForwardPort:   8080,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateProxyHost: %v", err)
+	}
+	if updated.ForwardPort != 8080 {
+		t.Fatalf("expected updated host, got %+v", updated)
+	}
+	if gotBody["forward_host"] != "web2" {
+		t.Fatalf("forward_host not in body: %+v", gotBody)
+	}
+}
+
+func TestCreateProxyHostDuplicateDomain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tokens" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"token": "t", "expires": "2030-01-01T00:00:00Z"})
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"The proxy domain you have entered already exists"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "admin", "secret")
+	_, err := c.CreateProxyHost(ProxyHostCreate{
+		DomainNames:   []string{"dup.example.com"},
+		ForwardScheme: "http", ForwardHost: "x", ForwardPort: 80, Enabled: true,
+	})
+	if err == nil {
+		t.Fatal("expected error on duplicate domain")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected NPM error message in error, got: %v", err)
 	}
 }
