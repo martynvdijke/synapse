@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/martynvdijke/synapse/compare/v1.15.0...v1.16.0) (2026-08-13)
+
+
+### Features
+
+* **ui:** events tab, reconcile control and settings ([44a5d9c](https://github.com/martynvdijke/synapse/commit/44a5d9c6aaa74595bb2c7333827ea06d7284c9d0))
+
 # [1.15.0](https://github.com/martynvdijke/synapse/compare/v1.14.0...v1.15.0) (2026-08-13)
 
 
