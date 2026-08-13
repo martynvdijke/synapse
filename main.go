@@ -6,7 +6,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -23,6 +25,7 @@ import (
 
 	"synapse/internal/authelia"
 	"synapse/internal/db"
+	"synapse/internal/docker"
 	"synapse/internal/kuma"
 	"synapse/internal/logging"
 	"synapse/internal/notify"
@@ -93,6 +96,7 @@ type App struct {
 	database     *db.DB
 	kumaRegistry *kuma.Registry
 	npmRegistry  *npm.Registry
+	dockerClient *docker.Client
 
 	mu            sync.Mutex
 	running       bool
@@ -121,6 +125,17 @@ func (app *App) settings() db.Settings {
 		GotifyURL:             getEnv("GOTIFY_URL", ""),
 		GotifyToken:           getEnv("GOTIFY_TOKEN", ""),
 		GotifyPriority:        getEnvInt("GOTIFY_PRIORITY", 5),
+		DockerSocket:          getEnv("DOCKER_SOCKET", ""),
+		DockerEventsEnabled:   getEnv("DOCKER_EVENTS_ENABLED", "") == "true",
+		DockerEventsRetentionDays: getEnvInt("DOCKER_EVENTS_RETENTION_DAYS", 30),
+		ReconcileEnabled:      getEnv("RECONCILE_ENABLED", "") == "true",
+		ReconcileIntervalMinutes: getEnvInt("RECONCILE_INTERVAL_MINUTES", 60),
+		ReconcileDryRunDefault: getEnv("RECONCILE_DRY_RUN_DEFAULT", "true") == "true",
+		NotifyDockerDie:       getEnv("NOTIFY_DOCKER_DIE", "") == "true",
+		NotifyDockerHealth:    getEnv("NOTIFY_DOCKER_HEALTH", "") == "true",
+		NotifyDockerImage:     getEnv("NOTIFY_DOCKER_IMAGE", "") == "true",
+		NotifyReconcile:       getEnv("NOTIFY_RECONCILE", "") == "true",
+		NotifyCooldownMinutes: getEnvInt("NOTIFY_COOLDOWN_MINUTES", 5),
 	})
 }
 
@@ -181,6 +196,26 @@ func main() {
 		database:     database,
 		kumaRegistry: kuma.NewRegistry(database),
 		npmRegistry:  npm.NewRegistry(database),
+	}
+
+	// Connect to the Docker Engine (graceful when the socket is unavailable —
+	// event tracking and container state enrichment degrade to disabled).
+	if sock := getEnv("DOCKER_SOCKET", ""); sock != "" {
+		dc, err := docker.New(sock)
+		if err == nil {
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			err = dc.Ping(pingCtx)
+			pingCancel()
+			if err != nil {
+				dc = nil
+			}
+		}
+		if dc == nil {
+			slog.Warn("docker engine unreachable — event tracking and container state disabled", "socket", sock, "error", err)
+		} else {
+			app.dockerClient = dc
+			slog.Info("docker engine connected", "socket", sock)
+		}
 	}
 
 	// Read OTel endpoint from database settings, fall back to env var
@@ -272,6 +307,10 @@ func main() {
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/sync/progress", app.ProgressSSE)
 		api.GET("/sync/history", app.SyncHistory)
+		api.POST("/reconcile", app.Reconcile)
+		api.GET("/reconcile/runs", app.ReconcileRuns)
+		api.GET("/docker/events", app.DockerEvents)
+		api.GET("/events", app.EventsFeed)
 		api.GET("/services", app.Services)
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
@@ -311,6 +350,17 @@ func main() {
 	startupSettings := app.settings()
 	if startupSettings.NotifyEnabled && startupSettings.GotifyURL != "" && startupSettings.GotifyToken != "" {
 		go app.startNotifyScheduler(ctx)
+	}
+
+	// Start docker event watcher + retention purge (if the engine is reachable)
+	if app.dockerClient != nil {
+		go app.startDockerWatcher(ctx)
+		go app.runDockerEventPurge(ctx)
+	}
+
+	// Start periodic reconcile scheduler (if enabled)
+	if startupSettings.ReconcileEnabled && startupSettings.ReconcileIntervalMinutes > 0 {
+		go app.startReconcileScheduler(ctx)
 	}
 
 	// Session cleanup goroutine
@@ -453,6 +503,17 @@ func (app *App) GetSettings(c *gin.Context) {
 		"gotify_url":              s.GotifyURL,
 		"gotify_token":            mask(s.GotifyToken),
 		"gotify_priority":         s.GotifyPriority,
+		"docker_socket":           s.DockerSocket,
+		"docker_events_enabled":   s.DockerEventsEnabled,
+		"docker_events_retention_days": s.DockerEventsRetentionDays,
+		"reconcile_enabled":            s.ReconcileEnabled,
+		"reconcile_interval_minutes":   s.ReconcileIntervalMinutes,
+		"reconcile_dry_run_default":    s.ReconcileDryRunDefault,
+		"notify_docker_die":            s.NotifyDockerDie,
+		"notify_docker_health":         s.NotifyDockerHealth,
+		"notify_docker_image":          s.NotifyDockerImage,
+		"notify_reconcile":             s.NotifyReconcile,
+		"notify_cooldown_minutes":      s.NotifyCooldownMinutes,
 	})
 }
 
@@ -545,6 +606,67 @@ func (app *App) SaveSettings(c *gin.Context) {
 			val = 10
 		}
 		pairs["gotify_priority"] = strconv.Itoa(val)
+	}
+
+	// Docker event tracking + reconcile settings
+	if v, ok := raw["docker_socket"]; ok {
+		var val string; json.Unmarshal(v, &val)
+		pairs["docker_socket"] = val
+	}
+	if v, ok := raw["docker_events_enabled"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["docker_events_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["docker_events_retention_days"]; ok {
+		var val int; json.Unmarshal(v, &val)
+		if val < 1 {
+			val = 1
+		}
+		if val > 3650 {
+			val = 3650
+		}
+		pairs["docker_events_retention_days"] = strconv.Itoa(val)
+	}
+	if v, ok := raw["reconcile_enabled"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["reconcile_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["reconcile_interval_minutes"]; ok {
+		var val int; json.Unmarshal(v, &val)
+		if val < 1 {
+			val = 1
+		}
+		pairs["reconcile_interval_minutes"] = strconv.Itoa(val)
+	}
+	if v, ok := raw["reconcile_dry_run_default"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["reconcile_dry_run_default"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_docker_die"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["notify_docker_die"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_docker_health"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["notify_docker_health"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_docker_image"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["notify_docker_image"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_reconcile"]; ok {
+		var val bool; json.Unmarshal(v, &val)
+		pairs["notify_reconcile"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_cooldown_minutes"]; ok {
+		var val int; json.Unmarshal(v, &val)
+		if val < 1 {
+			val = 1
+		}
+		if val > 1440 {
+			val = 1440
+		}
+		pairs["notify_cooldown_minutes"] = strconv.Itoa(val)
 	}
 
 	if err := app.database.SaveSettingsMap(pairs); err != nil {
@@ -1364,7 +1486,39 @@ func (app *App) Services(c *gin.Context) {
 	if result == nil {
 		result = []synclib.ServiceInfo{}
 	}
+	app.enrichWithContainerState(c.Request.Context(), result)
 	c.JSON(http.StatusOK, result)
+}
+
+// enrichWithContainerState fills ContainerState/ContainerStatus on each
+// ServiceInfo from the Docker Engine (matched by compose container name).
+func (app *App) enrichWithContainerState(ctx context.Context, services []synclib.ServiceInfo) {
+	if app.dockerClient == nil {
+		return
+	}
+	containers, err := app.dockerClient.ListContainers(ctx)
+	if err != nil {
+		logging.LogWarn("app", "Docker container list failed during services enrichment",
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	stateByContainer := make(map[string]docker.ContainerSummary, len(containers))
+	for _, ct := range containers {
+		name := ""
+		if len(ct.Names) > 0 {
+			name = strings.TrimPrefix(ct.Names[0], "/")
+		}
+		if name != "" {
+			stateByContainer[name] = ct
+		}
+	}
+	for i := range services {
+		if ct, ok := stateByContainer[services[i].ContainerName]; ok {
+			services[i].ContainerState = ct.State
+			services[i].ContainerStatus = ct.Status
+		}
+	}
 }
 
 func (app *App) Proxies(c *gin.Context) {
@@ -1513,6 +1667,155 @@ func (app *App) SyncHistory(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, runs)
+}
+
+// Reconcile runs the reconciliation engine over service links. With
+// dry_run=true (the default, from settings) it reports intended changes
+// without applying them.
+func (app *App) Reconcile(c *gin.Context) {
+	var input struct {
+		DryRun  *bool  `json:"dry_run"`
+		Service string `json:"service"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	s := app.settings()
+	dryRun := s.ReconcileDryRunDefault
+	if input.DryRun != nil {
+		dryRun = *input.DryRun
+	}
+
+	npmClients, _ := app.npmRegistry.All()
+	kumaClients, _ := app.kumaRegistry.All()
+	result := synclib.RunReconcile(
+		s.ComposePath, npmClients, kumaClients, app.database,
+		synclib.ReconcileOptions{DryRun: dryRun, OnlyService: input.Service},
+		nil,
+	)
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ReconcileRuns lists persisted reconcile runs (newest first).
+func (app *App) ReconcileRuns(c *gin.Context) {
+	runs, err := app.database.GetSyncRuns(100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	filtered := []db.SyncRun{}
+	for _, r := range runs {
+		if r.Source == "reconcile" {
+			filtered = append(filtered, r)
+		}
+	}
+	c.JSON(http.StatusOK, filtered)
+}
+
+// DockerEvents lists persisted docker events with optional filters.
+func (app *App) DockerEvents(c *gin.Context) {
+	f := db.DockerEventFilter{
+		EventType: c.Query("type"),
+		Action:    c.Query("action"),
+		Container: c.Query("container"),
+	}
+	if since := c.Query("since"); since != "" {
+		t, err := time.Parse(time.RFC3339, since)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid since: expected RFC3339 timestamp"})
+			return
+		}
+		f.Since = &t
+	}
+	if limit := c.Query("limit"); limit != "" {
+		n, err := strconv.Atoi(limit)
+		if err != nil || n < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+			return
+		}
+		if n > 500 {
+			n = 500
+		}
+		f.Limit = n
+	}
+	events, err := app.database.ListDockerEvents(f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if events == nil {
+		events = []db.DockerEvent{}
+	}
+	c.JSON(http.StatusOK, events)
+}
+
+// FeedItem is a single entry in the unified events feed.
+type FeedItem struct {
+	Time   time.Time `json:"time"`
+	Kind   string    `json:"kind"` // "docker" | "reconcile"
+	Title  string    `json:"title"`
+	Detail string    `json:"detail,omitempty"`
+	Status string    `json:"status,omitempty"`
+}
+
+// EventsFeed returns a unified, time-descending feed of docker events and
+// reconcile runs.
+func (app *App) EventsFeed(c *gin.Context) {
+	events, err := app.database.ListDockerEvents(db.DockerEventFilter{Limit: 50})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	runs, err := app.database.GetSyncRuns(50)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	items := make([]FeedItem, 0, len(events)+len(runs))
+	for _, e := range events {
+		title := e.Action
+		if e.ActorName != "" {
+			title = e.ActorName + " " + e.Action
+		}
+		detail := e.Image
+		if e.Image == "" {
+			detail = e.EventType
+		}
+		items = append(items, FeedItem{
+			Time:   e.CreatedAt,
+			Kind:   "docker",
+			Title:  title,
+			Detail: detail,
+			Status: e.Status,
+		})
+	}
+	for _, r := range runs {
+		if r.Source != "reconcile" {
+			continue
+		}
+		items = append(items, FeedItem{
+			Time:   r.StartedAt,
+			Kind:   "reconcile",
+			Title:  "Reconcile " + r.Status,
+			Detail: fmt.Sprintf("added %d, updated %d, skipped %d, failed %d", r.Added, r.Updated, r.Skipped, r.Failed),
+			Status: r.Status,
+		})
+	}
+
+	// Merge by time descending, capped at 100 entries.
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0 && items[j].Time.After(items[j-1].Time); j-- {
+			items[j], items[j-1] = items[j-1], items[j]
+		}
+	}
+	if len(items) > 100 {
+		items = items[:100]
+	}
+	c.JSON(http.StatusOK, items)
 }
 
 func (app *App) DockerSync(c *gin.Context) {
@@ -1775,6 +2078,228 @@ func (app *App) runNotifyCheck(ctx context.Context) {
 		slog.Int("missing_count", report.Total()),
 		slog.Duration("duration", time.Since(start)),
 	)
+}
+
+// eventNotifierFor builds an EventNotifier from the current settings. A nil or
+// disabled notifier is returned when Gotify is unconfigured so callers can call
+// Notify unconditionally (it no-ops).
+func (app *App) eventNotifierFor(s db.Settings) *notify.EventNotifier {
+	if s.GotifyURL == "" || s.GotifyToken == "" {
+		return notify.NewEventNotifier(nil, notify.EventNotifierOptions{Enabled: false})
+	}
+	return notify.NewEventNotifier(
+		notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority),
+		notify.EventNotifierOptions{
+			Enabled:  s.NotifyEnabled,
+			Cooldown: time.Duration(s.NotifyCooldownMinutes) * time.Minute,
+			Toggles: map[notify.Category]bool{
+				notify.CatDockerDie:    s.NotifyDockerDie,
+				notify.CatDockerHealth: s.NotifyDockerHealth,
+				notify.CatDockerImage:  s.NotifyDockerImage,
+				notify.CatReconcile:    s.NotifyReconcile,
+			},
+		},
+	)
+}
+
+// startDockerWatcher streams docker events while DockerEventsEnabled is set.
+// Settings are re-read on every cycle so enabling event tracking mid-run picks
+// it up without a restart. The stop tracker distinguishes graceful stops from
+// unexpected container deaths.
+func (app *App) startDockerWatcher(ctx context.Context) {
+	logging.LogInfo("app", "Docker event watcher started")
+	defer logging.LogInfo("app", "Docker event watcher stopped")
+
+	tracker := notify.NewContainerStopTracker(60 * time.Second)
+
+	for {
+		s := app.settings()
+		if !s.DockerEventsEnabled {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(30 * time.Second):
+				continue
+			}
+		}
+
+		notifier := app.eventNotifierFor(s)
+		w := docker.NewWatcher(app.dockerClient, docker.WatcherOptions{
+			ReconnectBase: 1 * time.Second,
+			ReconnectMax:  30 * time.Second,
+			OnEvent: func(ev docker.Event) {
+				app.handleDockerEvent(ctx, ev, tracker, notifier)
+			},
+			OnImageUpdate: func(up docker.ImageUpdate) {
+				app.handleImageUpdate(ctx, up, notifier)
+			},
+		})
+		w.Run(ctx) // blocks until the context is cancelled
+		return
+	}
+}
+
+// handleDockerEvent persists a docker event and raises notifications for
+// unexpected container deaths and unhealthy health checks.
+func (app *App) handleDockerEvent(ctx context.Context, ev docker.Event, tracker *notify.ContainerStopTracker, notifier *notify.EventNotifier) {
+	de := &db.DockerEvent{
+		EventType: ev.Type,
+		Action:    ev.Action,
+		ActorID:   ev.Actor.ID,
+		ActorName: ev.ContainerName(),
+		Image:     ev.ImageName(),
+		Status:    ev.Status,
+		CreatedAt: time.Now(),
+	}
+	if err := app.database.CreateDockerEvent(de); err != nil {
+		logging.LogWarn("app", "Failed to persist docker event",
+			slog.String("action", ev.Action),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	name := ev.ContainerName()
+	switch ev.Action {
+	case "stop":
+		tracker.MarkStop(name, time.Now())
+	case "die":
+		graceful := tracker.WasGraceful(name, time.Now())
+		if graceful {
+			return // expected stop/restart — no alarm
+		}
+		notifier.Notify(ctx, notify.CatDockerDie,
+			"Container died unexpectedly",
+			fmt.Sprintf("%s (%s)", name, ev.ImageName()),
+		)
+	case "health_status":
+		if ev.Actor.Attributes["status"] == "unhealthy" {
+			notifier.Notify(ctx, notify.CatDockerHealth,
+				"Container health check failing",
+				name,
+			)
+		}
+	}
+}
+
+// handleImageUpdate persists an image-change event and raises a notification.
+func (app *App) handleImageUpdate(ctx context.Context, up docker.ImageUpdate, notifier *notify.EventNotifier) {
+	de := &db.DockerEvent{
+		EventType: "image",
+		Action:    "update",
+		ActorID:   up.ContainerID,
+		ActorName: up.ContainerName,
+		ImageOld:  up.ImageOld,
+		ImageNew:  up.ImageNew,
+		CreatedAt: time.Now(),
+	}
+	if err := app.database.CreateDockerEvent(de); err != nil {
+		logging.LogWarn("app", "Failed to persist image update event",
+			slog.String("container", up.ContainerName),
+			slog.String("error", err.Error()),
+		)
+	}
+	notifier.Notify(ctx, notify.CatDockerImage,
+		"Container image updated",
+		fmt.Sprintf("%s: %s → %s", up.ContainerName, up.ImageOld, up.ImageNew),
+	)
+}
+
+// runDockerEventPurge removes docker events older than the retention window
+// once a day (and once at startup).
+func (app *App) runDockerEventPurge(ctx context.Context) {
+	purge := func() {
+		s := app.settings()
+		days := s.DockerEventsRetentionDays
+		if days < 1 {
+			days = 30
+		}
+		before := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		n, err := app.database.PurgeDockerEvents(before)
+		if err != nil {
+			logging.LogWarn("app", "Docker event purge failed",
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+		if n > 0 {
+			logging.LogInfo("app", "Purged old docker events",
+				slog.Int("purged", n),
+				slog.Int("retention_days", days),
+			)
+		}
+	}
+
+	purge()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
+}
+
+// startReconcileScheduler runs the reconcile engine on an interval. Settings
+// are re-read every tick; when reconcile is disabled the goroutine idles.
+func (app *App) startReconcileScheduler(ctx context.Context) {
+	logging.LogInfo("app", "Reconcile scheduler started")
+	defer logging.LogInfo("app", "Reconcile scheduler stopped")
+
+	for {
+		s := app.settings()
+		if !s.ReconcileEnabled {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Minute):
+				continue
+			}
+		}
+		interval := s.ReconcileIntervalMinutes
+		if interval < 1 {
+			interval = 60
+		}
+
+		timer := time.NewTimer(time.Duration(interval) * time.Minute)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			app.runScheduledReconcile(ctx)
+		}
+	}
+}
+
+// runScheduledReconcile executes one reconcile pass and notifies when changes
+// were found or the run hit errors.
+func (app *App) runScheduledReconcile(ctx context.Context) {
+	s := app.settings()
+	npmClients, _ := app.npmRegistry.All()
+	kumaClients, _ := app.kumaRegistry.All()
+	result := synclib.RunReconcile(
+		s.ComposePath, npmClients, kumaClients, app.database,
+		synclib.ReconcileOptions{DryRun: s.ReconcileDryRunDefault},
+		nil,
+	)
+
+	if result.Run.Status != "completed_with_errors" && len(result.Changes) == 0 {
+		return
+	}
+
+	var b strings.Builder
+	for _, ch := range result.Changes {
+		fmt.Fprintf(&b, "- %s/%s: %s\n", ch.Service, ch.Target, ch.Detail)
+	}
+	if b.Len() == 0 {
+		b.WriteString("(no details)")
+	}
+
+	title := fmt.Sprintf("Reconcile finished: %d change(s), %d failed", len(result.Changes), result.Run.Failed)
+	app.eventNotifierFor(s).Notify(ctx, notify.CatReconcile, title, strings.TrimSpace(b.String()))
 }
 
 // NotifyTest sends a fixed test message to verify Gotify configuration.

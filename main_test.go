@@ -15,8 +15,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"synapse/internal/db"
+	"synapse/internal/docker"
 	"synapse/internal/kuma"
 	"synapse/internal/npm"
+	synclib "synapse/internal/sync"
 )
 
 func setupTest(t *testing.T) (*App, *gin.Engine) {
@@ -868,6 +870,7 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/settings", app.SaveSettings)
 		api.GET("/status", app.Status)
 		api.GET("/sync/history", app.SyncHistory)
+		api.GET("/services", app.Services)
 		api.GET("/kuma-instances", app.ListKumaInstances)
 		api.POST("/kuma-instances", app.CreateKumaInstance)
 		api.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
@@ -882,6 +885,10 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/sync/npm", app.NPMSync)
 		api.GET("/monitors", app.KumaMonitors)
 		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
+		api.POST("/reconcile", app.Reconcile)
+		api.GET("/reconcile/runs", app.ReconcileRuns)
+		api.GET("/docker/events", app.DockerEvents)
+		api.GET("/events", app.EventsFeed)
 		api.POST("/notify/test", app.NotifyTest)
 		api.GET("/notify/missing", app.NotifyMissing)
 		api.GET("/authelia/status", app.AutheliaStatus)
@@ -1160,4 +1167,295 @@ func TestSettingsRoundTrip_NotifyFields(t *testing.T) {
 	if s2["gotify_token"] != "****" {
 		t.Errorf("masked token should remain stored: got %v", s2["gotify_token"])
 	}
+}
+
+func TestSettingsRoundTrip_ReconcileDockerFields(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	body := `{"docker_socket":"unix:///var/run/docker.sock","docker_events_enabled":true,"docker_events_retention_days":14,"reconcile_enabled":true,"reconcile_interval_minutes":15,"reconcile_dry_run_default":false,"notify_docker_die":true,"notify_docker_health":true,"notify_docker_image":false,"notify_reconcile":true,"notify_cooldown_minutes":3}`
+	req := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("post settings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req2 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var s map[string]any
+	json.NewDecoder(w2.Body).Decode(&s)
+
+	if s["docker_socket"] != "unix:///var/run/docker.sock" {
+		t.Errorf("docker_socket: got %v", s["docker_socket"])
+	}
+	if s["docker_events_enabled"] != true {
+		t.Errorf("docker_events_enabled: got %v", s["docker_events_enabled"])
+	}
+	if s["docker_events_retention_days"] != float64(14) {
+		t.Errorf("docker_events_retention_days: got %v", s["docker_events_retention_days"])
+	}
+	if s["reconcile_enabled"] != true {
+		t.Errorf("reconcile_enabled: got %v", s["reconcile_enabled"])
+	}
+	if s["reconcile_interval_minutes"] != float64(15) {
+		t.Errorf("reconcile_interval_minutes: got %v", s["reconcile_interval_minutes"])
+	}
+	if s["reconcile_dry_run_default"] != false {
+		t.Errorf("reconcile_dry_run_default: got %v", s["reconcile_dry_run_default"])
+	}
+	if s["notify_docker_die"] != true || s["notify_docker_health"] != true || s["notify_docker_image"] != false {
+		t.Errorf("notify toggles: die=%v health=%v image=%v", s["notify_docker_die"], s["notify_docker_health"], s["notify_docker_image"])
+	}
+	if s["notify_reconcile"] != true {
+		t.Errorf("notify_reconcile: got %v", s["notify_reconcile"])
+	}
+	if s["notify_cooldown_minutes"] != float64(3) {
+		t.Errorf("notify_cooldown_minutes: got %v", s["notify_cooldown_minutes"])
+	}
+
+	// Clamping: retention below 1 → 1, cooldown above 1440 → 1440.
+	body2 := `{"docker_events_retention_days":0,"notify_cooldown_minutes":9999}`
+	req3 := authRequest(t, "POST", "/api/settings", body2, sessionID)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("post settings clamp: expected 200, got %d", w3.Code)
+	}
+	req4 := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w4 := httptest.NewRecorder()
+	r.ServeHTTP(w4, req4)
+	var s2 map[string]any
+	json.NewDecoder(w4.Body).Decode(&s2)
+	if s2["docker_events_retention_days"] != float64(1) {
+		t.Errorf("retention clamp: got %v", s2["docker_events_retention_days"])
+	}
+	if s2["notify_cooldown_minutes"] != float64(1440) {
+		t.Errorf("cooldown clamp: got %v", s2["notify_cooldown_minutes"])
+	}
+}
+
+func TestReconcileEndpoint_NoLinks(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "POST", "/api/reconcile", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reconcile: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Run struct {
+			Source string `json:"source"`
+			Status string `json:"status"`
+			DryRun bool   `json:"dry_run"`
+		} `json:"run"`
+		Changes []map[string]any `json:"changes"`
+		DryRun  bool             `json:"dry_run"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode reconcile response: %v", err)
+	}
+	if resp.Run.Source != "reconcile" {
+		t.Errorf("run source: got %q", resp.Run.Source)
+	}
+	if resp.Run.Status != "completed" {
+		t.Errorf("run status: got %q", resp.Run.Status)
+	}
+	// Default dry-run from settings is true.
+	if !resp.Run.DryRun {
+		t.Errorf("run dry_run should default to true, got %v", resp.Run.DryRun)
+	}
+
+	// The run must be persisted and visible via /api/reconcile/runs.
+	req2 := authRequest(t, "GET", "/api/reconcile/runs", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var runs []db.SyncRun
+	if err := json.NewDecoder(w2.Body).Decode(&runs); err != nil {
+		t.Fatalf("decode runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 reconcile run, got %d", len(runs))
+	}
+	if runs[0].Source != "reconcile" || runs[0].Status != "completed" {
+		t.Errorf("unexpected run: %+v", runs[0])
+	}
+}
+
+func TestReconcileEndpoint_ExplicitApply(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "POST", "/api/reconcile", `{"dry_run":false}`, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reconcile: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Run struct {
+			DryRun bool `json:"dry_run"`
+		} `json:"run"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Run.DryRun {
+		t.Errorf("explicit dry_run=false should apply, run reported dry_run=true")
+	}
+}
+
+func TestDockerEventsEndpoint(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	now := time.Now()
+	for i, ev := range []db.DockerEvent{
+		{EventType: "container", Action: "start", ActorName: "web", Image: "nginx:1.25", CreatedAt: now.Add(-time.Minute)},
+		{EventType: "container", Action: "die", ActorName: "api", Image: "myapp:latest", CreatedAt: now},
+		{EventType: "image", Action: "update", ActorName: "web", ImageOld: "nginx:1.25", ImageNew: "nginx:1.27", CreatedAt: now.Add(-30 * time.Second)},
+	} {
+		ev.ActorID = fmt.Sprintf("id%d", i)
+		if err := app.database.CreateDockerEvent(&ev); err != nil {
+			t.Fatalf("seed event: %v", err)
+		}
+	}
+
+	// Full list, newest first.
+	req := authRequest(t, "GET", "/api/docker/events", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("docker events: expected 200, got %d", w.Code)
+	}
+	var events []db.DockerEvent
+	json.NewDecoder(w.Body).Decode(&events)
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+	if events[0].Action != "die" {
+		t.Errorf("expected newest-first ordering, first=%s", events[0].Action)
+	}
+
+	// Filter by action.
+	req2 := authRequest(t, "GET", "/api/docker/events?action=die", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var dieEvents []db.DockerEvent
+	json.NewDecoder(w2.Body).Decode(&dieEvents)
+	if len(dieEvents) != 1 || dieEvents[0].ActorName != "api" {
+		t.Fatalf("action filter: expected 1 die event for api, got %+v", dieEvents)
+	}
+
+	// Filter by container (substring).
+	req3 := authRequest(t, "GET", "/api/docker/events?container=web", "", sessionID)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	var webEvents []db.DockerEvent
+	json.NewDecoder(w3.Body).Decode(&webEvents)
+	if len(webEvents) != 2 {
+		t.Fatalf("container filter: expected 2 web events, got %d", len(webEvents))
+	}
+
+	// Invalid since → 400.
+	req4 := authRequest(t, "GET", "/api/docker/events?since=garbage", "", sessionID)
+	w4 := httptest.NewRecorder()
+	r.ServeHTTP(w4, req4)
+	if w4.Code != http.StatusBadRequest {
+		t.Errorf("invalid since: expected 400, got %d", w4.Code)
+	}
+}
+
+func TestEventsFeed(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Seed a docker event (2 min ago) and a reconcile run (1 min ago).
+	past := time.Now().Add(-2 * time.Minute)
+	if err := app.database.CreateDockerEvent(&db.DockerEvent{
+		EventType: "container", Action: "start", ActorName: "web", Image: "nginx:1.25", CreatedAt: past,
+	}); err != nil {
+		t.Fatalf("seed docker event: %v", err)
+	}
+
+	// Run reconcile directly to persist a run (no links → completed).
+	synclib.RunReconcile("testdata/docker-compose.yml", nil, nil, app.database, synclib.ReconcileOptions{DryRun: true}, nil)
+
+	req := authRequest(t, "GET", "/api/events", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("events feed: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var items []FeedItem
+	json.NewDecoder(w.Body).Decode(&items)
+
+	kinds := map[string]int{}
+	for _, it := range items {
+		kinds[it.Kind]++
+	}
+	if kinds["docker"] < 1 {
+		t.Errorf("expected docker feed item, got %+v", items)
+	}
+	if kinds["reconcile"] < 1 {
+		t.Errorf("expected reconcile feed item, got %+v", items)
+	}
+	// Newest first (reconcile run happened after the docker event).
+	if len(items) >= 2 && items[0].Kind != "reconcile" {
+		t.Errorf("expected newest (reconcile) first, got %+v", items[0])
+	}
+}
+
+func TestServicesWithContainerState(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Fake docker engine reporting one running container for the compose
+	// "web" service (container name nginx-web).
+	app.dockerClient = fakeDockerEngine(t, []docker.ContainerSummary{
+		{ID: "abc123", Names: []string{"/nginx-web"}, Image: "nginx:1.25", State: "running", Status: "Up 2 hours"},
+	})
+
+	req := authRequest(t, "GET", "/api/services", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("services: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var services []map[string]any
+	json.NewDecoder(w.Body).Decode(&services)
+
+	var web *map[string]any
+	for i := range services {
+		if services[i]["container_name"] == "nginx-web" {
+			web = &services[i]
+			break
+		}
+	}
+	if web == nil {
+		t.Fatal("nginx-web not found in services response")
+	}
+	if (*web)["container_state"] != "running" {
+		t.Errorf("container_state: got %v", (*web)["container_state"])
+	}
+	if (*web)["container_status"] != "Up 2 hours" {
+		t.Errorf("container_status: got %v", (*web)["container_status"])
+	}
+}
+
+func fakeDockerEngine(t *testing.T, containers []docker.ContainerSummary) *docker.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/containers/json" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(containers)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return docker.NewWithClient(srv.URL, srv.Client())
 }

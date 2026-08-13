@@ -256,6 +256,11 @@ type ServiceInfo struct {
 	User          string   `json:"user,omitempty"`
 	WorkingDir    string   `json:"working_dir,omitempty"`
 	HealthCheck   *HealthCheckInfo `json:"healthcheck,omitempty"`
+
+	// ContainerState / ContainerStatus are populated from the Docker Engine
+	// (not the compose file) when the daemon is reachable.
+	ContainerState  string `json:"container_state,omitempty"`
+	ContainerStatus string `json:"container_status,omitempty"`
 }
 
 type HealthCheckInfo struct {
