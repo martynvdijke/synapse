@@ -5,7 +5,7 @@ import './api';
 import { toast, setLoading } from './toast';
 import { connectSSE, setRefreshAll } from './sse';
 import { loadStatus, refreshAll } from './stats';
-import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory } from './tabs';
+import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory, loadEvents, runReconcile } from './tabs';
 import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance, loadAutheliaInstances, showAutheliaInstanceForm, hideAutheliaInstanceForm, saveAutheliaInstance } from './settings';
 import { loadAutheliaInstanceSelector, loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia';
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs';
@@ -130,6 +130,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-npm') loadNPMProxies();
         else if (target === '#tab-kuma') loadKumaMonitors();
         else if (target === '#tab-history') loadHistory();
+        else if (target === '#tab-events') loadEvents();
         else if (target === '#tab-settings') { loadSettings(); loadKumaInstances(); loadNPMInstances(); loadAutheliaInstances(); }
         else if (target === '#tab-authelia') loadAutheliaInstanceSelector();
         else if (target === '#tab-logs') {
@@ -196,3 +197,6 @@ function startSync(source: string): void {
     });
 }
 window.startSync = startSync;
+
+// Reconcile button on the Docker tab
+document.getElementById('btn-reconcile')!.addEventListener('click', runReconcile);

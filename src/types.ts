@@ -70,6 +70,8 @@ export interface ServiceInfo {
   entrypoint?: string;
   user?: string;
   working_dir?: string;
+  container_state?: string;
+  container_status?: string;
   healthcheck?: {
     test: string | string[];
     interval?: string;
@@ -123,6 +125,17 @@ export interface SettingsResponse {
   gotify_url?: string;
   gotify_token?: string;
   gotify_priority?: number;
+  docker_socket?: string;
+  docker_events_enabled?: boolean;
+  docker_events_retention_days?: number;
+  reconcile_enabled?: boolean;
+  reconcile_interval_minutes?: number;
+  reconcile_dry_run_default?: boolean;
+  notify_docker_die?: boolean;
+  notify_docker_health?: boolean;
+  notify_docker_image?: boolean;
+  notify_reconcile?: boolean;
+  notify_cooldown_minutes?: number;
   [key: string]: unknown;
 }
 
@@ -140,9 +153,30 @@ export interface SyncRun {
   status: string;
   started_at: string;
   added: number;
+  updated?: number;
   skipped: number;
   failed: number;
+  dry_run?: boolean;
   error_message: string;
+}
+
+export interface FeedItem {
+  time: string;
+  kind: string;
+  title: string;
+  detail: string;
+  status: string;
+}
+
+export interface ReconcileResult {
+  changes: Array<{
+    service: string;
+    target: string;
+    action: string;
+    detail: string;
+  }>;
+  dry_run: boolean;
+  run: SyncRun;
 }
 
 export interface AutheliaStatusResponse {

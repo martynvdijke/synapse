@@ -48,9 +48,15 @@ A single-binary web application that synchronizes Docker Compose containers and 
 ### Synchronization
 - **On-Demand Sync** — Trigger Docker or NPM sync manually
 - **Periodic Sync** — Configurable sync interval via `SYNC_INTERVAL` environment variable
+- **Reconciliation** — Enforce desired state for linked services (NPM proxy hosts + Kuma monitors) via the `synapse.*` compose labels, with dry-run previews and per-service filtering
 - **Progress Streaming** — Real-time sync progress via Server-Sent Events (SSE)
 - **Sync History** — View past sync runs with timestamps and results
 - **Concurrency Protection** — Prevents overlapping sync operations
+
+### Monitoring & Events
+- **Docker Event Tracking** — Streams container events (restarts, stops, image updates) over the Docker socket and persists them for inspection
+- **Unified Events Feed** — Combined view of Docker events and reconcile runs
+- **Gotify Notifications** — Event-driven alerts for unexpected container stops, unhealthy containers, image updates, and reconcile drift (per-category toggles + cooldown dedup)
 
 ### Administration
 - **First-Time Setup** — Create admin account on first run
@@ -108,6 +114,17 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `AUTHELIA_DEFAULT_POLICY` | `deny` | Default access policy for new domains |
 | `OTEL_ENDPOINT` | — | OpenTelemetry OTLP endpoint |
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `DOCKER_SOCKET` | — | Docker Engine socket (`unix:///var/run/docker.sock`, `tcp://`, or path). Leave empty to disable the event watcher |
+| `DOCKER_EVENTS_ENABLED` | `false` | Track Docker container events |
+| `DOCKER_EVENTS_RETENTION_DAYS` | `30` | Days to retain Docker events before purging |
+| `RECONCILE_ENABLED` | `false` | Periodically reconcile linked services to desired state |
+| `RECONCILE_INTERVAL_MINUTES` | `60` | Reconcile interval in minutes |
+| `RECONCILE_DRY_RUN_DEFAULT` | `true` | Default dry-run mode for scheduled reconcile runs |
+| `NOTIFY_DOCKER_DIE` | `false` | Notify on unexpected container stops |
+| `NOTIFY_DOCKER_HEALTH` | `false` | Notify on unhealthy container health checks |
+| `NOTIFY_DOCKER_IMAGE` | `false` | Notify when a container's image changes |
+| `NOTIFY_RECONCILE` | `false` | Notify when a reconcile run reports changes or errors |
+| `NOTIFY_COOLDOWN_MINUTES` | `5` | Cooldown window for repeat event notifications |
 
 ## API Endpoints
 
@@ -136,6 +153,8 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `POST` | `/api/sync/npm` | Trigger NPM proxy sync |
 | `GET` | `/api/sync/progress` | SSE stream for sync progress |
 | `GET` | `/api/sync/history?source=docker\|npm` | Sync run history |
+| `POST` | `/api/reconcile` | Run reconciliation (`{dry_run, service}` — dry run default) |
+| `GET` | `/api/reconcile/runs` | Reconcile run history |
 
 ### Data
 
@@ -145,6 +164,8 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `GET` | `/api/proxies` | List NPM proxy hosts with monitor status |
 | `GET` | `/api/monitors` | List Uptime Kuma monitors with uptime stats |
 | `GET` | `/api/status` | Dashboard status overview |
+| `GET` | `/api/docker/events?type=&action=&container=&since=&limit=` | List tracked Docker events |
+| `GET` | `/api/events` | Unified feed (Docker events + reconcile runs) |
 
 ### Authelia
 
@@ -166,10 +187,15 @@ synapse/
 ├── internal/
 │   ├── db/
 │   │   └── db.go              # Database models & operations
+│   ├── docker/
+│   │   └── client.go          # Minimal Docker Engine client + event watcher
 │   ├── kuma/
 │   │   └── kuma.go            # Uptime Kuma client (REST + Socket.IO)
 │   ├── sync/
-│   │   └── sync.go            # Docker & NPM sync logic
+│   │   ├── sync.go            # Docker & NPM sync logic
+│   │   └── reconcile.go       # Desired-state reconciliation engine
+│   ├── notify/
+│   │   └── *.go               # Gotify notifications + event notifier
 │   ├── authelia/
 │   │   └── authelia.go        # Authelia config parser & sync
 │   └── telemetry/

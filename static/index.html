@@ -123,6 +123,11 @@
             </button>
         </li>
         <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-btn-events" role="tab" aria-selected="false" aria-controls="tab-events" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-events" type="button">
+                Events
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
             <button class="nav-link" id="tab-btn-authelia" role="tab" aria-selected="false" aria-controls="tab-authelia" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-authelia" type="button">
                 Authelia
             </button>
@@ -141,6 +146,20 @@
 
     <div class="tab-content">
         <div class="tab-pane fade show active" id="tab-docker" role="tabpanel" aria-labelledby="tab-btn-docker">
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-body py-2">
+                    <div class="d-flex align-items-center flex-wrap gap-2">
+                        <span class="small fw-semibold me-1">Reconcile:</span>
+                        <div class="form-check form-check-inline mb-0">
+                            <input class="form-check-input" type="checkbox" id="reconcile-dry-run" checked>
+                            <label class="form-check-label" for="reconcile-dry-run">Dry run</label>
+                        </div>
+                        <input class="form-control form-control-sm" type="text" id="reconcile-service" placeholder="Single service (optional)" style="max-width:220px">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-reconcile">Run Reconcile</button>
+                        <span class="small text-muted" id="reconcile-result"></span>
+                    </div>
+                </div>
+            </div>
             <div class="table-responsive bg-white rounded shadow-sm">
                 <table class="table table-hover align-middle" aria-label="Docker services">
                     <thead class="table-light">
@@ -226,14 +245,39 @@
                             <th>Status</th>
                             <th>Started</th>
                             <th>Added</th>
+                            <th>Updated</th>
                             <th>Skipped</th>
                             <th>Failed</th>
                             <th>Error</th>
                         </tr>
                     </thead>
                     <tbody id="history-tbody" aria-live="polite">
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:15%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:15%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:15%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:15%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-events" role="tabpanel" aria-labelledby="tab-btn-events">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small text-muted">Unified feed of Docker engine events and reconcile runs.</span>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-events-refresh" onclick="loadEvents()">Refresh</button>
+            </div>
+            <div class="table-responsive bg-white rounded shadow-sm">
+                <table class="table table-hover align-middle" aria-label="Events feed">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Time</th>
+                            <th>Kind</th>
+                            <th>Title</th>
+                            <th>Detail</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="events-tbody" aria-live="polite">
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -692,6 +736,58 @@
                             <div class="mb-2">
                                 <label class="form-label">Currently missing from Uptime Kuma</label>
                                 <div id="notify-missing-list" class="small text-muted">Save settings and click "Preview missing items" to see uncovered services and proxy hosts.</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <h6 class="mb-3">Docker Events &amp; Reconcile</h6>
+                            <div class="mb-2">
+                                <label class="form-label">Docker Socket</label>
+                                <input class="form-control form-control-sm" id="s-docker-socket" placeholder="unix:///var/run/docker.sock" style="max-width:400px" autocomplete="off">
+                                <div class="form-text">Leave blank to disable the Docker event watcher (e.g. when Synapse does not have access to the Docker socket).</div>
+                            </div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="s-docker-events-enabled">
+                                        <label class="form-check-label" for="s-docker-events-enabled">Track Docker events</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Event retention (days)</label>
+                                    <input class="form-control form-control-sm" type="number" id="s-docker-retention-days" min="1" value="30" style="max-width:160px">
+                                </div>
+                            </div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="s-reconcile-enabled">
+                                        <label class="form-check-label" for="s-reconcile-enabled">Periodic reconcile</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Reconcile interval (minutes)</label>
+                                    <input class="form-control form-control-sm" type="number" id="s-reconcile-interval" min="1" value="60" style="max-width:160px">
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="s-reconcile-dry-run">
+                                        <label class="form-check-label" for="s-reconcile-dry-run">Default to dry run</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <div class="form-text mb-1">Gotify notifications for events (requires the Notifications section above to be configured):</div>
+                                <div class="row g-2">
+                                    <div class="col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" id="s-notify-docker-die"><label class="form-check-label" for="s-notify-docker-die">Unexpected container die</label></div></div>
+                                    <div class="col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" id="s-notify-docker-health"><label class="form-check-label" for="s-notify-docker-health">Unhealthy containers</label></div></div>
+                                    <div class="col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" id="s-notify-docker-image"><label class="form-check-label" for="s-notify-docker-image">Image updates</label></div></div>
+                                    <div class="col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" id="s-notify-reconcile"><label class="form-check-label" for="s-notify-reconcile">Reconcile changes</label></div></div>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Notification cooldown (minutes)</label>
+                                <input class="form-control form-control-sm" type="number" id="s-notify-cooldown" min="1" value="5" style="max-width:160px">
+                                <div class="form-text">Repeat notifications for the same category are suppressed within this window.</div>
                             </div>
                         </div>
                     </div>

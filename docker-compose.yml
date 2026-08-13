@@ -11,6 +11,9 @@ services:
       - /var/docker/compose:/compose:ro
       # Optional: mount Authelia config if using Authelia sync
       # - ./authelia:/config/authelia:ro
+      # Optional: mount the Docker socket to track container events
+      # (restarts, image updates) and notify on unexpected stops.
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       DB_PATH: /db/synapse.db
       COMPOSE_PATH: /compose/docker-compose.yml
@@ -30,6 +33,20 @@ services:
       # AUTHELIA_SYNC_ENABLED: "true"
       # Optional: periodic sync interval (minutes, 0 = manual only)
       # SYNC_INTERVAL: 60
+      # Optional: Docker event tracking (requires the socket mount above)
+      # DOCKER_SOCKET: unix:///var/run/docker.sock
+      # DOCKER_EVENTS_ENABLED: "true"
+      # DOCKER_EVENTS_RETENTION_DAYS: 30
+      # Optional: periodic reconciliation of linked services (dry run by default)
+      # RECONCILE_ENABLED: "true"
+      # RECONCILE_INTERVAL_MINUTES: 60
+      # RECONCILE_DRY_RUN_DEFAULT: "true"
+      # Optional: Gotify event notifications (requires GOTIFY_URL/GOTIFY_TOKEN)
+      # NOTIFY_DOCKER_DIE: "true"
+      # NOTIFY_DOCKER_HEALTH: "true"
+      # NOTIFY_DOCKER_IMAGE: "true"
+      # NOTIFY_RECONCILE: "true"
+      # NOTIFY_COOLDOWN_MINUTES: 5
       # Optional: OpenTelemetry
       # OTEL_ENABLED: "true"
       # OTEL_ENDPOINT: http://otel-collector:4318/v1/traces

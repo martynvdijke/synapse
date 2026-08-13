@@ -23,6 +23,8 @@ declare function loadDockerServices(): void;
 declare function loadKumaMonitors(): void;
 declare function loadNPMProxies(): void;
 declare function loadHistory(): void;
+declare function loadEvents(): void;
+declare function runReconcile(): void;
 
 // ── settings.js ─────────────────────────────────────────────────
 declare function loadSettings(): void;

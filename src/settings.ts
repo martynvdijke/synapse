@@ -24,6 +24,29 @@ export function loadSettings(): void {
         if (gotifyToken) gotifyToken.value = (s.gotify_token as string) || '';
         var gotifyPriority = document.getElementById('s-gotify-priority') as HTMLInputElement | null;
         if (gotifyPriority) gotifyPriority.value = String(s.gotify_priority ?? 5);
+        // Docker events & reconcile
+        var dockerSocket = document.getElementById('s-docker-socket') as HTMLInputElement | null;
+        if (dockerSocket) dockerSocket.value = (s.docker_socket as string) || '';
+        var dockerEvents = document.getElementById('s-docker-events-enabled') as HTMLInputElement | null;
+        if (dockerEvents) dockerEvents.checked = !!(s.docker_events_enabled);
+        var dockerRetention = document.getElementById('s-docker-retention-days') as HTMLInputElement | null;
+        if (dockerRetention) dockerRetention.value = String(s.docker_events_retention_days || 30);
+        var reconcileEnabled = document.getElementById('s-reconcile-enabled') as HTMLInputElement | null;
+        if (reconcileEnabled) reconcileEnabled.checked = !!(s.reconcile_enabled);
+        var reconcileInterval = document.getElementById('s-reconcile-interval') as HTMLInputElement | null;
+        if (reconcileInterval) reconcileInterval.value = String(s.reconcile_interval_minutes || 60);
+        var reconcileDryRun = document.getElementById('s-reconcile-dry-run') as HTMLInputElement | null;
+        if (reconcileDryRun) reconcileDryRun.checked = s.reconcile_dry_run_default !== false;
+        var notifyDie = document.getElementById('s-notify-docker-die') as HTMLInputElement | null;
+        if (notifyDie) notifyDie.checked = !!(s.notify_docker_die);
+        var notifyHealth = document.getElementById('s-notify-docker-health') as HTMLInputElement | null;
+        if (notifyHealth) notifyHealth.checked = !!(s.notify_docker_health);
+        var notifyImage = document.getElementById('s-notify-docker-image') as HTMLInputElement | null;
+        if (notifyImage) notifyImage.checked = !!(s.notify_docker_image);
+        var notifyReconcile = document.getElementById('s-notify-reconcile') as HTMLInputElement | null;
+        if (notifyReconcile) notifyReconcile.checked = !!(s.notify_reconcile);
+        var notifyCooldown = document.getElementById('s-notify-cooldown') as HTMLInputElement | null;
+        if (notifyCooldown) notifyCooldown.value = String(s.notify_cooldown_minutes || 5);
         loadNotifyMissing();
     });
 }
@@ -78,7 +101,18 @@ export function saveSettings(e: Event): void {
         notify_enabled: (document.getElementById('s-notify-enabled') as HTMLInputElement)?.checked || false,
         notify_interval_minutes: parseInt((document.getElementById('s-notify-interval') as HTMLInputElement)?.value || '60', 10) || 60,
         gotify_url: (document.getElementById('s-gotify-url') as HTMLInputElement)?.value || '',
-        gotify_priority: parseInt((document.getElementById('s-gotify-priority') as HTMLInputElement)?.value || '5', 10) || 5
+        gotify_priority: parseInt((document.getElementById('s-gotify-priority') as HTMLInputElement)?.value || '5', 10) || 5,
+        docker_socket: (document.getElementById('s-docker-socket') as HTMLInputElement)?.value || '',
+        docker_events_enabled: (document.getElementById('s-docker-events-enabled') as HTMLInputElement)?.checked || false,
+        docker_events_retention_days: parseInt((document.getElementById('s-docker-retention-days') as HTMLInputElement)?.value || '30', 10) || 30,
+        reconcile_enabled: (document.getElementById('s-reconcile-enabled') as HTMLInputElement)?.checked || false,
+        reconcile_interval_minutes: parseInt((document.getElementById('s-reconcile-interval') as HTMLInputElement)?.value || '60', 10) || 60,
+        reconcile_dry_run_default: (document.getElementById('s-reconcile-dry-run') as HTMLInputElement)?.checked || false,
+        notify_docker_die: (document.getElementById('s-notify-docker-die') as HTMLInputElement)?.checked || false,
+        notify_docker_health: (document.getElementById('s-notify-docker-health') as HTMLInputElement)?.checked || false,
+        notify_docker_image: (document.getElementById('s-notify-docker-image') as HTMLInputElement)?.checked || false,
+        notify_reconcile: (document.getElementById('s-notify-reconcile') as HTMLInputElement)?.checked || false,
+        notify_cooldown_minutes: parseInt((document.getElementById('s-notify-cooldown') as HTMLInputElement)?.value || '5', 10) || 5
     };
     // Only send the TRMNL token when it has a value, so unrelated saves
     // never wipe a previously configured token (backend is only-sent-fields).
