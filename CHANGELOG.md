@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/martynvdijke/synapse/compare/v1.14.0...v1.15.0) (2026-08-13)
+
+
+### Features
+
+* **api:** reconcile and docker event endpoints ([a9cdf55](https://github.com/martynvdijke/synapse/commit/a9cdf55281b93f9103f9ecd4a6e5aeec5cb8d652))
+
 # [1.14.0](https://github.com/martynvdijke/synapse/compare/v1.13.0...v1.14.0) (2026-08-13)
 
 
