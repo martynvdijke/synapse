@@ -7,6 +7,19 @@ declare function apiFetch(url: string, opts?: RequestInit): Promise<Response>;
 declare function logout(): void;
 declare function emptyRow(colspan: number, msg: string): string;
 declare function loadingRow(colspan: number): string;
+declare function getServiceLinks(): Promise<Response>;
+declare function createServiceLink(input: Record<string, unknown>): Promise<Response>;
+declare function updateServiceLink(id: number, input: Record<string, unknown>): Promise<Response>;
+declare function deleteServiceLink(id: number): Promise<Response>;
+declare function refreshServiceLink(id: number): Promise<Response>;
+declare function getNPMProxyHosts(instanceId?: number): Promise<Response>;
+declare function createNPMProxyHost(input: Record<string, unknown>): Promise<Response>;
+declare function updateNPMProxyHost(id: number, input: Record<string, unknown>): Promise<Response>;
+declare function createKumaMonitor(input: Record<string, unknown>): Promise<Response>;
+declare function updateKumaMonitor(kumaId: number, instanceId: number, input: Record<string, unknown>): Promise<Response>;
+declare function deleteKumaMonitor(kumaId: number, instanceId: number): Promise<Response>;
+declare function getKumaInstances(): Promise<Response>;
+declare function getNPMInstances(): Promise<Response>;
 
 // ── toast.js ────────────────────────────────────────────────────
 declare function toast(msg: string, type?: string): void;
@@ -18,6 +31,7 @@ declare function refreshAll(): void;
 
 // ── tabs.js ─────────────────────────────────────────────────────
 declare function toggleDockerDetail(row: HTMLElement): void;
+declare function toggleNPMProxyDetail(row: HTMLElement): void;
 declare function toggleLogMeta(row: HTMLElement): void;
 declare function loadDockerServices(): void;
 declare function loadKumaMonitors(): void;
@@ -25,6 +39,16 @@ declare function loadNPMProxies(): void;
 declare function loadHistory(): void;
 declare function loadEvents(): void;
 declare function runReconcile(): void;
+declare function openLinkEditorByIndex(idx: number): void;
+declare function openLinkEditor(serviceName: string): void;
+declare function saveServiceLink(): void;
+declare function unlinkServiceLink(): void;
+declare function refreshServiceLinkDetails(): void;
+declare function createNPMHostFromLink(): void;
+declare function createKumaMonitorFromLink(): void;
+declare function openMonitorEdit(monitorId: number, instanceId: number): void;
+declare function saveMonitorEdit(): void;
+declare function deleteMonitor(): void;
 
 // ── settings.js ─────────────────────────────────────────────────
 declare function loadSettings(): void;
@@ -86,6 +110,7 @@ declare namespace bootstrap {
     constructor(element: Element, options?: Record<string, unknown>);
     show(): void;
     hide(): void;
+    static getInstance(element: Element): Modal | null;
   }
   class Tab {
     constructor(element: Element);

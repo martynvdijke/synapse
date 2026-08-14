@@ -50,9 +50,103 @@ export function loadingRow(colspan: number): string {
     return skeletonRows(colspan, 5);
 }
 
+// --- Service links ---
+export function getServiceLinks(): Promise<Response> {
+    return apiFetch('/api/service-links');
+}
+
+export function createServiceLink(input: Record<string, unknown>): Promise<Response> {
+    return apiFetch('/api/service-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+    });
+}
+
+export function updateServiceLink(id: number, input: Record<string, unknown>): Promise<Response> {
+    return apiFetch('/api/service-links/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+    });
+}
+
+export function deleteServiceLink(id: number): Promise<Response> {
+    return apiFetch('/api/service-links/' + id, { method: 'DELETE' });
+}
+
+export function refreshServiceLink(id: number): Promise<Response> {
+    return apiFetch('/api/service-links/' + id + '/refresh', { method: 'POST' });
+}
+
+// --- NPM proxy hosts ---
+export function getNPMProxyHosts(instanceId?: number): Promise<Response> {
+    var q = instanceId ? '?instance=' + instanceId : '';
+    return apiFetch('/api/npm/proxy-hosts' + q);
+}
+
+export function createNPMProxyHost(input: Record<string, unknown>): Promise<Response> {
+    return apiFetch('/api/npm/proxy-hosts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+    });
+}
+
+export function updateNPMProxyHost(id: number, input: Record<string, unknown>): Promise<Response> {
+    return apiFetch('/api/npm/proxy-hosts/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+    });
+}
+
+// --- Kuma monitors ---
+export function createKumaMonitor(input: Record<string, unknown>): Promise<Response> {
+    return apiFetch('/api/monitors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+    });
+}
+
+export function updateKumaMonitor(kumaId: number, instanceId: number, input: Record<string, unknown>): Promise<Response> {
+    return apiFetch('/api/monitors/' + kumaId + '?instance=' + instanceId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+    });
+}
+
+export function deleteKumaMonitor(kumaId: number, instanceId: number): Promise<Response> {
+    return apiFetch('/api/monitors/' + kumaId + '?instance=' + instanceId, { method: 'DELETE' });
+}
+
+// --- Instances ---
+export function getKumaInstances(): Promise<Response> {
+    return apiFetch('/api/kuma-instances');
+}
+
+export function getNPMInstances(): Promise<Response> {
+    return apiFetch('/api/npm-instances');
+}
+
 // Attach to window for inline event handlers
 window.esc = esc;
 window.apiFetch = apiFetch;
 window.logout = logout;
 window.emptyRow = emptyRow;
 window.loadingRow = loadingRow;
+window.getServiceLinks = getServiceLinks;
+window.createServiceLink = createServiceLink;
+window.updateServiceLink = updateServiceLink;
+window.deleteServiceLink = deleteServiceLink;
+window.refreshServiceLink = refreshServiceLink;
+window.getNPMProxyHosts = getNPMProxyHosts;
+window.createNPMProxyHost = createNPMProxyHost;
+window.updateNPMProxyHost = updateNPMProxyHost;
+window.createKumaMonitor = createKumaMonitor;
+window.updateKumaMonitor = updateKumaMonitor;
+window.deleteKumaMonitor = deleteKumaMonitor;
+window.getKumaInstances = getKumaInstances;
+window.getNPMInstances = getNPMInstances;

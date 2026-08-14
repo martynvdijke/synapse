@@ -1,5 +1,5 @@
 // Tab data loaders (Docker, Kuma, NPM, History)
-import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun, FeedItem, ReconcileResult } from './types';
+import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun, FeedItem, ReconcileResult, ServiceLink, NPMProxyHost } from './types';
 
 function renderDockerDetailRow(svc: ServiceInfo): string {
     var fields: string[] = [];
@@ -61,19 +61,40 @@ function renderDockerDetailRow(svc: ServiceInfo): string {
 }
 
 export function loadDockerServices(): void {
-    document.getElementById('docker-tbody')!.innerHTML = loadingRow(6);
-    apiFetch('/api/services').then(function(r){return r.json() as Promise<(ServiceInfo & {error?: string})[]>;}).then(function(services) {
+    document.getElementById('docker-tbody')!.innerHTML = loadingRow(7);
+    var svcReq = apiFetch('/api/services').then(function(r){return r.json() as Promise<(ServiceInfo & {error?: string})[]>;});
+    var linkReq = apiFetch('/api/service-links').then(function(r){return r.ok ? r.json() as Promise<ServiceLink[]> : Promise.resolve([]);});
+    Promise.all([svcReq, linkReq]).then(function(res: any[]) {
+        var services = res[0] as (ServiceInfo & {error?: string})[];
+        var links = res[1] as ServiceLink[];
+        var linkMap: Record<string, ServiceLink> = {};
+        links.forEach(function(l) { linkMap[l.service_name] = l; });
+        linkServices = services as ServiceInfo[];
         var tbody = document.getElementById('docker-tbody')!;
         if ((services as any).error) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">' + esc((services as any).error) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">' + esc((services as any).error) + '</td></tr>';
             return;
         }
         if (!services.length) {
-            tbody.innerHTML = emptyRow(6, 'No services found');
+            tbody.innerHTML = emptyRow(7, 'No services found');
             return;
         }
         var rows: string[] = [];
         services.forEach(function(s, idx) {
+            var link = linkMap[s.name];
+            var linksHtml = '';
+            if (link) {
+                if (link.npm_host_name) {
+                    linksHtml += '<span class="badge bg-secondary me-1" title="NPM proxy host">\u2699 ' + esc(link.npm_host_name) + '</span>';
+                }
+                if (link.kuma_monitor_name) {
+                    linksHtml += '<span class="badge bg-info me-1" title="Kuma monitor">\u25CB ' + esc(link.kuma_monitor_name) + '</span>';
+                }
+            }
+            if (!linksHtml) {
+                linksHtml = '<span class="text-muted me-1">\u2014</span>';
+            }
+            linksHtml += '<button class="btn btn-sm btn-outline-primary" title="Link to NPM / Kuma" onclick="event.stopPropagation();openLinkEditorByIndex(' + idx + ')">Link</button>';
             rows.push('<tr class="docker-service-row" data-idx="' + idx + '" onclick="toggleDockerDetail(this)">'
                 + '<td data-label="Service"><code>' + esc(s.name) + '</code></td>'
                 + '<td data-label="Container">' + esc(s.container_name) + '</td>'
@@ -83,10 +104,11 @@ export function loadDockerServices(): void {
                 + '<td data-label="In Kuma">' + (s.in_kuma
                     ? '<span class="badge bg-success">\u2713 In Kuma</span>'
                     : '<span class="badge bg-secondary">\u2717 Missing</span>') + '</td>'
+                + '<td data-label="Links" class="text-nowrap">' + linksHtml + '</td>'
                 + '</tr>');
             var detailHtml = renderDockerDetailRow(s);
             if (detailHtml) {
-                rows.push('<tr class="docker-detail-row" data-idx="' + idx + '" style="display:none"><td colspan="6">' + detailHtml + '</td></tr>');
+                rows.push('<tr class="docker-detail-row" data-idx="' + idx + '" style="display:none"><td colspan="7">' + detailHtml + '</td></tr>');
             }
         });
         tbody.innerHTML = rows.join('');
@@ -102,6 +124,254 @@ window.toggleDockerDetail = function(row: HTMLElement) {
         row.classList.toggle('detail-expanded', !isVisible);
     }
 };
+
+// ─── Service link editor state ──────────────────────────────────
+var linkServices: ServiceInfo[] = [];
+var linkEditorService = '';
+var linkEditorLink: ServiceLink | null = null;
+var linkNPMHosts: NPMProxyHost[] = [];
+var linkKumaMonitors: MonitorResponse[] = [];
+var linkNPMInstances: Array<{ id: number; name: string }> = [];
+var linkKumaInstances: Array<{ id: number; name: string }> = [];
+
+function populateSelect(el: HTMLSelectElement, items: Array<{ label: string; value: string }>, selectedValue: string): void {
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+        html += '<option value="' + items[i].value + '"' + (items[i].value === selectedValue ? ' selected' : '') + '>' + esc(items[i].label) + '</option>';
+    }
+    el.innerHTML = html;
+}
+
+function loadLinkTargets(): Promise<void> {
+    var npmReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([]); });
+    var kumaReq = apiFetch('/api/monitors').then(function(r){ return r.ok ? r.json() as Promise<MonitorResponse[]> : Promise.resolve([]); });
+    return Promise.all([npmReq, kumaReq]).then(function(res: any[]) {
+        linkNPMHosts = res[0] || [];
+        linkKumaMonitors = res[1] || [];
+        var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
+        var opts = '<option value="">— Not linked —</option>';
+        for (var i = 0; i < linkNPMHosts.length; i++) {
+            var h = linkNPMHosts[i];
+            opts += '<option value="' + i + '">' + esc(h.domain_names.join(', ')) + ' (' + esc(h.instance_name || '?') + ')</option>';
+        }
+        npmSel.innerHTML = opts;
+        var kumaSel = document.getElementById('link-kuma-select') as HTMLSelectElement;
+        var kopts = '<option value="">— Not linked —</option>';
+        for (var j = 0; j < linkKumaMonitors.length; j++) {
+            var m = linkKumaMonitors[j];
+            kopts += '<option value="' + j + '">' + esc(m.name) + ' (' + esc(m.instance_name || '?') + ')</option>';
+        }
+        kumaSel.innerHTML = kopts;
+    });
+}
+
+function selectedNPMHost(): NPMProxyHost | null {
+    var sel = document.getElementById('link-npm-select') as HTMLSelectElement;
+    var idx = parseInt(sel.value, 10);
+    if (isNaN(idx) || !linkNPMHosts[idx]) return null;
+    return linkNPMHosts[idx];
+}
+
+function selectedKumaMonitor(): MonitorResponse | null {
+    var sel = document.getElementById('link-kuma-select') as HTMLSelectElement;
+    var idx = parseInt(sel.value, 10);
+    if (isNaN(idx) || !linkKumaMonitors[idx]) return null;
+    return linkKumaMonitors[idx];
+}
+
+export function openLinkEditorByIndex(idx: number): void {
+    var svc = linkServices[idx];
+    if (!svc) return;
+    openLinkEditor(svc.name);
+}
+
+export function openLinkEditor(serviceName: string): void {
+    linkEditorService = serviceName;
+    linkEditorLink = null;
+    document.getElementById('link-editor-service')!.textContent = serviceName;
+
+    apiFetch('/api/npm-instances').then(function(r){ return r.json(); }).then(function(insts: any[]) {
+        linkNPMInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+        populateSelect(document.getElementById('link-npm-instance') as HTMLSelectElement,
+            linkNPMInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
+    }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load NPM instances', 'error'); });
+
+    apiFetch('/api/kuma-instances').then(function(r){ return r.json(); }).then(function(insts: any[]) {
+        linkKumaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+        populateSelect(document.getElementById('link-kuma-instance') as HTMLSelectElement,
+            linkKumaInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
+    }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Kuma instances', 'error'); });
+
+    apiFetch('/api/service-links').then(function(r){ return r.json() as Promise<ServiceLink[]>; }).then(function(links: ServiceLink[]) {
+        for (var i = 0; i < links.length; i++) {
+            if (links[i].service_name === serviceName) { linkEditorLink = links[i]; break; }
+        }
+        (document.getElementById('link-unlink-btn') as HTMLButtonElement).disabled = !linkEditorLink;
+        (document.getElementById('link-refresh-btn') as HTMLButtonElement).disabled = !linkEditorLink;
+        return loadLinkTargets();
+    }).then(function() {
+        if (linkEditorLink) {
+            var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
+            for (var i = 0; i < linkNPMHosts.length; i++) {
+                if (linkNPMHosts[i].domain_names.indexOf(linkEditorLink.npm_host_name || '') >= 0) {
+                    npmSel.value = String(i);
+                    break;
+                }
+            }
+            var kumaSel = document.getElementById('link-kuma-select') as HTMLSelectElement;
+            for (var j = 0; j < linkKumaMonitors.length; j++) {
+                if (linkKumaMonitors[j].id === linkEditorLink.kuma_monitor_id) {
+                    kumaSel.value = String(j);
+                    break;
+                }
+            }
+        }
+        new bootstrap.Modal(document.getElementById('link-editor-modal')!).show();
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Failed to open link editor', 'error');
+    });
+}
+
+export function saveServiceLink(): void {
+    var npmHost = selectedNPMHost();
+    var kumaMon = selectedKumaMonitor();
+    var input: Record<string, unknown> = { service_name: linkEditorService };
+    if (npmHost) {
+        input.npm_instance_id = npmHost.instance_id;
+        input.npm_host_name = npmHost.domain_names[0];
+    } else {
+        input.npm_instance_id = 0;
+        input.npm_host_name = '';
+    }
+    if (kumaMon) {
+        input.kuma_instance_id = kumaMon.instance_id;
+        input.kuma_monitor_id = kumaMon.id;
+        input.kuma_monitor_name = kumaMon.name;
+    } else {
+        input.kuma_instance_id = 0;
+        input.kuma_monitor_id = 0;
+        input.kuma_monitor_name = '';
+    }
+    var req = linkEditorLink
+        ? updateServiceLink(linkEditorLink.id, input)
+        : createServiceLink(input);
+    req.then(function(r) {
+        if (!r.ok) {
+            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+    }).then(function() {
+        toast('Service link saved');
+        var modal = bootstrap.Modal.getInstance(document.getElementById('link-editor-modal')!);
+        if (modal) modal.hide();
+        loadDockerServices();
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Save failed: ' + err.message, 'error');
+    });
+}
+
+export function unlinkServiceLink(): void {
+    if (!linkEditorLink) return;
+    deleteServiceLink(linkEditorLink.id).then(function(r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        toast('Link removed');
+        var modal = bootstrap.Modal.getInstance(document.getElementById('link-editor-modal')!);
+        if (modal) modal.hide();
+        loadDockerServices();
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Unlink failed', 'error');
+    });
+}
+
+export function refreshServiceLinkDetails(): void {
+    if (!linkEditorLink) return;
+    refreshServiceLink(linkEditorLink.id).then(function(r) {
+        if (!r.ok) {
+            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+    }).then(function() {
+        toast('Link details refreshed');
+        loadDockerServices();
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Refresh failed: ' + err.message, 'error');
+    });
+}
+
+export function createNPMHostFromLink(): void {
+    var instanceId = parseInt((document.getElementById('link-npm-instance') as HTMLSelectElement).value, 10);
+    if (!instanceId) { toast('Select an NPM instance', 'error'); return; }
+    var domains = (document.getElementById('link-npm-domains') as HTMLInputElement).value.trim();
+    if (!domains) { toast('Enter at least one domain', 'error'); return; }
+    var createdDomain = domains.split(',')[0].trim();
+    var input: Record<string, unknown> = {
+        instance_id: instanceId,
+        domain_names: domains.split(',').map(function(d){ return d.trim(); }).filter(function(d){ return d.length > 0; }),
+        forward_host: (document.getElementById('link-npm-host') as HTMLInputElement).value.trim(),
+        forward_port: parseInt((document.getElementById('link-npm-port') as HTMLInputElement).value, 10) || 80,
+        forward_scheme: (document.getElementById('link-npm-scheme') as HTMLSelectElement).value,
+        service_name: linkEditorService
+    };
+    createNPMProxyHost(input).then(function(r) {
+        if (!r.ok) {
+            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+    }).then(function() {
+        toast('NPM proxy host created');
+        return loadLinkTargets();
+    }).then(function() {
+        var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
+        for (var i = 0; i < linkNPMHosts.length; i++) {
+            if (linkNPMHosts[i].domain_names[0] === createdDomain) {
+                npmSel.value = String(i);
+                break;
+            }
+        }
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Create failed: ' + err.message, 'error');
+    });
+}
+
+export function createKumaMonitorFromLink(): void {
+    var instanceId = parseInt((document.getElementById('link-kuma-instance') as HTMLSelectElement).value, 10);
+    if (!instanceId) { toast('Select a Kuma instance', 'error'); return; }
+    var name = (document.getElementById('link-kuma-name') as HTMLInputElement).value.trim();
+    if (!name) { toast('Enter a monitor name', 'error'); return; }
+    var input: Record<string, unknown> = {
+        instance_id: instanceId,
+        name: name,
+        type: (document.getElementById('link-kuma-type') as HTMLSelectElement).value,
+        url: (document.getElementById('link-kuma-url') as HTMLInputElement).value.trim(),
+        docker_container: (document.getElementById('link-kuma-container') as HTMLInputElement).value.trim(),
+        service_name: linkEditorService
+    };
+    createKumaMonitor(input).then(function(r) {
+        if (!r.ok) {
+            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+    }).then(function(res: MonitorResponse) {
+        toast('Kuma monitor created');
+        return loadLinkTargets().then(function() {
+            var kumaSel = document.getElementById('link-kuma-select') as HTMLSelectElement;
+            for (var i = 0; i < linkKumaMonitors.length; i++) {
+                if (linkKumaMonitors[i].id === res.id && linkKumaMonitors[i].instance_id === res.instance_id) {
+                    kumaSel.value = String(i);
+                    break;
+                }
+            }
+        });
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Create failed: ' + err.message, 'error');
+    });
+}
 
 // ─── Monitor detail stats cache ────────────────────────────────
 var monitorStatsCache = new Map();
@@ -170,24 +440,29 @@ function loadMonitorStats(monitorId: string, instanceId: string): void {
 }
 
 export function loadKumaMonitors(): void {
-    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(5);
+    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(9);
     apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & {error?: string})[]>;}).then(function(monitors) {
         var tbody = document.getElementById('kuma-tbody')!;
         if ((monitors as any).error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">' + esc((monitors as any).error) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">' + esc((monitors as any).error) + '</td></tr>';
             return;
         }
         if (!monitors.length) {
-            tbody.innerHTML = emptyRow(5, 'No monitors in Uptime Kuma');
+            tbody.innerHTML = emptyRow(9, 'No monitors in Uptime Kuma');
             return;
         }
+        kumaMonitorList = monitors as MonitorResponse[];
         tbody.innerHTML = monitors.map(function(m) {
             return '<tr style="cursor:pointer" data-monitor-id="' + m.id + '" data-instance-id="' + m.instance_id + '">'
                 + '<td data-label="ID">#' + m.id + '</td>'
                 + '<td data-label="Name">' + esc(m.name) + '</td>'
                 + '<td data-label="Instance"><span class="badge bg-primary">' + esc(m.instance_name || '—') + '</span></td>'
                 + '<td data-label="Type"><span class="badge ' + (m.type === 'http' ? 'bg-info' : m.type === 'docker' ? 'bg-warning text-dark' : 'bg-secondary') + '">' + (m.type === 'http' ? '\u25CB ' : m.type === 'docker' ? '\u25A3 ' : '') + m.type.toUpperCase() + '</span></td>'
-                + '<td data-label="URL / Container" class="text-truncate" style="max-width:300px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
+                + '<td data-label="URL / Container" class="text-truncate" style="max-width:220px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
+                + '<td data-label="Interval">' + (m.interval ? m.interval + 's' : '—') + '</td>'
+                + '<td data-label="Retry">' + (m.retry_interval ? m.retry_interval + 's' : '—') + '</td>'
+                + '<td data-label="Max Retries">' + (m.maxretries || '—') + '</td>'
+                + '<td data-label="Actions" class="text-nowrap"><button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation();openMonitorEdit(' + m.id + ',' + m.instance_id + ')">Edit</button></td>'
                 + '</tr>';
         }).join('');
 
@@ -200,20 +475,99 @@ export function loadKumaMonitors(): void {
     });
 }
 
+// ─── Monitor edit state ─────────────────────────────────────────
+var kumaMonitorList: MonitorResponse[] = [];
+var monitorEditState: { id: number; instanceId: number } | null = null;
+
+export function openMonitorEdit(monitorId: number, instanceId: number): void {
+    var mon: MonitorResponse | null = null;
+    for (var i = 0; i < kumaMonitorList.length; i++) {
+        if (kumaMonitorList[i].id === monitorId && kumaMonitorList[i].instance_id === instanceId) { mon = kumaMonitorList[i]; break; }
+    }
+    if (!mon) return;
+    monitorEditState = { id: monitorId, instanceId: instanceId };
+    document.getElementById('monitor-edit-id')!.textContent = '#' + monitorId + ' (' + mon.instance_name + ')';
+    (document.getElementById('monitor-edit-name') as HTMLInputElement).value = mon.name || '';
+    (document.getElementById('monitor-edit-type') as HTMLSelectElement).value = mon.type || 'http';
+    (document.getElementById('monitor-edit-url') as HTMLInputElement).value = mon.url || '';
+    (document.getElementById('monitor-edit-container') as HTMLInputElement).value = mon.docker_container || '';
+    (document.getElementById('monitor-edit-interval') as HTMLInputElement).value = mon.interval != null ? String(mon.interval) : '';
+    (document.getElementById('monitor-edit-retry') as HTMLInputElement).value = mon.retry_interval != null ? String(mon.retry_interval) : '';
+    (document.getElementById('monitor-edit-maxretries') as HTMLInputElement).value = mon.maxretries != null ? String(mon.maxretries) : '';
+    new bootstrap.Modal(document.getElementById('monitor-edit-modal')!).show();
+}
+
+export function saveMonitorEdit(): void {
+    if (!monitorEditState) return;
+    var input: Record<string, unknown> = {
+        name: (document.getElementById('monitor-edit-name') as HTMLInputElement).value.trim(),
+        type: (document.getElementById('monitor-edit-type') as HTMLSelectElement).value,
+        url: (document.getElementById('monitor-edit-url') as HTMLInputElement).value.trim(),
+        docker_container: (document.getElementById('monitor-edit-container') as HTMLInputElement).value.trim(),
+        interval: parseInt((document.getElementById('monitor-edit-interval') as HTMLInputElement).value, 10) || undefined,
+        retry_interval: parseInt((document.getElementById('monitor-edit-retry') as HTMLInputElement).value, 10) || undefined,
+        maxretries: parseInt((document.getElementById('monitor-edit-maxretries') as HTMLInputElement).value, 10) || undefined
+    };
+    updateKumaMonitor(monitorEditState.id, monitorEditState.instanceId, input).then(function(r) {
+        if (!r.ok) {
+            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+    }).then(function() {
+        toast('Monitor updated');
+        var modal = bootstrap.Modal.getInstance(document.getElementById('monitor-edit-modal')!);
+        if (modal) modal.hide();
+        loadKumaMonitors();
+        loadDockerServices();
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Update failed: ' + err.message, 'error');
+    });
+}
+
+export function deleteMonitor(): void {
+    if (!monitorEditState) return;
+    deleteKumaMonitor(monitorEditState.id, monitorEditState.instanceId).then(function(r) {
+        if (!r.ok) {
+            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+    }).then(function() {
+        toast('Monitor deleted');
+        var modal = bootstrap.Modal.getInstance(document.getElementById('monitor-edit-modal')!);
+        if (modal) modal.hide();
+        loadKumaMonitors();
+        loadDockerServices();
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        toast('Delete failed: ' + err.message, 'error');
+    });
+}
+
 export function loadNPMProxies(): void {
     document.getElementById('npm-tbody')!.innerHTML = loadingRow(4);
-    apiFetch('/api/proxies').then(function(r){return r.json() as Promise<(ProxyResponse & {error?: string})[]>;}).then(function(proxies) {
+    var summaryReq = apiFetch('/api/proxies').then(function(r){ return r.json() as Promise<(ProxyResponse & {error?: string})[]>; });
+    var detailReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([]); });
+    Promise.all([summaryReq, detailReq]).then(function(res: any[]) {
+        var proxies = res[0] as (ProxyResponse & {error?: string})[];
+        var hosts = res[1] as NPMProxyHost[];
         var tbody = document.getElementById('npm-tbody')!;
         if ((proxies as any).error) {
             tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc((proxies as any).error) + '</td></tr>';
             return;
         }
-        if (!proxies.length) {
+        if (!proxies.length && !hosts.length) {
             tbody.innerHTML = emptyRow(4, 'No proxy hosts found');
             return;
         }
-        tbody.innerHTML = proxies.map(function(p) {
-            return '<tr>'
+        var hostByDomain: Record<string, NPMProxyHost> = {};
+        hosts.forEach(function(h) {
+            if (h.domain_names && h.domain_names.length) hostByDomain[h.domain_names[0]] = h;
+        });
+        var rows: string[] = [];
+        proxies.forEach(function(p, idx) {
+            var full = hostByDomain[p.cname];
+            rows.push('<tr class="npm-proxy-row" data-idx="' + idx + '" onclick="toggleNPMProxyDetail(this)">'
                 + '<td data-label="Domain"><code>' + esc(p.cname) + '</code></td>'
                 + '<td data-label="Instance">' + (p.source_instance_name
                     ? '<span class="badge bg-secondary">' + esc(p.source_instance_name) + '</span>'
@@ -222,10 +576,45 @@ export function loadNPMProxies(): void {
                 + '<td data-label="In Kuma">' + (p.in_kuma
                     ? '<span class="badge bg-success">\u2713 In Kuma</span>'
                     : '<span class="badge bg-secondary">\u2717 Missing</span>') + '</td>'
-                + '</tr>';
-        }).join('');
+                + '</tr>');
+            if (full) {
+                rows.push('<tr class="npm-detail-row" data-idx="' + idx + '" style="display:none"><td colspan="4">' + renderNPMProxyDetail(full) + '</td></tr>');
+            }
+        });
+        tbody.innerHTML = rows.join('');
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        document.getElementById('npm-tbody')!.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">Failed to load proxies</td></tr>';
     });
 }
+
+function renderNPMProxyDetail(h: NPMProxyHost): string {
+    var parts = '';
+    parts += '<span class="detail-inline-label">ID:</span> ' + h.id + '<br>';
+    parts += '<span class="detail-inline-label">Forward:</span> ' + esc(h.forward_scheme + '://' + h.forward_host + ':' + h.forward_port) + '<br>';
+    parts += '<span class="detail-inline-label">Enabled:</span> ' + (h.enabled ? 'yes' : 'no') + '<br>';
+    if (h.ssl_forced) parts += '<span class="detail-inline-label">SSL Forced:</span> yes<br>';
+    if (h.hsts_enabled) parts += '<span class="detail-inline-label">HSTS:</span> yes<br>';
+    if (h.allow_websocket_upgrade) parts += '<span class="detail-inline-label">WebSocket Upgrade:</span> yes<br>';
+    if (h.advanced_config) parts += '<span class="detail-inline-label">Advanced Config:</span><pre class="detail-pre">' + esc(h.advanced_config) + '</pre>';
+    if (h.locations && h.locations.length) {
+        parts += '<span class="detail-inline-label">Locations:</span><br>';
+        h.locations.forEach(function(l) {
+            parts += '<div class="ms-3">' + esc(l.path || '/') + ' → ' + esc(l.forward_scheme + '://' + l.forward_host + ':' + l.forward_port) + '</div>';
+        });
+    }
+    return '<div class="detail-container">' + parts + '</div>';
+}
+
+window.toggleNPMProxyDetail = function(row: HTMLElement) {
+    var idx = row.getAttribute('data-idx');
+    var detailRow = row.parentNode!.querySelector('.npm-detail-row[data-idx="' + idx + '"]') as HTMLElement | null;
+    if (detailRow) {
+        var isVisible = detailRow.style.display !== 'none';
+        detailRow.style.display = isVisible ? 'none' : 'table-row';
+        row.classList.toggle('detail-expanded', !isVisible);
+    }
+};
 
 export function loadHistory(): void {
     document.getElementById('history-tbody')!.innerHTML = loadingRow(9);
@@ -314,3 +703,23 @@ window.loadNPMProxies = loadNPMProxies;
 window.loadHistory = loadHistory;
 window.loadEvents = loadEvents;
 window.runReconcile = runReconcile;
+window.openLinkEditorByIndex = openLinkEditorByIndex;
+window.openLinkEditor = openLinkEditor;
+window.saveServiceLink = saveServiceLink;
+window.unlinkServiceLink = unlinkServiceLink;
+window.refreshServiceLinkDetails = refreshServiceLinkDetails;
+window.createNPMHostFromLink = createNPMHostFromLink;
+window.createKumaMonitorFromLink = createKumaMonitorFromLink;
+window.openMonitorEdit = openMonitorEdit;
+window.saveMonitorEdit = saveMonitorEdit;
+window.deleteMonitor = deleteMonitor;
+window.toggleNPMProxyDetail = toggleNPMProxyDetail;
+
+// Wire modal actions (modals exist in static/index.html before this module runs)
+document.getElementById('link-save-btn')!.addEventListener('click', saveServiceLink);
+document.getElementById('link-unlink-btn')!.addEventListener('click', unlinkServiceLink);
+document.getElementById('link-refresh-btn')!.addEventListener('click', refreshServiceLinkDetails);
+document.getElementById('link-npm-create-btn')!.addEventListener('click', createNPMHostFromLink);
+document.getElementById('link-kuma-create-btn')!.addEventListener('click', createKumaMonitorFromLink);
+document.getElementById('monitor-edit-save')!.addEventListener('click', saveMonitorEdit);
+document.getElementById('monitor-edit-delete')!.addEventListener('click', deleteMonitor);

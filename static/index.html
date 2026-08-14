@@ -170,12 +170,13 @@
                             <th>Type</th>
                             <th>URL</th>
                             <th>In Kuma</th>
+                            <th>Links</th>
                         </tr>
                     </thead>
                     <tbody id="docker-tbody" aria-live="polite">
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:70%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:70%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -191,12 +192,16 @@
                             <th>Instance</th>
                             <th>Type</th>
                             <th>URL / Container</th>
+                            <th>Interval</th>
+                            <th>Retry</th>
+                            <th>Max Retries</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="kuma-tbody" aria-live="polite">
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td></tr>
-                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:60%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:30%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:65%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:25%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:40%">&nbsp;</span></td></tr>
+                        <tr class="skeleton-row"><td><span class="skeleton skeleton-sm" style="width:20%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:55%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:45%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:35%">&nbsp;</span></td><td><span class="skeleton skeleton-sm" style="width:50%">&nbsp;</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -796,6 +801,143 @@
                         <span class="text-success small ms-2 d-none" id="settings-saved">Settings saved</span>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Service Link Editor Modal -->
+<div class="modal fade" id="link-editor-modal" tabindex="-1" aria-labelledby="link-editor-title" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Link Service <code id="link-editor-service"></code></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="link-npm-select">NPM Proxy Host</label>
+                        <select class="form-select form-select-sm" id="link-npm-select">
+                            <option value="">— Not linked —</option>
+                        </select>
+                        <div class="form-text">Pick an existing proxy host, or create one below.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="link-kuma-select">Kuma Monitor</label>
+                        <select class="form-select form-select-sm" id="link-kuma-select">
+                            <option value="">— Not linked —</option>
+                        </select>
+                        <div class="form-text">Pick an existing monitor, or create one below.</div>
+                    </div>
+                </div>
+                <div class="d-flex gap-2 mb-3">
+                    <button class="btn btn-primary btn-sm" id="link-save-btn">Save Link</button>
+                    <button class="btn btn-outline-secondary btn-sm" id="link-refresh-btn" disabled>Refresh Details</button>
+                    <button class="btn btn-outline-danger btn-sm" id="link-unlink-btn" disabled>Unlink</button>
+                </div>
+                <hr>
+                <h6 class="fw-semibold">Create NPM Proxy Host <span class="text-muted small fw-normal">(fields prefilled from compose labels)</span></h6>
+                <div class="row g-2 mb-2">
+                    <div class="col-md-2">
+                        <select class="form-select form-select-sm" id="link-npm-instance" aria-label="NPM instance"></select>
+                    </div>
+                    <div class="col-md-3">
+                        <input class="form-control form-control-sm" id="link-npm-domains" placeholder="example.com, www.example.com">
+                    </div>
+                    <div class="col-md-2">
+                        <input class="form-control form-control-sm" id="link-npm-host" placeholder="Forward host">
+                    </div>
+                    <div class="col-md-2">
+                        <input class="form-control form-control-sm" id="link-npm-port" placeholder="Port" type="number" value="80">
+                    </div>
+                    <div class="col-md-1">
+                        <select class="form-select form-select-sm" id="link-npm-scheme" aria-label="Scheme">
+                            <option value="http">http</option>
+                            <option value="https">https</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-sm btn-outline-primary w-100" id="link-npm-create-btn">Create Host</button>
+                    </div>
+                </div>
+                <hr>
+                <h6 class="fw-semibold">Create Kuma Monitor <span class="text-muted small fw-normal">(type &amp; URL inferred from healthcheck)</span></h6>
+                <div class="row g-2 mb-2">
+                    <div class="col-md-2">
+                        <select class="form-select form-select-sm" id="link-kuma-instance" aria-label="Kuma instance"></select>
+                    </div>
+                    <div class="col-md-3">
+                        <input class="form-control form-control-sm" id="link-kuma-name" placeholder="Monitor name">
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select form-select-sm" id="link-kuma-type" aria-label="Monitor type">
+                            <option value="http">http</option>
+                            <option value="docker">docker</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <input class="form-control form-control-sm" id="link-kuma-url" placeholder="URL (http)">
+                    </div>
+                    <div class="col-md-2">
+                        <input class="form-control form-control-sm" id="link-kuma-container" placeholder="Container (docker)">
+                    </div>
+                    <div class="col-md-1 d-flex align-items-end">
+                        <button class="btn btn-sm btn-outline-primary w-100" id="link-kuma-create-btn">Create</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Monitor Edit Modal -->
+<div class="modal fade" id="monitor-edit-modal" tabindex="-1" aria-labelledby="monitor-edit-title" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Monitor <span id="monitor-edit-id" class="text-muted"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label" for="monitor-edit-name">Name</label>
+                    <input class="form-control form-control-sm" id="monitor-edit-name">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="monitor-edit-type">Type</label>
+                    <select class="form-select form-select-sm" id="monitor-edit-type">
+                        <option value="http">http</option>
+                        <option value="docker">docker</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="monitor-edit-url">URL (http monitors)</label>
+                    <input class="form-control form-control-sm" id="monitor-edit-url">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="monitor-edit-container">Docker Container (docker monitors)</label>
+                    <input class="form-control form-control-sm" id="monitor-edit-container">
+                </div>
+                <div class="row g-2">
+                    <div class="col-4">
+                        <label class="form-label" for="monitor-edit-interval">Interval (s)</label>
+                        <input class="form-control form-control-sm" id="monitor-edit-interval" type="number" min="1">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label" for="monitor-edit-retry">Retry (s)</label>
+                        <input class="form-control form-control-sm" id="monitor-edit-retry" type="number" min="1">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label" for="monitor-edit-maxretries">Max Retries</label>
+                        <input class="form-control form-control-sm" id="monitor-edit-maxretries" type="number" min="1">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-danger btn-sm me-auto" id="monitor-edit-delete">Delete Monitor</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="monitor-edit-save">Save</button>
             </div>
         </div>
     </div>

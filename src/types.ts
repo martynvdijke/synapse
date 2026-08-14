@@ -39,8 +39,117 @@ export interface MonitorResponse {
   type: string;
   url: string;
   docker_container: string;
+  interval?: number;
+  retry_interval?: number;
+  maxretries?: number;
+  status?: number;
+  uptime_24h?: number;
+  uptime_7d?: number;
+  uptime_1y?: number;
+  ping?: number;
+  last_msg?: string;
   instance_id: number;
   instance_name: string;
+}
+
+export interface ProxyLocation {
+  path: string;
+  forward_host: string;
+  forward_port: number;
+  forward_scheme: string;
+  advanced_config: string;
+}
+
+export interface NPMProxyHost {
+  id: number;
+  domain_names: string[];
+  forward_host: string;
+  forward_port: number;
+  forward_scheme: string;
+  enabled: boolean;
+  ssl_forced: boolean;
+  certificate_id?: number;
+  http2_support?: boolean;
+  hsts_enabled?: boolean;
+  hsts_subdomains?: boolean;
+  block_exploits?: boolean;
+  caching_enabled?: boolean;
+  allow_websocket_upgrade?: boolean;
+  access_list_id?: number;
+  advanced_config?: string;
+  locations?: ProxyLocation[];
+  instance_id: number;
+  instance_name?: string;
+}
+
+export interface CreateProxyHostInput {
+  instance_id: number;
+  domain_names: string[];
+  forward_host: string;
+  forward_port: number;
+  forward_scheme: string;
+  enabled?: boolean;
+  ssl_forced?: boolean;
+  certificate_id?: number;
+  http2_support?: boolean;
+  hsts_enabled?: boolean;
+  hsts_subdomains?: boolean;
+  block_exploits?: boolean;
+  caching_enabled?: boolean;
+  allow_websocket_upgrade?: boolean;
+  access_list_id?: number;
+  advanced_config?: string;
+  locations?: ProxyLocation[];
+  service_name?: string;
+}
+
+export interface ServiceLink {
+  id: number;
+  service_name: string;
+  npm_instance_id?: number;
+  npm_instance_name?: string;
+  npm_host_name?: string;
+  npm_details?: string;
+  kuma_instance_id?: number;
+  kuma_instance_name?: string;
+  kuma_monitor_id?: number;
+  kuma_monitor_name?: string;
+  kuma_details?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface ServiceLinkInput {
+  service_name: string;
+  npm_instance_id?: number | null;
+  npm_host_name?: string;
+  kuma_instance_id?: number | null;
+  kuma_monitor_id?: number | null;
+  kuma_monitor_name?: string;
+}
+
+export interface CreateMonitorInput {
+  instance_id: number;
+  name: string;
+  type: string;
+  url?: string;
+  docker_container?: string;
+  docker_host?: number;
+  interval?: number;
+  retry_interval?: number;
+  maxretries?: number;
+  service_name?: string;
+}
+
+export interface MonitorEditInput {
+  name?: string;
+  type?: string;
+  url?: string;
+  docker_container?: string;
+  docker_host?: number;
+  interval?: number;
+  retry_interval?: number;
+  maxretries?: number;
 }
 
 export interface MonitorStats {

@@ -314,7 +314,18 @@ func main() {
 		api.GET("/services", app.Services)
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
+		api.POST("/monitors", app.CreateKumaMonitor)
+		api.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
+		api.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
 		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
+		api.GET("/npm/proxy-hosts", app.NPMProxyHosts)
+		api.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
+		api.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
+		api.GET("/service-links", app.ServiceLinks)
+		api.POST("/service-links", app.CreateServiceLink)
+		api.PUT("/service-links/:id", app.UpdateServiceLink)
+		api.DELETE("/service-links/:id", app.DeleteServiceLink)
+		api.POST("/service-links/:id/refresh", app.RefreshServiceLink)
 		api.GET("/status", app.Status)
 
 		// Notification endpoints
@@ -1554,6 +1565,9 @@ type KumaMonitorSummary struct {
 	Uptime1y        float64 `json:"uptime_1y,omitempty"`
 	AvgPing         float64 `json:"ping,omitempty"`
 	LastMsg         string  `json:"last_msg,omitempty"`
+	Interval        int     `json:"interval,omitempty"`
+	RetryInterval   int     `json:"retry_interval,omitempty"`
+	MaxRetries      int     `json:"maxretries,omitempty"`
 	InstanceID      int     `json:"instance_id"`
 	InstanceName    string  `json:"instance_name"`
 }
@@ -1600,6 +1614,9 @@ func (app *App) KumaMonitors(c *gin.Context) {
 				Uptime1y:        m.Uptime1y,
 				AvgPing:         m.Ping,
 				LastMsg:         m.LastMsg,
+				Interval:        m.Interval,
+				RetryInterval:   m.RetryInterval,
+				MaxRetries:      m.MaxRetries,
 				InstanceID:      ic.InstanceID,
 				InstanceName:    instanceName,
 			})
