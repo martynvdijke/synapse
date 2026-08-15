@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Monitor uptime</title>
+  <desc id="desc">A monitoring panel with a live heartbeat signal.</desc>
+  <rect x="14" y="21" width="100" height="72" rx="12" fill="#E8F9FF" stroke="#0B1930" stroke-width="7"/>
+  <path d="M27 60H42L49 43L60 76L70 53L77 60H101" fill="none" stroke="#35D8FF" stroke-linecap="round" stroke-linejoin="round" stroke-width="7"/>
+  <circle cx="91" cy="38" r="6" fill="#72E39D"/>
+  <path d="M47 108H81M64 93V108" fill="none" stroke="#0B1930" stroke-linecap="round" stroke-width="7"/>
+</svg>

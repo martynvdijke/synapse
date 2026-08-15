@@ -1,6 +1,10 @@
 # Synapse — Uptime Kuma Monitor Sync
 
 <p align="center">
+  <img src="static/brand/synapse-mark.svg" alt="Synapse" width="96">
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go" alt="Go">
   <img src="https://img.shields.io/badge/Gin-1.12-00ADD8?style=flat&logo=go" alt="Gin">
   <img src="https://img.shields.io/badge/SQLite3-003B57?style=flat&logo=sqlite" alt="SQLite">

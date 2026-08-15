@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Synapse, one signal for every service</title>
+  <desc id="desc">A dark marketing illustration showing Docker, Nginx Proxy Manager, Authelia and Uptime Kuma connected through Synapse.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#081221"/>
+      <stop offset="0.58" stop-color="#0D1C32"/>
+      <stop offset="1" stop-color="#17234B"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="780" y1="128" x2="1085" y2="475" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8FF3C"/>
+      <stop offset="0.5" stop-color="#42E0FF"/>
+      <stop offset="1" stop-color="#A48BFF"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientTransform="translate(945 303) rotate(90) scale(150)">
+      <stop stop-color="#5DE4FF" stop-opacity="0.31"/>
+      <stop offset="1" stop-color="#5DE4FF" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#8CA8C8" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <circle cx="1115" cy="32" r="260" fill="#6B56E8" fill-opacity="0.14"/>
+  <circle cx="65" cy="604" r="220" fill="#B8FF3C" fill-opacity="0.06"/>
+
+  <g transform="translate(76 66) scale(0.14)">
+    <rect width="512" height="512" rx="104" fill="#050A12"/>
+    <path d="M128 28H384L484 128V384L384 484H128L28 384V128L128 28Z" fill="#111C32" stroke="#273A58" stroke-width="6"/>
+    <path d="M144 56H372L456 140V372L372 456H144L56 372V140L144 56Z" fill="none" stroke="#4B6A91" stroke-opacity="0.45" stroke-width="3"/>
+    <path d="M104 140H141V178M371 104V151H408M104 371H141V334M371 408V360H408" fill="none" stroke="#42E0FF" stroke-linecap="square" stroke-width="7"/>
+    <path d="M364 153H194L141 206L194 256H318L371 306L318 359H141" fill="none" stroke="#02060D" stroke-linecap="square" stroke-linejoin="miter" stroke-width="34"/>
+    <path d="M364 153H194L141 206L194 256H318L371 306L318 359H141" fill="none" stroke="#42E0FF" stroke-linecap="square" stroke-linejoin="miter" stroke-width="17"/>
+    <rect x="347" y="136" width="34" height="34" rx="4" fill="#080D18" stroke="#B8FF3C" stroke-width="6"/>
+    <rect x="124" y="189" width="34" height="34" rx="4" fill="#080D18" stroke="#42E0FF" stroke-width="6"/>
+    <rect x="354" y="289" width="34" height="34" rx="4" fill="#080D18" stroke="#A48BFF" stroke-width="6"/>
+    <rect x="124" y="342" width="34" height="34" rx="4" fill="#080D18" stroke="#42E0FF" stroke-width="6"/>
+    <path d="M239 220H273L292 239V273L273 292H239L220 273V239L239 220Z" fill="#081321" stroke="#B8FF3C" stroke-width="6"/>
+    <path d="M247 239H265L273 247V265L265 273H247L239 265V247L247 239Z" fill="#42E0FF"/>
+    <circle cx="256" cy="256" r="5" fill="#F4FFD7"/>
+  </g>
+  <text x="170" y="106" fill="#B8FF3C" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" font-weight="700" letter-spacing="3">SYNAPSE // SIGNAL NETWORK</text>
+
+  <text x="76" y="230" fill="#F4F8FF" font-family="Inter, Arial, sans-serif" font-size="62" font-weight="800" letter-spacing="-2">One signal</text>
+  <text x="76" y="300" fill="#F4F8FF" font-family="Inter, Arial, sans-serif" font-size="62" font-weight="800" letter-spacing="-2">for every service.</text>
+  <text x="76" y="358" fill="#A8BBD2" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="500">Discover, sync and protect your self-hosted stack.</text>
+
+  <g transform="translate(76 425)">
+    <rect width="116" height="38" rx="19" fill="#122C43" stroke="#35D8FF" stroke-opacity="0.45"/>
+    <circle cx="20" cy="19" r="5" fill="#35D8FF"/>
+    <text x="35" y="25" fill="#DDF9FF" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1">DISCOVER</text>
+    <rect x="128" width="92" height="38" rx="19" fill="#1D2145" stroke="#A58BFF" stroke-opacity="0.5"/>
+    <circle cx="148" cy="19" r="5" fill="#A58BFF"/>
+    <text x="163" y="25" fill="#F0EBFF" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1">SYNC</text>
+    <rect x="232" width="111" height="38" rx="19" fill="#332536" stroke="#FF8969" stroke-opacity="0.5"/>
+    <circle cx="252" cy="19" r="5" fill="#FF8969"/>
+    <text x="267" y="25" fill="#FFF0EA" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1">PROTECT</text>
+  </g>
+
+  <g transform="translate(735 90)">
+    <rect width="390" height="450" rx="28" fill="#0C1A2D" fill-opacity="0.9" stroke="#83A1C5" stroke-opacity="0.24" stroke-width="2"/>
+    <rect x="24" y="24" width="342" height="38" rx="12" fill="#14263C"/>
+    <circle cx="45" cy="43" r="5" fill="#FF8969"/>
+    <circle cx="62" cy="43" r="5" fill="#F6C85F"/>
+    <circle cx="79" cy="43" r="5" fill="#72E39D"/>
+    <text x="105" y="48" fill="#8FA8C4" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1">SIGNAL MAP</text>
+
+    <circle cx="195" cy="240" r="155" fill="url(#halo)"/>
+    <path d="M195 240L91 142M195 240L300 142M195 240L91 336M195 240L300 336M195 240L195 367" fill="none" stroke="url(#accent)" stroke-opacity="0.7" stroke-width="2"/>
+    <path d="M195 240C242 197 253 168 300 142" fill="none" stroke="#D2C9FF" stroke-opacity="0.35" stroke-dasharray="5 8" stroke-width="2"/>
+    <circle cx="195" cy="240" r="48" fill="#0B1930" stroke="#8EEBFF" stroke-width="4" filter="url(#softGlow)"/>
+    <circle cx="195" cy="240" r="24" fill="url(#accent)"/>
+    <circle cx="195" cy="240" r="9" fill="#F5FCFF"/>
+
+    <g>
+      <circle cx="91" cy="142" r="17" fill="#122C43" stroke="#35D8FF" stroke-width="4"/>
+      <path d="M84 142L90 148L100 136" fill="none" stroke="#8CEBFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+      <text x="55" y="120" fill="#C9DEEF" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">DOCKER</text>
+    </g>
+    <g>
+      <circle cx="300" cy="142" r="17" fill="#1D2145" stroke="#A58BFF" stroke-width="4"/>
+      <path d="M293 142L299 148L309 136" fill="none" stroke="#D8D0FF" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+      <text x="292" y="120" fill="#D8D0FF" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">NPM</text>
+    </g>
+    <g>
+      <circle cx="91" cy="336" r="17" fill="#332536" stroke="#FF8969" stroke-width="4"/>
+      <path d="M84 336L90 342L100 330" fill="none" stroke="#FFD4C8" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+      <text x="44" y="371" fill="#FFD4C8" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">AUTHELIA</text>
+    </g>
+    <g>
+      <circle cx="300" cy="336" r="17" fill="#17352F" stroke="#72E39D" stroke-width="4"/>
+      <path d="M293 336L299 342L309 330" fill="none" stroke="#B8F5CB" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+      <text x="275" y="371" fill="#B8F5CB" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">KUMA</text>
+    </g>
+    <g>
+      <circle cx="195" cy="367" r="13" fill="#14263C" stroke="#8FA8C4" stroke-width="3"/>
+      <path d="M189 367L194 372L202 363" fill="none" stroke="#C9DEEF" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"/>
+    </g>
+  </g>
+
+  <path d="M76 568H1124" fill="none" stroke="#5DE4FF" stroke-opacity="0.25"/>
+  <text x="76" y="594" fill="#6E87A5" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="2">UPTIME Kuma monitor sync for self-hosted infrastructure</text>
+</svg>

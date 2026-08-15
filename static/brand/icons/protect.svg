@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Protect access</title>
+  <desc id="desc">A shield with a connected access node.</desc>
+  <path d="M64 14L101 28V56C101 82 86 101 64 112C42 101 27 82 27 56V28L64 14Z" fill="#F0EBFF" stroke="#0B1930" stroke-linejoin="round" stroke-width="7"/>
+  <path d="M45 64L58 77L84 49" fill="none" stroke="#A58BFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="9"/>
+  <circle cx="64" cy="30" r="7" fill="#35D8FF"/>
+  <path d="M64 37V45" fill="none" stroke="#35D8FF" stroke-linecap="round" stroke-width="5"/>
+  <circle cx="94" cy="91" r="7" fill="#FF8969"/>
+</svg>

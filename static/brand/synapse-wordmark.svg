@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 180" role="img" aria-labelledby="title desc">
+  <title id="title">Synapse wordmark</title>
+  <desc id="desc">A terminal-inspired Synapse wordmark with a circuit board icon.</desc>
+  <image href="synapse-mark.svg" x="4" y="4" width="172" height="172"/>
+  <text x="210" y="106" fill="#081321" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="67" font-weight="800" letter-spacing="4">
+    <tspan fill="#42BFE0">&gt;</tspan><tspan> SYNAPSE</tspan><tspan fill="#6FB927">_</tspan>
+  </text>
+  <text x="214" y="143" fill="#526B89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" font-weight="700" letter-spacing="3">SYNC // MONITOR // PROTECT</text>
+  <path d="M214 157H765" fill="none" stroke="#B8FF3C" stroke-width="3"/>
+  <circle cx="779" cy="157" r="4" fill="#42E0FF"/>
+</svg>
