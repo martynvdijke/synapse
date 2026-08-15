@@ -9,7 +9,7 @@ serverless_language:
 polling_url: "https://<instance>/api/v1/trmnl/stats"
 polling_headers: "{\"Authorization\":\"Bearer <token>\"}"
 polling_body: ''
-id:
+id: 443680
 oauth_enabled: 'false'
 oauth_pkce_enabled: 'no'
 oauth_authorize_url: ''
