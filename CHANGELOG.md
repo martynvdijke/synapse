@@ -1,3 +1,10 @@
+## [1.17.3](https://github.com/martynvdijke/synapse/compare/v1.17.2...v1.17.3) (2026-08-15)
+
+
+### Bug Fixes
+
+* **trmnl:** pin plugin ID and gate trmnlp push on release ([5ec7e7c](https://github.com/martynvdijke/synapse/commit/5ec7e7c64e9c3493b6094f3ff8d83d0d73253ba4))
+
 ## [1.17.2](https://github.com/martynvdijke/synapse/compare/v1.17.1...v1.17.2) (2026-08-15)
 
 
