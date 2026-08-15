@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/martynvdijke/synapse/compare/v1.16.0...v1.17.0) (2026-08-15)
+
+
+### Features
+
+* **links:** service-to-NPM/Kuma linking, monitor and proxy host management ([dbe7cee](https://github.com/martynvdijke/synapse/commit/dbe7cee2c42ee29fc74e005718272a16ce146070))
+
 # [1.16.0](https://github.com/martynvdijke/synapse/compare/v1.15.0...v1.16.0) (2026-08-13)
 
 
