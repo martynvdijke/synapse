@@ -204,7 +204,8 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 		c.WriteMessage(websocket.TextMessage, []byte(`40{"sid":"mock"}`))
 		c.WriteMessage(websocket.TextMessage, []byte(`42["loginRequired"]`))
 
-		// Wait for login packet, respond with ack
+		// Wait for login packet, respond with ack echoing the client's ack id
+		// (v5 format: "42<ackId>[\"login\",...]" -> ack "43<ackId>[...]").
 		_, msg, err = c.ReadMessage()
 		if err != nil {
 			return
@@ -213,7 +214,14 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 			t.Errorf("expected v5 login packet, got %q", string(msg))
 			return
 		}
-		c.WriteMessage(websocket.TextMessage, []byte(`431[{"ok":true,"token":"jwt"}]`))
+		ackID := strings.TrimPrefix(string(msg), "42")
+		for i, r := range ackID {
+			if r < '0' || r > '9' {
+				ackID = ackID[:i]
+				break
+			}
+		}
+		c.WriteMessage(websocket.TextMessage, []byte("43"+ackID+`[{"ok":true,"token":"jwt"}]`))
 
 		// Stream monitorList (map keyed by id string) with docker info
 		c.WriteMessage(websocket.TextMessage, []byte(`42["monitorList",{"1":{"id":1,"name":"vandijke.xyz","url":"http://vandijke.xyz","type":"docker","docker_container":"vandijke","docker_host":1,"active":true},"2":{"id":2,"name":"heat","url":"http://heat.local","type":"http","active":true}}]`))
