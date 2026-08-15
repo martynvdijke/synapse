@@ -1,0 +1,32 @@
+name: trml
+
+on:
+  workflow_call:
+  pull_request:
+
+jobs:
+  lint:
+    name: TRMNL lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+      - run: gem install trmnl_preview
+      - run: trmnlp lint --dir trmnl
+
+  push:
+    name: TRMNL push
+    needs: lint
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+      - run: gem install trmnl_preview
+      - run: trmnlp push --force --dir trmnl
+        env:
+          TRMNL_API_KEY: ${{ secrets.TRML_TOKEN }}

@@ -32,5 +32,5 @@ oauth_expiry_strategy: ''
 oauth_fixed_expiry_ms: ''
 custom_fields: []
 name: Synapse
-description: Uptime monitoring stats for your wall — service and monitor counts, connection health, and last sync times from a Synapse instance.
+description: Synapse uptime stats for your wall
 refresh_interval: 60

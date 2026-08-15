@@ -84,3 +84,9 @@ jobs:
           docker push martynvandijke/synapse:$VERSION
           docker push ghcr.io/martynvdijke/synapse:latest
           docker push ghcr.io/martynvdijke/synapse:$VERSION
+
+  trml:
+    name: TRMNL
+    uses: ./.github/workflows/trml.yaml
+    needs: [ci, release]
+    secrets: inherit
