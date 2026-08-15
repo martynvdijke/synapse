@@ -1,3 +1,10 @@
+## [1.17.2](https://github.com/martynvdijke/synapse/compare/v1.17.1...v1.17.2) (2026-08-15)
+
+
+### Bug Fixes
+
+* **kuma:** fall back to HTTP long-polling when WebSocket dial fails ([01c1fe6](https://github.com/martynvdijke/synapse/commit/01c1fe60ff7c7d86ea4446043c4ad95ed36e0661))
+
 ## [1.17.1](https://github.com/martynvdijke/synapse/compare/v1.17.0...v1.17.1) (2026-08-15)
 
 
