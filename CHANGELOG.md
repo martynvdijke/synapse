@@ -1,3 +1,10 @@
+## [1.17.1](https://github.com/martynvdijke/synapse/compare/v1.17.0...v1.17.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* **test:** kuma login ack echoes client ack id ([1916b36](https://github.com/martynvdijke/synapse/commit/1916b36fcdf6601d66672fd2cf758465033365ad))
+
 # [1.17.0](https://github.com/martynvdijke/synapse/compare/v1.16.0...v1.17.0) (2026-08-15)
 
 
