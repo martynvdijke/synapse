@@ -2,9 +2,12 @@ package kuma
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -375,5 +378,151 @@ func TestClient_AddMonitorViaSocketIO_InvalidatesCache(t *testing.T) {
 	c.mu.Unlock()
 	if cached {
 		t.Fatal("expected cache to be invalidated after successful add")
+	}
+}
+
+// mockPollingKumaServer simulates an Uptime Kuma instance that only supports
+// Engine.IO HTTP long-polling (no WebSocket upgrades), mirroring the reported
+// production failure where nginx answers the WS upgrade with 400
+// {"code":3,"message":"Bad request"}. It implements the full polling flow:
+// GET handshake -> OPEN, POST "40" -> connect, GET long-poll -> buffered
+// packets joined by the 0x1e record separator.
+func mockPollingKumaServer(t *testing.T, loginResponse string) (url string, loginPacket chan string) {
+	t.Helper()
+	loginPacket = make(chan string, 1)
+
+	var mu sync.Mutex
+	var outbox []string
+	wake := make(chan struct{}, 1)
+
+	notify := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/socket.io/" {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			sid := r.URL.Query().Get("sid")
+			if sid == "" {
+				// Engine.IO OPEN handshake
+				w.Header().Set("Content-Type", "text/plain")
+				fmt.Fprint(w, `0{"sid":"mock","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}`)
+				return
+			}
+			// Long-poll: return buffered packets or wait for a POST to wake us
+			for {
+				mu.Lock()
+				if len(outbox) > 0 {
+					pkts := strings.Join(outbox, "\x1e")
+					outbox = nil
+					mu.Unlock()
+					w.Header().Set("Content-Type", "text/plain")
+					fmt.Fprint(w, pkts)
+					return
+				}
+				mu.Unlock()
+				select {
+				case <-wake:
+				case <-time.After(700 * time.Millisecond):
+					w.Header().Set("Content-Type", "text/plain")
+					return
+				}
+			}
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "read error", http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			switch string(body) {
+			case "40":
+				outbox = append(outbox, `40{"sid":"mock"}`, `42["loginRequired"]`)
+			default:
+				if strings.HasPrefix(string(body), `421["login",`) {
+					loginPacket <- string(body)
+					// echo the v5 ack id: "421<id>["login",...]" -> "43<id>[data]"
+					ackID := strings.TrimPrefix(string(body), "42")
+					for i, ch := range ackID {
+						if ch < '0' || ch > '9' {
+							ackID = ackID[:i]
+							break
+						}
+					}
+					// loginResponse is "43<id>[<data>]" — reuse its JSON args
+					jsonPart := loginResponse[strings.Index(loginResponse, "["):]
+					outbox = append(outbox, "43"+ackID+jsonPart)
+					// stream monitor data like the real server
+					outbox = append(outbox,
+						`42["monitorList",{"1":{"id":1,"name":"vandijke.xyz","url":"http://vandijke.xyz","type":"http","active":true}}]`,
+						`42["uptime","1",24,0.98]`,
+						`42["uptime","1",720,0.95]`,
+						`42["uptime","1",8760,0.93]`,
+						`42["avgPing","1",1.5]`,
+					)
+				} else if string(body) == "2" {
+					outbox = append(outbox, "3")
+				}
+			}
+			mu.Unlock()
+			notify()
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w, "ok")
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, loginPacket
+}
+
+// TestQueryMonitorsViaSocketIO_PollingFallback verifies the end-to-end flow
+// against a server that rejects WebSocket upgrades (like the remote nginx
+// fronted Kuma instances that previously failed to connect): dialSIO must
+// fall back to Engine.IO HTTP long-polling and still complete login + data
+// collection.
+func TestQueryMonitorsViaSocketIO_PollingFallback(t *testing.T) {
+	orig := dataCollectionWindow
+	dataCollectionWindow = 400 * time.Millisecond
+	defer func() { dataCollectionWindow = orig }()
+
+	url, loginPacket := mockPollingKumaServer(t, `431[{"ok":true,"token":"jwt"}]`)
+
+	monitors, err := QueryMonitorsViaSocketIO(url, "admin", "secret")
+	if err != nil {
+		t.Fatalf("query via polling fallback failed: %v", err)
+	}
+	if len(monitors) != 1 {
+		t.Fatalf("expected 1 monitor, got %d: %+v", len(monitors), monitors)
+	}
+	m := monitors[0]
+	if m.ID != 1 {
+		t.Errorf("expected id 1, got %d", m.ID)
+	}
+	if m.Name != "vandijke.xyz" {
+		t.Errorf("expected name vandijke.xyz, got %q", m.Name)
+	}
+	if m.Uptime24h != 0.98 || m.Uptime7d != 0.95 || m.Uptime1y != 0.93 {
+		t.Errorf("unexpected uptimes: 24h=%f 7d=%f 1y=%f", m.Uptime24h, m.Uptime7d, m.Uptime1y)
+	}
+	if m.Ping != 1.5 {
+		t.Errorf("expected ping 1.5, got %f", m.Ping)
+	}
+	if m.Status != 1 {
+		t.Errorf("expected status up (1), got %d", m.Status)
+	}
+
+	select {
+	case raw := <-loginPacket:
+		if !strings.HasPrefix(raw, `421["login",`) {
+			t.Errorf("login packet must use v5 wire format, got %q", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("login packet was never received over polling transport")
 	}
 }

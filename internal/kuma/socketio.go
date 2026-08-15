@@ -1,10 +1,16 @@
 package kuma
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +20,17 @@ import (
 )
 
 // Minimal Engine.IO v4 / Socket.IO v4 client — only enough for Uptime Kuma.
+//
+// Two Engine.IO transports are supported:
+//   - WebSocket (preferred): full-duplex, used for local instances.
+//   - HTTP long-polling (fallback): used when the WebSocket handshake is
+//     rejected, e.g. when Kuma sits behind a reverse proxy that does not
+//     forward the Upgrade/Connection headers (nginx returns 400 with
+//     {"code":3,"message":"Bad request"} for the WS upgrade in that case).
+//     The polling transport keeps the Engine.IO protocol identical from the
+//     Socket.IO layer's point of view: packets are read from HTTP GET
+//     long-polls (multiple packets per response separated by 0x1e) and
+//     written via HTTP POSTs.
 
 type eioType byte
 
@@ -38,8 +55,29 @@ type rawEvent struct {
 	Args []json.RawMessage
 }
 
+// eioOpen is the parsed Engine.IO OPEN packet payload.
+type eioOpenInfo struct {
+	Sid          string `json:"sid"`
+	PingInterval int    `json:"pingInterval"`
+	PingTimeout  int    `json:"pingTimeout"`
+}
+
+// eioTransport is the Engine.IO wire transport underneath the Socket.IO
+// client. Implementations: wsTransport (WebSocket) and pollingTransport
+// (HTTP long-polling).
+type eioTransport interface {
+	// ReadPacket returns the next full Engine.IO packet including its type
+	// byte, e.g. "40{...}", "42[...]", "2". It blocks until a packet arrives
+	// or the connection is closed.
+	ReadPacket() ([]byte, error)
+	// WritePacket sends one Engine.IO packet, e.g. "40", "42[...]", "2".
+	WritePacket(p []byte) error
+	// Close tears down the transport and unblocks any pending ReadPacket.
+	Close() error
+}
+
 type sioClient struct {
-	conn        *websocket.Conn
+	conn        eioTransport
 	mu          sync.Mutex
 	ackID       int
 	pendingAcks map[int]chan []json.RawMessage
@@ -47,100 +85,139 @@ type sioClient struct {
 	done        chan struct{}
 }
 
+// wsTransport implements eioTransport over a gorilla/websocket connection.
+type wsTransport struct {
+	conn *websocket.Conn
+}
+
+func (w *wsTransport) ReadPacket() ([]byte, error) {
+	for {
+		_, msg, err := w.conn.ReadMessage()
+		if err != nil {
+			return nil, err
+		}
+		if len(msg) == 0 {
+			continue
+		}
+		return msg, nil
+	}
+}
+
+func (w *wsTransport) WritePacket(p []byte) error {
+	return w.conn.WriteMessage(websocket.TextMessage, p)
+}
+
+func (w *wsTransport) Close() error {
+	return w.conn.Close()
+}
+
+// pollingTransport implements eioTransport over Engine.IO HTTP long-polling.
+// A single in-flight GET long-poll receives server packets (a response may
+// carry several packets joined by the 0x1e record separator); client packets
+// are sent with POST requests to the same endpoint.
+type pollingTransport struct {
+	baseURL string
+	sid     string
+	http    *http.Client
+	ctx     context.Context
+	cancel  context.CancelFunc
+	mu      sync.Mutex // serializes POSTs
+	pending [][]byte   // packets decoded from the current GET response
+}
+
+func (p *pollingTransport) endpoint() string {
+	u := fmt.Sprintf("%s/socket.io/?EIO=4&transport=polling", p.baseURL)
+	if p.sid != "" {
+		u += "&sid=" + url.QueryEscape(p.sid)
+	}
+	return u
+}
+
+func (p *pollingTransport) ReadPacket() ([]byte, error) {
+	for {
+		if len(p.pending) > 0 {
+			pkt := p.pending[0]
+			p.pending = p.pending[1:]
+			return pkt, nil
+		}
+		if err := p.pollOnce(); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// pollOnce issues one GET long-poll and buffers any packets in the response.
+func (p *pollingTransport) pollOnce() error {
+	req, err := http.NewRequestWithContext(p.ctx, http.MethodGet,
+		p.endpoint()+"&t="+strconv.FormatInt(time.Now().UnixMilli(), 10), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("polling GET: status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	for _, pkt := range bytes.Split(body, []byte{0x1e}) {
+		if len(pkt) == 0 {
+			continue
+		}
+		p.pending = append(p.pending, pkt)
+	}
+	return nil
+}
+
+func (p *pollingTransport) WritePacket(pkt []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	req, err := http.NewRequestWithContext(p.ctx, http.MethodPost, p.endpoint(), bytes.NewReader(pkt))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("polling POST: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (p *pollingTransport) Close() error {
+	p.cancel()
+	return nil
+}
+
+// dialSIO connects to a Kuma instance over Socket.IO. It tries the WebSocket
+// transport first; if the WebSocket handshake fails (common behind reverse
+// proxies without WS upgrade forwarding), it falls back to Engine.IO HTTP
+// long-polling, which works through plain HTTP.
 func dialSIO(serverURL string) (*sioClient, error) {
 	start := time.Now()
-	scheme := "ws"
-	if len(serverURL) > 5 && serverURL[:5] == "https" {
-		scheme = "wss"
-	}
-	u := fmt.Sprintf("%s://%s/socket.io/?EIO=4&transport=websocket", scheme, serverURL)
-	if len(serverURL) > 7 && serverURL[:7] == "http://" {
-		u = fmt.Sprintf("ws://%s/socket.io/?EIO=4&transport=websocket", serverURL[7:])
-	} else if len(serverURL) > 8 && serverURL[:8] == "https://" {
-		u = fmt.Sprintf("wss://%s/socket.io/?EIO=4&transport=websocket", serverURL[8:])
-	}
-
-	logging.LogDebug("kuma", "Dialing Socket.IO",
-		slog.String("url", serverURL),
-		slog.String("ws_url", u),
-	)
-
-	dialer := &websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	c, _, err := dialer.Dial(u, nil)
+	conn, open, err := dialTransport(serverURL)
 	if err != nil {
 		logging.LogError("kuma", "Socket.IO dial failed",
 			slog.String("error", err.Error()),
 			slog.Duration("duration", time.Since(start)),
 		)
-		return nil, fmt.Errorf("ws dial: %w", err)
+		return nil, err
 	}
 
 	cli := &sioClient{
-		conn:        c,
+		conn:        conn,
 		pendingAcks: make(map[int]chan []json.RawMessage),
 		done:        make(chan struct{}),
-	}
-
-	// Read Engine.IO OPEN
-	_, msg, err := c.ReadMessage()
-	if err != nil {
-		c.Close()
-		logging.LogError("kuma", "Socket.IO read open failed",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, fmt.Errorf("read eio open: %w", err)
-	}
-	if len(msg) == 0 || eioType(msg[0]) != eioOpen {
-		c.Close()
-		logging.LogError("kuma", "Socket.IO unexpected open message",
-			slog.String("msg", string(msg)),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, fmt.Errorf("expected eio open, got %q", string(msg))
-	}
-
-	var open struct {
-		Sid          string `json:"sid"`
-		PingInterval int    `json:"pingInterval"`
-		PingTimeout  int    `json:"pingTimeout"`
-	}
-	if err := json.Unmarshal(msg[1:], &open); err != nil {
-		c.Close()
-		logging.LogError("kuma", "Socket.IO parse open failed",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, fmt.Errorf("parse eio open: %w", err)
-	}
-
-	// Send Socket.IO CONNECT: Engine.IO MESSAGE(4) + SIO CONNECT(0) = "40"
-	if err := c.WriteMessage(websocket.TextMessage, []byte("40")); err != nil {
-		c.Close()
-		logging.LogError("kuma", "Socket.IO send connect failed",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, fmt.Errorf("send sio connect: %w", err)
-	}
-
-	// Read SIO CONNECT response
-	_, msg, err = c.ReadMessage()
-	if err != nil {
-		c.Close()
-		logging.LogError("kuma", "Socket.IO read connect response failed",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, fmt.Errorf("read sio connect: %w", err)
-	}
-	if len(msg) < 2 || msg[0] != '4' || msg[1] != '0' {
-		c.Close()
-		logging.LogError("kuma", "Socket.IO unexpected connect response",
-			slog.String("msg", string(msg)),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, fmt.Errorf("expected sio connect, got %q", string(msg))
 	}
 
 	logging.LogInfo("kuma", "Socket.IO connected",
@@ -154,10 +231,194 @@ func dialSIO(serverURL string) (*sioClient, error) {
 	return cli, nil
 }
 
+// dialTransport establishes the Engine.IO connection (OPEN handshake + SIO
+// CONNECT) over WebSocket, falling back to HTTP long-polling if the WebSocket
+// dial is rejected.
+func dialTransport(serverURL string) (eioTransport, eioOpenInfo, error) {
+	wsConn, wsOpen, wsErr := dialWebSocket(serverURL)
+	if wsErr == nil {
+		return wsConn, wsOpen, nil
+	}
+	logging.LogWarn("kuma", "Socket.IO WebSocket dial failed, falling back to HTTP long-polling",
+		slog.String("url", serverURL),
+		slog.String("error", wsErr.Error()),
+	)
+	pollConn, pollOpen, pollErr := dialPolling(serverURL)
+	if pollErr != nil {
+		return nil, eioOpenInfo{}, fmt.Errorf("websocket: %w; polling: %w", wsErr, pollErr)
+	}
+	return pollConn, pollOpen, nil
+}
+
+func dialWebSocket(serverURL string) (eioTransport, eioOpenInfo, error) {
+	start := time.Now()
+	u := fmt.Sprintf("ws://%s/socket.io/?EIO=4&transport=websocket", serverURL[7:])
+	if len(serverURL) > 8 && serverURL[:8] == "https://" {
+		u = fmt.Sprintf("wss://%s/socket.io/?EIO=4&transport=websocket", serverURL[8:])
+	}
+
+	logging.LogDebug("kuma", "Dialing Socket.IO",
+		slog.String("url", serverURL),
+		slog.String("ws_url", u),
+	)
+
+	dialer := &websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	c, _, err := dialer.Dial(u, nil)
+	if err != nil {
+		return nil, eioOpenInfo{}, fmt.Errorf("ws dial: %w", err)
+	}
+
+	t := &wsTransport{conn: c}
+	open, err := completeHandshake(t, serverURL, start)
+	if err != nil {
+		c.Close()
+		return nil, eioOpenInfo{}, err
+	}
+	return t, open, nil
+}
+
+func dialPolling(serverURL string) (eioTransport, eioOpenInfo, error) {
+	logging.LogDebug("kuma", "Dialing Socket.IO over HTTP long-polling",
+		slog.String("url", serverURL),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &pollingTransport{
+		baseURL: strings.TrimRight(serverURL, "/"),
+		http:    &http.Client{Timeout: 60 * time.Second},
+		ctx:     ctx,
+		cancel:  cancel,
+	}
+
+	// Engine.IO handshake: the OPEN packet arrives as the first GET response
+	// before any sid is assigned.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		p.endpoint()+"&t="+strconv.FormatInt(time.Now().UnixMilli(), 10), nil)
+	if err != nil {
+		cancel()
+		return nil, eioOpenInfo{}, err
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("polling handshake: %w", err)
+	}
+	body, rerr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if rerr != nil {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("polling handshake: %w", rerr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("polling handshake: status %d", resp.StatusCode)
+	}
+	if len(body) == 0 || eioType(body[0]) != eioOpen {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("expected eio open, got %q", string(body))
+	}
+	var open eioOpenInfo
+	if err := json.Unmarshal(body[1:], &open); err != nil {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("parse eio open: %w", err)
+	}
+	p.sid = open.Sid
+
+	// Send Socket.IO CONNECT and wait for the "40{...}" response, which is
+	// delivered on the polling stream. Note: unlike WebSocket, the connect
+	// response for polling arrives via the same long-poll GETs as events, so
+	// dialPolling pre-reads it and leaves any further packets buffered.
+	if err := p.WritePacket([]byte("40")); err != nil {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("send sio connect: %w", err)
+	}
+	deadline := time.After(15 * time.Second)
+	for len(p.pending) == 0 {
+		select {
+		case <-deadline:
+			cancel()
+			return nil, eioOpenInfo{}, fmt.Errorf("polling connect: timeout waiting for sio connect")
+		default:
+		}
+		if err := p.pollOnce(); err != nil {
+			cancel()
+			return nil, eioOpenInfo{}, fmt.Errorf("polling connect: %w", err)
+		}
+	}
+	connect := p.pending[0]
+	p.pending = p.pending[1:]
+	if len(connect) < 2 || connect[0] != '4' || connect[1] != '0' {
+		cancel()
+		return nil, eioOpenInfo{}, fmt.Errorf("expected sio connect, got %q", string(connect))
+	}
+	return p, open, nil
+}
+
+// completeHandshake performs the Engine.IO OPEN read + SIO CONNECT exchange
+// shared by transports that deliver the OPEN packet synchronously.
+func completeHandshake(t eioTransport, serverURL string, start time.Time) (eioOpenInfo, error) {
+	msg, err := t.ReadPacket()
+	if err != nil {
+		logging.LogError("kuma", "Socket.IO read open failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return eioOpenInfo{}, fmt.Errorf("read eio open: %w", err)
+	}
+	if len(msg) == 0 || eioType(msg[0]) != eioOpen {
+		logging.LogError("kuma", "Socket.IO unexpected open message",
+			slog.String("msg", string(msg)),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return eioOpenInfo{}, fmt.Errorf("expected eio open, got %q", string(msg))
+	}
+
+	var open eioOpenInfo
+	if err := json.Unmarshal(msg[1:], &open); err != nil {
+		logging.LogError("kuma", "Socket.IO parse open failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return eioOpenInfo{}, fmt.Errorf("parse eio open: %w", err)
+	}
+
+	// Send Socket.IO CONNECT: Engine.IO MESSAGE(4) + SIO CONNECT(0) = "40"
+	if err := t.WritePacket([]byte("40")); err != nil {
+		logging.LogError("kuma", "Socket.IO send connect failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return eioOpenInfo{}, fmt.Errorf("send sio connect: %w", err)
+	}
+
+	// Read SIO CONNECT response
+	msg, err = t.ReadPacket()
+	if err != nil {
+		logging.LogError("kuma", "Socket.IO read connect response failed",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return eioOpenInfo{}, fmt.Errorf("read sio connect: %w", err)
+	}
+	if len(msg) < 2 || msg[0] != '4' || msg[1] != '0' {
+		logging.LogError("kuma", "Socket.IO unexpected connect response",
+			slog.String("msg", string(msg)),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return eioOpenInfo{}, fmt.Errorf("expected sio connect, got %q", string(msg))
+	}
+
+	logging.LogInfo("kuma", "Socket.IO connected",
+		slog.String("sid", open.Sid),
+		slog.Duration("duration", time.Since(start)),
+	)
+	return open, nil
+}
+
 func (c *sioClient) readLoop() {
 	defer close(c.done)
 	for {
-		_, msg, err := c.conn.ReadMessage()
+		msg, err := c.conn.ReadPacket()
 		if err != nil {
 			logging.LogDebug("kuma", "Socket.IO read loop ended",
 				slog.String("error", err.Error()),
@@ -169,7 +430,7 @@ func (c *sioClient) readLoop() {
 		}
 		switch eioType(msg[0]) {
 		case eioPing:
-			c.conn.WriteMessage(websocket.TextMessage, []byte("3"))
+			c.conn.WritePacket([]byte("3"))
 		case eioMessage:
 			c.handleSIO(msg[1:])
 		case eioClose:
@@ -250,7 +511,7 @@ func (c *sioClient) pingLoop(intervalMs int) {
 			return
 		case <-ticker.C:
 			c.mu.Lock()
-			c.conn.WriteMessage(websocket.TextMessage, []byte("2"))
+			c.conn.WritePacket([]byte("2"))
 			c.mu.Unlock()
 		}
 	}
@@ -263,7 +524,7 @@ func (c *sioClient) emit(event string, data any) {
 	}
 	b, _ := json.Marshal(arr)
 	c.mu.Lock()
-	c.conn.WriteMessage(websocket.TextMessage, append([]byte("42"), b...))
+	c.conn.WritePacket(append([]byte("42"), b...))
 	c.mu.Unlock()
 }
 
@@ -285,7 +546,7 @@ func (c *sioClient) emitWithAck(event string, data any) <-chan []json.RawMessage
 	// which modern servers decode as an event named after the number.)
 	packet := append([]byte("42"), []byte(strconv.Itoa(id))...)
 	packet = append(packet, b...)
-	c.conn.WriteMessage(websocket.TextMessage, packet)
+	c.conn.WritePacket(packet)
 	c.mu.Unlock()
 
 	return ch
