@@ -1,19 +1,19 @@
-<div class="layout layout--col gap">
+<div class="layout layout--col layout--stretch gap">
   <div class="grid grid--cols-1">
     <div class="item">
       <div class="meta">Monitors</div>
       <div class="content">
-        <span class="value value--large">{{ IDX_0.monitor_count }}</span>
+        <span class="value value--large">{{ monitor_count }}</span>
       </div>
     </div>
   </div>
   <div class="item">
     <div class="content">
       <span class="label">
-        {% if IDX_0.up > 0 %}
-          {{ IDX_0.up }} up / {{ IDX_0.down }} down
+        {% if up > 0 %}
+          {{ up }} up / {{ down }} down
         {% else %}
-          {% if IDX_0.kuma_ok %}All systems OK{% else %}Kuma error{% endif %}
+          {% if kuma_ok %}All systems OK{% else %}Kuma error{% endif %}
         {% endif %}
       </span>
     </div>

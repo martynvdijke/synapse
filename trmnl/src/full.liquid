@@ -1,21 +1,21 @@
-<div class="layout layout--col gap">
+<div class="layout layout--col layout--stretch gap">
   <div class="grid grid--cols-3 gap">
     <div class="item">
       <div class="meta">Monitors</div>
       <div class="content">
-        <span class="value value--large">{{ IDX_0.monitor_count }}</span>
+        <span class="value value--large">{{ monitor_count }}</span>
       </div>
     </div>
     <div class="item">
       <div class="meta">Services</div>
       <div class="content">
-        <span class="value value--large">{{ IDX_0.docker_count }}</span>
+        <span class="value value--large">{{ docker_count }}</span>
       </div>
     </div>
     <div class="item">
       <div class="meta">Proxies</div>
       <div class="content">
-        <span class="value value--large">{{ IDX_0.npm_count }}</span>
+        <span class="value value--large">{{ npm_count }}</span>
       </div>
     </div>
   </div>
@@ -25,7 +25,7 @@
       <div class="item">
         <div class="meta">Docker</div>
         <div class="content">
-          {% if IDX_0.docker_ok %}
+          {% if docker_ok %}
             <span class="label label--success">OK</span>
           {% else %}
             <span class="label label--danger">ERROR</span>
@@ -35,7 +35,7 @@
       <div class="item">
         <div class="meta">NPM</div>
         <div class="content">
-          {% if IDX_0.npm_ok %}
+          {% if npm_ok %}
             <span class="label label--success">OK</span>
           {% else %}
             <span class="label label--danger">ERROR</span>
@@ -45,7 +45,7 @@
       <div class="item">
         <div class="meta">Kuma</div>
         <div class="content">
-          {% if IDX_0.kuma_ok %}
+          {% if kuma_ok %}
             <span class="label label--success">OK</span>
           {% else %}
             <span class="label label--danger">ERROR</span>
@@ -57,19 +57,19 @@
       <div class="item">
         <div class="meta">Up</div>
         <div class="content">
-          <span class="value value--medium">{{ IDX_0.up }}</span>
+          <span class="value value--medium">{{ up }}</span>
         </div>
       </div>
       <div class="item">
         <div class="meta">Down</div>
         <div class="content">
-          <span class="value value--medium">{{ IDX_0.down }}</span>
+          <span class="value value--medium">{{ down }}</span>
         </div>
       </div>
       <div class="item">
         <div class="meta">Sync</div>
         <div class="content">
-          {% if IDX_0.running %}
+          {% if running %}
             <span class="label label--warning">RUNNING</span>
           {% else %}
             <span class="label">IDLE</span>
@@ -81,8 +81,8 @@
       <div class="item">
         <div class="meta">Last Docker sync</div>
         <div class="content">
-          {% if IDX_0.last_docker %}
-            <span class="label">{{ IDX_0.last_docker.started_at }}</span>
+          {% if last_docker %}
+            <span class="label">{{ last_docker.started_at }}</span>
           {% else %}
             <span class="label">Never</span>
           {% endif %}
@@ -91,8 +91,8 @@
       <div class="item">
         <div class="meta">Last NPM sync</div>
         <div class="content">
-          {% if IDX_0.last_npm %}
-            <span class="label">{{ IDX_0.last_npm.started_at }}</span>
+          {% if last_npm %}
+            <span class="label">{{ last_npm.started_at }}</span>
           {% else %}
             <span class="label">Never</span>
           {% endif %}

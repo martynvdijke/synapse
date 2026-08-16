@@ -1,22 +1,22 @@
-<div class="layout layout--col gap">
+<div class="layout layout--col layout--stretch gap">
   <div class="col col--start gap">
     <div class="grid grid--cols-3 gap">
       <div class="item">
         <div class="meta">Monitors</div>
         <div class="content">
-          <span class="value value--medium">{{ IDX_0.monitor_count }}</span>
+          <span class="value value--medium">{{ monitor_count }}</span>
         </div>
       </div>
       <div class="item">
         <div class="meta">Services</div>
         <div class="content">
-          <span class="value value--medium">{{ IDX_0.docker_count }}</span>
+          <span class="value value--medium">{{ docker_count }}</span>
         </div>
       </div>
       <div class="item">
         <div class="meta">Proxies</div>
         <div class="content">
-          <span class="value value--medium">{{ IDX_0.npm_count }}</span>
+          <span class="value value--medium">{{ npm_count }}</span>
         </div>
       </div>
     </div>
@@ -24,16 +24,16 @@
       <div class="meta">Health</div>
       <div class="content">
         <span class="label">
-          D:{% if IDX_0.docker_ok %}OK{% else %}ERR{% endif %}
-          N:{% if IDX_0.npm_ok %}OK{% else %}ERR{% endif %}
-          K:{% if IDX_0.kuma_ok %}OK{% else %}ERR{% endif %}
+          D:{% if docker_ok %}OK{% else %}ERR{% endif %}
+          N:{% if npm_ok %}OK{% else %}ERR{% endif %}
+          K:{% if kuma_ok %}OK{% else %}ERR{% endif %}
         </span>
       </div>
     </div>
     <div class="item">
       <div class="meta">Up / Down</div>
       <div class="content">
-        <span class="label">{{ IDX_0.up }} / {{ IDX_0.down }}</span>
+        <span class="label">{{ up }} / {{ down }}</span>
       </div>
     </div>
   </div>
