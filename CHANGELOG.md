@@ -1,3 +1,10 @@
+## [1.17.4](https://github.com/martynvdijke/synapse/compare/v1.17.3...v1.17.4) (2026-08-16)
+
+
+### Bug Fixes
+
+* **trmnl:** fix stats data binding and layout width ([610f636](https://github.com/martynvdijke/synapse/commit/610f636839a04e3a089adcbe9e7b1f83d2a85845))
+
 ## [1.17.3](https://github.com/martynvdijke/synapse/compare/v1.17.2...v1.17.3) (2026-08-15)
 
 
