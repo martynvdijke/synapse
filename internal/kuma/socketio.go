@@ -452,6 +452,14 @@ func (c *sioClient) handleSIO(payload []byte) {
 	}
 }
 
+// setOnEvent installs the event handler under the lock. Safe to call after
+// dialSIO has already started the readLoop goroutine.
+func (c *sioClient) setOnEvent(fn func(rawEvent)) {
+	c.mu.Lock()
+	c.onEvent = fn
+	c.mu.Unlock()
+}
+
 func (c *sioClient) handleEvent(data []byte) {
 	var raw []json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil || len(raw) == 0 {
@@ -463,8 +471,15 @@ func (c *sioClient) handleEvent(data []byte) {
 		return
 	}
 
-	if c.onEvent != nil {
-		c.onEvent(rawEvent{Name: name, Args: raw[1:]})
+	// Read the handler under the lock: readLoop starts dispatching events as
+	// soon as dialSIO returns, potentially before the caller has installed
+	// onEvent. The mutex makes that handoff race-free.
+	c.mu.Lock()
+	onEvent := c.onEvent
+	c.mu.Unlock()
+
+	if onEvent != nil {
+		onEvent(rawEvent{Name: name, Args: raw[1:]})
 	}
 }
 
@@ -647,9 +662,9 @@ func sioCommandSession(kumaURL, username, password string) (*sioClient, <-chan r
 	if err != nil {
 		return nil, nil, fmt.Errorf("socket.io dial: %w", err)
 	}
-	cli.onEvent = func(ev rawEvent) {
+	cli.setOnEvent(func(ev rawEvent) {
 		events <- ev
-	}
+	})
 
 	loginErr := make(chan error, 1)
 	loginSent := false
@@ -742,9 +757,9 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 	}
 	defer cli.close()
 
-	cli.onEvent = func(ev rawEvent) {
+	cli.setOnEvent(func(ev rawEvent) {
 		events <- ev
-	}
+	})
 
 	// Wait for loginRequired and respond
 	loginSent := false
@@ -1053,9 +1068,9 @@ func GetMonitorStats(client *Client, monitorID int) (*MonitorStats, error) {
 	}
 	defer cli.close()
 
-	cli.onEvent = func(ev rawEvent) {
+	cli.setOnEvent(func(ev rawEvent) {
 		events <- ev
-	}
+	})
 
 	loginTimer := time.After(20 * time.Second)
 
@@ -1237,9 +1252,9 @@ func AddMonitorViaSocketIO(kumaURL, username, password string, monitorType, name
 	}
 	defer cli.close()
 
-	cli.onEvent = func(ev rawEvent) {
+	cli.setOnEvent(func(ev rawEvent) {
 		events <- ev
-	}
+	})
 
 	loginTimer := time.After(10 * time.Second)
 
