@@ -27,6 +27,22 @@ export const MOCK_PROXIES = [
   { cname: 'api.example.com', container: '', in_kuma: false, source_instance_name: 'npm-edge' },
 ];
 
+export const MOCK_AUTHELIA_COVERAGE = {
+  instances: [
+    {
+      instance_id: 1,
+      instance_name: 'main-auth',
+      domains: [
+        { domain: 'web.example.com', service: 'web-app', covered: false, policy: 'one_factor' },
+      ],
+    },
+  ],
+};
+
+export const MOCK_SERVICE_LINKS = [
+  { id: 1, service_name: 'web-app', npm_instance_id: 1, npm_instance_name: 'npm-edge', npm_host_name: 'web.example.com', kuma_instance_id: 1, kuma_instance_name: 'prod-kuma', kuma_monitor_id: 1, kuma_monitor_name: 'Web App Monitor', created_at: '2024-01-01T00:00:00Z' },
+];
+
 export const MOCK_SETTINGS = {
   compose_path: '/opt/synapse/docker-compose.yml',
   npm_migrated: true,
@@ -139,6 +155,61 @@ export async function setupBaseMocks(page: Page) {
   });
   await page.route('**/api/authelia/status', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configured: false, message: 'Not configured' }) });
+  });
+  await page.route('**/api/authelia/coverage', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_AUTHELIA_COVERAGE) });
+  });
+  await page.route('**/api/authelia-instances', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_AUTHELIA_INSTANCES) });
+  });
+  await page.route('**/api/npm/proxy-hosts', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+  });
+  await page.route('**/api/service-links', async (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      const body = JSON.parse(route.request().postData() || '{}');
+      const link = {
+        id: 1,
+        service_name: body.service_name,
+        npm_instance_id: 1,
+        npm_instance_name: 'npm-edge',
+        npm_host_name: 'web.example.com',
+        kuma_instance_id: 1,
+        kuma_instance_name: 'prod-kuma',
+        kuma_monitor_id: 1,
+        kuma_monitor_name: 'Web App Monitor',
+        created_at: new Date().toISOString(),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          link,
+          authelia_actions: [
+            { action: 'add', cname: 'web.example.com', policy: 'one_factor', message: 'Added rule for web.example.com with policy one_factor' },
+          ],
+        }),
+      });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_SERVICE_LINKS) });
+    }
+  });
+  await page.route('**/api/service-links/*', async (route) => {
+    const method = route.request().method();
+    if (method === 'DELETE') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'deleted' }) });
+    } else {
+      const body = JSON.parse(route.request().postData() || '{}');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          link: { id: 1, service_name: body.service_name, npm_instance_id: 1, npm_host_name: 'web.example.com', created_at: new Date().toISOString() },
+          authelia_actions: [],
+        }),
+      });
+    }
   });
   await page.route('**/api/authelia/alerts', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });

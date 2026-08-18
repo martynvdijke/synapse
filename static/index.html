@@ -886,6 +886,39 @@
                         <button class="btn btn-sm btn-outline-primary w-100" id="link-kuma-create-btn">Create</button>
                     </div>
                 </div>
+                <hr>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="link-ensure-missing" checked>
+                    <label class="form-check-label" for="link-ensure-missing">Auto-create missing targets</label>
+                    <div class="form-text">When saving, create the NPM proxy host / Kuma monitor / Authelia rule if they don't exist yet (derived from compose labels).</div>
+                </div>
+                <h6 class="fw-semibold">Authelia Access Rule</h6>
+                <div class="row g-2 mb-2 align-items-end">
+                    <div class="col-md-5">
+                        <select class="form-select form-select-sm" id="link-authelia-instance" aria-label="Authelia instance">
+                            <option value="">— Not linked —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select form-select-sm" id="link-authelia-policy" aria-label="Policy">
+                            <option value="">Instance default</option>
+                            <option value="bypass">bypass</option>
+                            <option value="one_factor">one_factor</option>
+                            <option value="two_factor">two_factor</option>
+                            <option value="deny">deny</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="link-authelia-ensure" checked>
+                            <label class="form-check-label" for="link-authelia-ensure">Ensure rule</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-none" id="link-authelia-actions">
+                    <h6 class="fw-semibold">Authelia Sync</h6>
+                    <div id="link-authelia-actions-list" class="small"></div>
+                </div>
             </div>
         </div>
     </div>

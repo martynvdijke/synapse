@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"golang.org/x/crypto/bcrypt"
 
+	"log/slog"
 	"synapse/internal/authelia"
 	"synapse/internal/db"
 	"synapse/internal/docker"
@@ -32,7 +33,6 @@ import (
 	"synapse/internal/npm"
 	synclib "synapse/internal/sync"
 	"synapse/internal/telemetry"
-	"log/slog"
 )
 
 var version = "1.17.5"
@@ -105,37 +105,37 @@ type App struct {
 
 func (app *App) settings() db.Settings {
 	return app.database.GetSettings(db.Settings{
-		ComposePath:           getEnv("COMPOSE_PATH", "docker-compose.yml"),
-		NPMHost:               getEnv("NPM_HOST", "http://nginx:81"),
-		NPMUser:               getEnv("NPM_USER", "admin"),
-		NPMPass:               getEnv("NPM_PASS", ""),
-		KumaURL:               getEnv("KUMA_URL", "http://uptime-kuma:3001"),
-		KumaUser:              getEnv("KUMA_USER", "admin"),
-		KumaPass:              getEnv("KUMA_PASS", ""),
-		AutheliaConfigPath:    getEnv("AUTHELIA_CONFIG_PATH", ""),
-		AutheliaDBPath:        getEnv("AUTHELIA_DB_PATH", ""),
-		AutheliaSyncEnabled:   getEnv("AUTHELIA_SYNC_ENABLED", "") == "true",
-		AutheliaDefaultPolicy: getEnv("AUTHELIA_DEFAULT_POLICY", authelia.DefaultPolicy),
-		OTelEndpoint:          getEnv("OTEL_ENDPOINT", ""),
-		OTelEnabled:           getEnv("OTEL_ENABLED", "") == "true",
-		EinkEnabled:           getEnv("EINK_ENABLED", "") == "true",
-		TrmnlApiToken:         getEnv("TRMNL_API_TOKEN", ""),
-		NotifyEnabled:         getEnv("NOTIFY_ENABLED", "") == "true",
-		NotifyIntervalMinutes: getEnvInt("NOTIFY_INTERVAL_MINUTES", 60),
-		GotifyURL:             getEnv("GOTIFY_URL", ""),
-		GotifyToken:           getEnv("GOTIFY_TOKEN", ""),
-		GotifyPriority:        getEnvInt("GOTIFY_PRIORITY", 5),
-		DockerSocket:          getEnv("DOCKER_SOCKET", ""),
-		DockerEventsEnabled:   getEnv("DOCKER_EVENTS_ENABLED", "") == "true",
+		ComposePath:               getEnv("COMPOSE_PATH", "docker-compose.yml"),
+		NPMHost:                   getEnv("NPM_HOST", "http://nginx:81"),
+		NPMUser:                   getEnv("NPM_USER", "admin"),
+		NPMPass:                   getEnv("NPM_PASS", ""),
+		KumaURL:                   getEnv("KUMA_URL", "http://uptime-kuma:3001"),
+		KumaUser:                  getEnv("KUMA_USER", "admin"),
+		KumaPass:                  getEnv("KUMA_PASS", ""),
+		AutheliaConfigPath:        getEnv("AUTHELIA_CONFIG_PATH", ""),
+		AutheliaDBPath:            getEnv("AUTHELIA_DB_PATH", ""),
+		AutheliaSyncEnabled:       getEnv("AUTHELIA_SYNC_ENABLED", "") == "true",
+		AutheliaDefaultPolicy:     getEnv("AUTHELIA_DEFAULT_POLICY", authelia.DefaultPolicy),
+		OTelEndpoint:              getEnv("OTEL_ENDPOINT", ""),
+		OTelEnabled:               getEnv("OTEL_ENABLED", "") == "true",
+		EinkEnabled:               getEnv("EINK_ENABLED", "") == "true",
+		TrmnlApiToken:             getEnv("TRMNL_API_TOKEN", ""),
+		NotifyEnabled:             getEnv("NOTIFY_ENABLED", "") == "true",
+		NotifyIntervalMinutes:     getEnvInt("NOTIFY_INTERVAL_MINUTES", 60),
+		GotifyURL:                 getEnv("GOTIFY_URL", ""),
+		GotifyToken:               getEnv("GOTIFY_TOKEN", ""),
+		GotifyPriority:            getEnvInt("GOTIFY_PRIORITY", 5),
+		DockerSocket:              getEnv("DOCKER_SOCKET", ""),
+		DockerEventsEnabled:       getEnv("DOCKER_EVENTS_ENABLED", "") == "true",
 		DockerEventsRetentionDays: getEnvInt("DOCKER_EVENTS_RETENTION_DAYS", 30),
-		ReconcileEnabled:      getEnv("RECONCILE_ENABLED", "") == "true",
-		ReconcileIntervalMinutes: getEnvInt("RECONCILE_INTERVAL_MINUTES", 60),
-		ReconcileDryRunDefault: getEnv("RECONCILE_DRY_RUN_DEFAULT", "true") == "true",
-		NotifyDockerDie:       getEnv("NOTIFY_DOCKER_DIE", "") == "true",
-		NotifyDockerHealth:    getEnv("NOTIFY_DOCKER_HEALTH", "") == "true",
-		NotifyDockerImage:     getEnv("NOTIFY_DOCKER_IMAGE", "") == "true",
-		NotifyReconcile:       getEnv("NOTIFY_RECONCILE", "") == "true",
-		NotifyCooldownMinutes: getEnvInt("NOTIFY_COOLDOWN_MINUTES", 5),
+		ReconcileEnabled:          getEnv("RECONCILE_ENABLED", "") == "true",
+		ReconcileIntervalMinutes:  getEnvInt("RECONCILE_INTERVAL_MINUTES", 60),
+		ReconcileDryRunDefault:    getEnv("RECONCILE_DRY_RUN_DEFAULT", "true") == "true",
+		NotifyDockerDie:           getEnv("NOTIFY_DOCKER_DIE", "") == "true",
+		NotifyDockerHealth:        getEnv("NOTIFY_DOCKER_HEALTH", "") == "true",
+		NotifyDockerImage:         getEnv("NOTIFY_DOCKER_IMAGE", "") == "true",
+		NotifyReconcile:           getEnv("NOTIFY_RECONCILE", "") == "true",
+		NotifyCooldownMinutes:     getEnvInt("NOTIFY_COOLDOWN_MINUTES", 5),
 	})
 }
 
@@ -338,6 +338,7 @@ func main() {
 
 		// Authelia endpoints
 		api.GET("/authelia/status", app.AutheliaStatus)
+		api.GET("/authelia/coverage", app.AutheliaCoverage)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
 		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
 		api.GET("/authelia/temp-access", app.AutheliaTempAccess)
@@ -494,28 +495,28 @@ func (app *App) GetSettings(c *gin.Context) {
 	autheliaInstances, _ := app.database.GetAutheliaInstances()
 	autheliaMigrated := len(autheliaInstances) > 0
 	c.JSON(http.StatusOK, gin.H{
-		"compose_path":            s.ComposePath,
-		"npm_host":                s.NPMHost,
-		"npm_user":                s.NPMUser,
-		"npm_pass":                mask(s.NPMPass),
-		"npm_migrated":            npmMigrated,
-		"authelia_config_path":    s.AutheliaConfigPath,
-		"authelia_db_path":        s.AutheliaDBPath,
-		"authelia_sync_enabled":   s.AutheliaSyncEnabled,
-		"authelia_default_policy": s.AutheliaDefaultPolicy,
-		"authelia_sync_overrides": s.AutheliaSyncOverrides,
-		"authelia_migrated":       autheliaMigrated,
-		"otel_endpoint":           s.OTelEndpoint,
-		"otel_enabled":            s.OTelEnabled,
-		"eink_enabled":            s.EinkEnabled,
-		"trmnl_api_token":         s.TrmnlApiToken,
-		"notify_enabled":          s.NotifyEnabled,
-		"notify_interval_minutes": s.NotifyIntervalMinutes,
-		"gotify_url":              s.GotifyURL,
-		"gotify_token":            mask(s.GotifyToken),
-		"gotify_priority":         s.GotifyPriority,
-		"docker_socket":           s.DockerSocket,
-		"docker_events_enabled":   s.DockerEventsEnabled,
+		"compose_path":                 s.ComposePath,
+		"npm_host":                     s.NPMHost,
+		"npm_user":                     s.NPMUser,
+		"npm_pass":                     mask(s.NPMPass),
+		"npm_migrated":                 npmMigrated,
+		"authelia_config_path":         s.AutheliaConfigPath,
+		"authelia_db_path":             s.AutheliaDBPath,
+		"authelia_sync_enabled":        s.AutheliaSyncEnabled,
+		"authelia_default_policy":      s.AutheliaDefaultPolicy,
+		"authelia_sync_overrides":      s.AutheliaSyncOverrides,
+		"authelia_migrated":            autheliaMigrated,
+		"otel_endpoint":                s.OTelEndpoint,
+		"otel_enabled":                 s.OTelEnabled,
+		"eink_enabled":                 s.EinkEnabled,
+		"trmnl_api_token":              s.TrmnlApiToken,
+		"notify_enabled":               s.NotifyEnabled,
+		"notify_interval_minutes":      s.NotifyIntervalMinutes,
+		"gotify_url":                   s.GotifyURL,
+		"gotify_token":                 mask(s.GotifyToken),
+		"gotify_priority":              s.GotifyPriority,
+		"docker_socket":                s.DockerSocket,
+		"docker_events_enabled":        s.DockerEventsEnabled,
 		"docker_events_retention_days": s.DockerEventsRetentionDays,
 		"reconcile_enabled":            s.ReconcileEnabled,
 		"reconcile_interval_minutes":   s.ReconcileIntervalMinutes,
@@ -566,42 +567,51 @@ func (app *App) SaveSettings(c *gin.Context) {
 		logging.LogWarn("app", "Legacy authelia_sync_overrides setting is deprecated, use Authelia API instead")
 	}
 	if v, ok := raw["compose_path"]; ok {
-		var val string; json.Unmarshal(v, &val)
+		var val string
+		json.Unmarshal(v, &val)
 		pairs["compose_path"] = val
 	}
 	if v, ok := raw["otel_endpoint"]; ok {
-		var val string; json.Unmarshal(v, &val)
+		var val string
+		json.Unmarshal(v, &val)
 		pairs["otel_endpoint"] = val
 	}
 	if v, ok := raw["otel_enabled"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["otel_enabled"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["eink_enabled"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["eink_enabled"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["trmnl_api_token"]; ok {
-		var val string; json.Unmarshal(v, &val)
+		var val string
+		json.Unmarshal(v, &val)
 		pairs["trmnl_api_token"] = val
 	}
 	if v, ok := raw["notify_enabled"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["notify_enabled"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["notify_interval_minutes"]; ok {
-		var val int; json.Unmarshal(v, &val)
+		var val int
+		json.Unmarshal(v, &val)
 		if val < 1 {
 			val = 1
 		}
 		pairs["notify_interval_minutes"] = strconv.Itoa(val)
 	}
 	if v, ok := raw["gotify_url"]; ok {
-		var val string; json.Unmarshal(v, &val)
+		var val string
+		json.Unmarshal(v, &val)
 		pairs["gotify_url"] = val
 	}
 	if v, ok := raw["gotify_token"]; ok {
-		var val string; json.Unmarshal(v, &val)
+		var val string
+		json.Unmarshal(v, &val)
 		// Masked token means "keep current" — skip writing so the stored
 		// value is preserved. An explicit empty string clears the token.
 		if val != "****" {
@@ -609,7 +619,8 @@ func (app *App) SaveSettings(c *gin.Context) {
 		}
 	}
 	if v, ok := raw["gotify_priority"]; ok {
-		var val int; json.Unmarshal(v, &val)
+		var val int
+		json.Unmarshal(v, &val)
 		if val < 0 {
 			val = 0
 		}
@@ -621,15 +632,18 @@ func (app *App) SaveSettings(c *gin.Context) {
 
 	// Docker event tracking + reconcile settings
 	if v, ok := raw["docker_socket"]; ok {
-		var val string; json.Unmarshal(v, &val)
+		var val string
+		json.Unmarshal(v, &val)
 		pairs["docker_socket"] = val
 	}
 	if v, ok := raw["docker_events_enabled"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["docker_events_enabled"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["docker_events_retention_days"]; ok {
-		var val int; json.Unmarshal(v, &val)
+		var val int
+		json.Unmarshal(v, &val)
 		if val < 1 {
 			val = 1
 		}
@@ -639,38 +653,46 @@ func (app *App) SaveSettings(c *gin.Context) {
 		pairs["docker_events_retention_days"] = strconv.Itoa(val)
 	}
 	if v, ok := raw["reconcile_enabled"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["reconcile_enabled"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["reconcile_interval_minutes"]; ok {
-		var val int; json.Unmarshal(v, &val)
+		var val int
+		json.Unmarshal(v, &val)
 		if val < 1 {
 			val = 1
 		}
 		pairs["reconcile_interval_minutes"] = strconv.Itoa(val)
 	}
 	if v, ok := raw["reconcile_dry_run_default"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["reconcile_dry_run_default"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["notify_docker_die"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["notify_docker_die"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["notify_docker_health"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["notify_docker_health"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["notify_docker_image"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["notify_docker_image"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["notify_reconcile"]; ok {
-		var val bool; json.Unmarshal(v, &val)
+		var val bool
+		json.Unmarshal(v, &val)
 		pairs["notify_reconcile"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["notify_cooldown_minutes"]; ok {
-		var val int; json.Unmarshal(v, &val)
+		var val int
+		json.Unmarshal(v, &val)
 		if val < 1 {
 			val = 1
 		}
@@ -1349,16 +1371,16 @@ func (app *App) Status(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"docker_count":       dockerCount,
-		"npm_count":          npmCount,
-		"npm_error":          npmErr,
-		"kuma_error":         kumaErr,
-		"docker_error":       dockerErr,
-		"monitor_count":      monitorCount,
-		"last_docker":        lastDocker,
-		"last_npm":           lastNPM,
-		"running":            app.running,
-		"connection_health":  connectionHealth,
+		"docker_count":      dockerCount,
+		"npm_count":         npmCount,
+		"npm_error":         npmErr,
+		"kuma_error":        kumaErr,
+		"docker_error":      dockerErr,
+		"monitor_count":     monitorCount,
+		"last_docker":       lastDocker,
+		"last_npm":          lastNPM,
+		"running":           app.running,
+		"connection_health": connectionHealth,
 	})
 }
 
@@ -2562,6 +2584,25 @@ func (app *App) resolveNPMEntries(npmInstanceIDs string) []npm.ProxyEntry {
 	return allEntries
 }
 
+// composeAutheliaEntries returns compose-derived Authelia entries for the
+// configured compose path. On read failure it logs a warning and returns nil
+// so sync degrades to NPM-only (spec: Compose path unreadable).
+func (app *App) composeAutheliaEntries() []npm.ProxyEntry {
+	s := app.settings()
+	if s.ComposePath == "" {
+		return nil
+	}
+	services, err := synclib.LoadServices(s.ComposePath)
+	if err != nil {
+		logging.LogWarn("app", "compose path unreadable, continuing with NPM entries only",
+			slog.String("compose_path", s.ComposePath),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	return synclib.ComposeAutheliaEntries(services)
+}
+
 // AutheliaStatus returns the current state of Authelia integration.
 // Accepts optional ?instance_id=:id to scope to a single instance.
 func (app *App) AutheliaStatus(c *gin.Context) {
@@ -2604,6 +2645,9 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 				allNPMLists = append(allNPMLists, e.CNAME)
 			}
 		}
+		for _, e := range app.composeAutheliaEntries() {
+			allNPMLists = append(allNPMLists, e.CNAME)
+		}
 		matched, missing := authelia.CompareCNAMEs(allNPMLists, allDomains)
 		c.JSON(http.StatusOK, gin.H{
 			"configured":     true,
@@ -2642,6 +2686,9 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 	for _, p := range proxies {
 		npmCNAMEs = append(npmCNAMEs, p.CNAME)
 	}
+	for _, e := range app.composeAutheliaEntries() {
+		npmCNAMEs = append(npmCNAMEs, e.CNAME)
+	}
 
 	matched, missing := authelia.CompareCNAMEs(npmCNAMEs, autheliaDomains)
 
@@ -2674,7 +2721,7 @@ func (app *App) buildAutheliaInstanceStatus(c *gin.Context, inst *db.AutheliaIns
 	ac, err := authelia.ParseConfig(inst.ConfigPath)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"configured": true,
+			"configured":    true,
 			"instance_id":   inst.ID,
 			"instance_name": inst.Name,
 			"error":         err.Error(),
@@ -2687,6 +2734,9 @@ func (app *App) buildAutheliaInstanceStatus(c *gin.Context, inst *db.AutheliaIns
 	npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
 	var npmCNAMEs []string
 	for _, e := range npmEntries {
+		npmCNAMEs = append(npmCNAMEs, e.CNAME)
+	}
+	for _, e := range app.composeAutheliaEntries() {
 		npmCNAMEs = append(npmCNAMEs, e.CNAME)
 	}
 
@@ -2709,6 +2759,76 @@ func (app *App) buildAutheliaInstanceStatus(c *gin.Context, inst *db.AutheliaIns
 		"sync_enabled":   inst.AutoSync,
 		"default_policy": inst.DefaultPolicy,
 	})
+}
+
+// AutheliaCoverage reports per-instance coverage of compose-derived service
+// domains in Authelia access_control rules. Returns an empty list when the
+// compose path is unreadable.
+func (app *App) AutheliaCoverage(c *gin.Context) {
+	instances, err := app.database.GetEnabledAutheliaInstances()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	services, cerr := synclib.LoadServices(app.settings().ComposePath)
+	if cerr != nil {
+		logging.LogWarn("app", "compose path unreadable, no Authelia coverage data",
+			slog.String("error", cerr.Error()),
+		)
+		c.JSON(http.StatusOK, gin.H{"instances": []any{}})
+		return
+	}
+	composeDomains := synclib.ComposeAutheliaEntries(services)
+
+	type domainCoverage struct {
+		Domain  string `json:"domain"`
+		Service string `json:"service"`
+		Covered bool   `json:"covered"`
+		Policy  string `json:"policy"`
+	}
+	type instanceCoverage struct {
+		InstanceID   int64            `json:"instance_id"`
+		InstanceName string           `json:"instance_name"`
+		Domains      []domainCoverage `json:"domains"`
+	}
+
+	result := make([]instanceCoverage, 0, len(instances))
+	for _, inst := range instances {
+		ac, aerr := authelia.ParseConfig(inst.ConfigPath)
+		if aerr != nil {
+			continue
+		}
+		var overrides map[string]string
+		if inst.Overrides != "" && inst.Overrides != "{}" {
+			json.Unmarshal([]byte(inst.Overrides), &overrides)
+		}
+		policy := inst.DefaultPolicy
+		if policy == "" {
+			policy = authelia.DefaultPolicy
+		}
+		existingDomains := authelia.GetDomains(ac)
+
+		domains := make([]domainCoverage, 0, len(composeDomains))
+		for _, e := range composeDomains {
+			p := policy
+			if ov, ok := overrides[e.CNAME]; ok && ov != "" {
+				p = ov
+			}
+			domains = append(domains, domainCoverage{
+				Domain:  e.CNAME,
+				Service: e.Container,
+				Covered: authelia.DomainMatches(e.CNAME, existingDomains) != "",
+				Policy:  p,
+			})
+		}
+		result = append(result, instanceCoverage{
+			InstanceID:   inst.ID,
+			InstanceName: inst.Name,
+			Domains:      domains,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"instances": result})
 }
 
 // AutheliaAlerts returns all authelia alerts.
@@ -2967,6 +3087,7 @@ func (app *App) AutheliaSync(c *gin.Context) {
 			slog.String("error", err.Error()),
 		)
 	}
+	npmEntries = append(npmEntries, app.composeAutheliaEntries()...)
 
 	var overrides map[string]string
 	if s.AutheliaSyncOverrides != "" {
@@ -3028,6 +3149,7 @@ func (app *App) AutheliaSync(c *gin.Context) {
 // syncAutheliaInstance syncs a single Authelia instance and returns the HTTP response.
 func (app *App) syncAutheliaInstance(c *gin.Context, inst *db.AutheliaInstance, dryRun bool, start time.Time) {
 	npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
+	npmEntries = append(npmEntries, app.composeAutheliaEntries()...)
 
 	var overrides map[string]string
 	if inst.Overrides != "" && inst.Overrides != "{}" {
@@ -3093,6 +3215,7 @@ func (app *App) syncAutheliaInstance(c *gin.Context, inst *db.AutheliaInstance, 
 // syncAutheliaInstanceInternal runs a sync for a single instance without writing an HTTP response.
 func (app *App) syncAutheliaInstanceInternal(inst *db.AutheliaInstance, dryRun bool) gin.H {
 	npmEntries := app.resolveNPMEntries(inst.NPMInstanceIDs)
+	npmEntries = append(npmEntries, app.composeAutheliaEntries()...)
 
 	var overrides map[string]string
 	if inst.Overrides != "" && inst.Overrides != "{}" {

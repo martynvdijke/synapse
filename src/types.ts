@@ -126,6 +126,27 @@ export interface ServiceLinkInput {
   kuma_instance_id?: number | null;
   kuma_monitor_id?: number | null;
   kuma_monitor_name?: string;
+  ensure_missing?: boolean;
+  authelia_instance_id?: number | null;
+  authelia_policy?: string;
+  dry_run?: boolean;
+}
+
+export interface AutheliaDomainCoverage {
+  domain: string;
+  service: string;
+  covered: boolean;
+  policy: string;
+}
+
+export interface AutheliaCoverage {
+  instance_id: number;
+  instance_name: string;
+  domains: AutheliaDomainCoverage[];
+}
+
+export interface AutheliaCoverageResponse {
+  instances: AutheliaCoverage[];
 }
 
 export interface CreateMonitorInput {

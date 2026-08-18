@@ -196,6 +196,84 @@ test.describe('NPM tab — proxies table', () => {
   });
 });
 
+test.describe('Docker tab — service links & Authelia coverage', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupBaseMocks(page);
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('stat-docker');
+      return el && el.textContent !== '' && !el.querySelector('.skeleton');
+    }, { timeout: 10000 });
+  });
+
+  test('docker tab shows Authelia coverage chip for service', async ({ page }) => {
+    await page.click('#tab-btn-docker');
+    await page.waitForFunction(() => {
+      const tbody = document.getElementById('docker-tbody');
+      return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelector('td[data-label]');
+    }, { timeout: 10000 });
+    const firstRow = page.locator('#docker-tbody tr.docker-service-row').first();
+    await expect(firstRow).toContainText('web-app');
+    // MOCK_AUTHELIA_COVERAGE reports web-app as uncovered -> warning "missing" chip
+    await expect(firstRow.locator('.badge.bg-warning')).toContainText('missing');
+  });
+
+  test('link editor auto-creates missing targets and ensures Authelia rule', async ({ page }) => {
+    let capturedPayload: any = null;
+    // Override the service-links route (registered later -> takes precedence) to capture the save payload.
+    await page.route('**/api/service-links', async (route) => {
+      if (route.request().method() === 'POST') {
+        capturedPayload = JSON.parse(route.request().postData() || '{}');
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            link: { id: 1, service_name: capturedPayload.service_name, npm_instance_id: 1, npm_host_name: 'web.example.com', kuma_instance_id: 1, kuma_monitor_id: 1, kuma_monitor_name: 'Web App Monitor', created_at: new Date().toISOString() },
+            authelia_actions: [{ action: 'add', cname: 'web.example.com', policy: 'one_factor', message: 'Added rule for web.example.com with policy one_factor' }],
+          }),
+        });
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      }
+    });
+
+    await page.click('#tab-btn-docker');
+    await page.waitForFunction(() => {
+      const tbody = document.getElementById('docker-tbody');
+      return tbody && !tbody.querySelector('.skeleton-row') && tbody.querySelector('td[data-label]');
+    }, { timeout: 10000 });
+
+    // Open the link editor for the first service
+    await page.click('#docker-tbody tr.docker-service-row button[title="Link to NPM / Kuma"]');
+    await expect(page.locator('#link-editor-modal')).toHaveClass(/show/);
+
+    // "Auto-create missing targets" is checked by default
+    await expect(page.locator('#link-ensure-missing')).toBeChecked();
+
+    // Instance dropdowns are populated; pick an NPM, Kuma and Authelia instance
+    await page.waitForFunction(() => (document.getElementById('link-npm-instance') as HTMLSelectElement).options.length > 1);
+    await page.selectOption('#link-npm-instance', '1');
+    await page.selectOption('#link-kuma-instance', '1');
+    await page.waitForFunction(() => (document.getElementById('link-authelia-instance') as HTMLSelectElement).options.length > 1);
+    await page.selectOption('#link-authelia-instance', '1');
+
+    await page.click('#link-save-btn');
+
+    // Sync actions panel becomes visible with the authelia action details
+    const actionsBox = page.locator('#link-authelia-actions');
+    await expect(actionsBox).not.toHaveClass(/d-none/);
+    await expect(actionsBox).toContainText('web.example.com');
+    await expect(actionsBox).toContainText('Added rule for web.example.com with policy one_factor');
+
+    // Payload carried ensure_missing + authelia fields
+    expect(capturedPayload).not.toBeNull();
+    expect(capturedPayload.service_name).toBe('web-app');
+    expect(capturedPayload.ensure_missing).toBe(true);
+    expect(capturedPayload.authelia_instance_id).toBe(1);
+    expect(capturedPayload.dry_run).toBe(false);
+  });
+});
+
 test.describe('Sync History tab', () => {
   test.beforeEach(async ({ page }) => {
     await setupBaseMocks(page);

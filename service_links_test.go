@@ -183,6 +183,7 @@ func TestServiceLinksCRUD(t *testing.T) {
 	}
 	var created map[string]any
 	json.NewDecoder(w.Body).Decode(&created)
+	created = created["link"].(map[string]any)
 	if created["service_name"] != "web" {
 		t.Errorf("expected service_name web, got %v", created["service_name"])
 	}
@@ -229,6 +230,7 @@ func TestServiceLinksCRUD(t *testing.T) {
 	}
 	var updated map[string]any
 	json.NewDecoder(w.Body).Decode(&updated)
+	updated = updated["link"].(map[string]any)
 	if updated["npm_host_name"] != "api.example.com" {
 		t.Errorf("expected npm_host_name api.example.com after update, got %v", updated["npm_host_name"])
 	}
@@ -529,6 +531,7 @@ func TestKumaMonitorRenameAndDeletePropagateToLinks(t *testing.T) {
 	}
 	var link map[string]any
 	json.NewDecoder(w.Body).Decode(&link)
+	link = link["link"].(map[string]any)
 	if link["kuma_monitor_name"] != "web-monitor" {
 		t.Fatalf("expected kuma_monitor_name web-monitor, got %v", link["kuma_monitor_name"])
 	}

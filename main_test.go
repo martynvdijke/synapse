@@ -903,6 +903,7 @@ func setupRouter(app *App) *gin.Engine {
 		api.POST("/notify/test", app.NotifyTest)
 		api.GET("/notify/missing", app.NotifyMissing)
 		api.GET("/authelia/status", app.AutheliaStatus)
+		api.GET("/authelia/coverage", app.AutheliaCoverage)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
 		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
 		api.GET("/authelia/temp-access", app.AutheliaTempAccess)
@@ -947,7 +948,7 @@ func TestNPMInstancesHandler_Test_2FAError(t *testing.T) {
 		if r.URL.Path == "/api/tokens" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
-				"requires_2fa": true,
+				"requires_2fa":    true,
 				"challenge_token": "challenge-jwt",
 			})
 			return
@@ -1469,4 +1470,258 @@ func fakeDockerEngine(t *testing.T, containers []docker.ContainerSummary) *docke
 	}))
 	t.Cleanup(srv.Close)
 	return docker.NewWithClient(srv.URL, srv.Client())
+}
+
+// ─── Service link ensure_missing + Authelia integration tests ──────
+
+func TestCreateServiceLink_EnsureMissing_AutoCreates(t *testing.T) {
+	app, r := setupTest(t)
+	t.Setenv("COMPOSE_PATH", "testdata/docker-compose-ensure-missing.yml")
+	sessionID := createTestSession(t, app)
+
+	var hosts []map[string]any
+	npmSrv := mockNPMServer(t, &hosts)
+	npmInst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "npm", URL: npmSrv.URL, Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed npm: %v", err)
+	}
+
+	var monitors []kuma.KumaMonitor
+	added := installKumaHooks(t, &monitors)
+	kumaInst, err := app.database.CreateKumaInstance(&db.KumaInstance{Name: "kuma", URL: "http://127.0.0.1:1", Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed kuma: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"service_name":"web","npm_instance_id":%d,"npm_host_name":"","kuma_instance_id":%d,"kuma_monitor_id":0,"kuma_monitor_name":"","ensure_missing":true}`,
+		npmInst.ID, kumaInst.ID)
+	req := authRequest(t, "POST", "/api/service-links", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	link, _ := resp["link"].(map[string]any)
+	if link["npm_host_name"] != "app.example.com" {
+		t.Errorf("expected npm_host_name app.example.com, got %v", link["npm_host_name"])
+	}
+	if link["kuma_monitor_name"] != "web" {
+		t.Errorf("expected kuma_monitor_name web, got %v", link["kuma_monitor_name"])
+	}
+	if len(hosts) != 1 {
+		t.Fatalf("expected 1 created NPM host, got %d", len(hosts))
+	}
+	dn, _ := hosts[0]["domain_names"].([]any)
+	if len(dn) != 1 || dn[0] != "app.example.com" {
+		t.Errorf("expected created host domain_names [app.example.com], got %v", hosts[0]["domain_names"])
+	}
+	if len(*added) != 1 {
+		t.Fatalf("expected 1 created Kuma monitor, got %d", len(*added))
+	}
+	if (*added)[0].Name != "web" || (*added)[0].Type != "http" {
+		t.Errorf("expected http monitor named web, got %+v", (*added)[0])
+	}
+}
+
+func TestCreateServiceLink_EnsureMissing_Off_Returns400(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	var hosts []map[string]any
+	npmSrv := mockNPMServer(t, &hosts)
+	npmInst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "npm", URL: npmSrv.URL, Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed npm: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"service_name":"web","npm_instance_id":%d,"npm_host_name":"missing.example.com","ensure_missing":false}`, npmInst.ID)
+	req := authRequest(t, "POST", "/api/service-links", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(hosts) != 0 {
+		t.Errorf("expected no hosts to be created, got %d", len(hosts))
+	}
+}
+
+func TestCreateServiceLink_EnsureMissing_CreateFailure_502_NotPersisted(t *testing.T) {
+	app, r := setupTest(t)
+	t.Setenv("COMPOSE_PATH", "testdata/docker-compose-ensure-missing.yml")
+	sessionID := createTestSession(t, app)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/tokens":
+			fmt.Fprintf(w, `{"token":"test-token","expires":%q}`, time.Now().Add(24*time.Hour).Format(time.RFC3339))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/nginx/proxy-hosts":
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/nginx/proxy-hosts":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":"boom"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	npmInst, err := app.database.CreateNPMInstance(&db.NPMInstance{Name: "npm", URL: srv.URL, Username: "admin", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed npm: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"service_name":"web","npm_instance_id":%d,"npm_host_name":"","ensure_missing":true}`, npmInst.ID)
+	req := authRequest(t, "POST", "/api/service-links", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// No link should have been persisted.
+	req2 := authRequest(t, "GET", "/api/service-links", "", sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	var links []map[string]any
+	if err := json.NewDecoder(w2.Body).Decode(&links); err != nil {
+		t.Fatalf("decode links: %v", err)
+	}
+	if len(links) != 0 {
+		t.Errorf("expected no persisted links, got %d", len(links))
+	}
+}
+
+func TestCreateServiceLink_Authelia_InvalidInstance_400(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	req := authRequest(t, "POST", "/api/service-links", `{"service_name":"web","authelia_instance_id":99999}`, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateServiceLink_Authelia_DryRunReturnsPlannedActions(t *testing.T) {
+	app, r := setupTest(t)
+	t.Setenv("COMPOSE_PATH", "testdata/docker-compose-ensure-missing.yml")
+	sessionID := createTestSession(t, app)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yml")
+	cfgContent := "access_control:\n  default_policy: two_factor\n  rules: []\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	inst, err := app.database.CreateAutheliaInstance(&db.AutheliaInstance{Name: "auth", ConfigPath: cfgPath, DefaultPolicy: "two_factor", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed authelia: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"service_name":"web","authelia_instance_id":%d,"authelia_policy":"bypass","dry_run":true}`, inst.ID)
+	req := authRequest(t, "POST", "/api/service-links", body, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	actions, _ := resp["authelia_actions"].([]any)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 authelia action, got %d: %s", len(actions), w.Body.String())
+	}
+	act, _ := actions[0].(map[string]any)
+	if act["action"] != "add" || act["cname"] != "app.example.com" || act["policy"] != "bypass" {
+		t.Errorf("unexpected action: %v", act)
+	}
+
+	// Dry run must not have written to the config file.
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(after) != cfgContent {
+		t.Errorf("config file was modified by dry run:\n%s", string(after))
+	}
+}
+
+func TestAutheliaCoverage_Endpoint(t *testing.T) {
+	app, r := setupTest(t)
+	t.Setenv("COMPOSE_PATH", "testdata/docker-compose-ensure-missing.yml")
+	sessionID := createTestSession(t, app)
+
+	dir := t.TempDir()
+	coveredCfg := filepath.Join(dir, "covered.yml")
+	os.WriteFile(coveredCfg, []byte("access_control:\n  default_policy: one_factor\n  rules:\n    - domain: app.example.com\n      policy: two_factor\n"), 0o644)
+	missingCfg := filepath.Join(dir, "missing.yml")
+	os.WriteFile(missingCfg, []byte("access_control:\n  default_policy: one_factor\n  rules: []\n"), 0o644)
+
+	i1, err := app.database.CreateAutheliaInstance(&db.AutheliaInstance{Name: "covered", ConfigPath: coveredCfg, DefaultPolicy: "one_factor", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed authelia: %v", err)
+	}
+	i2, err := app.database.CreateAutheliaInstance(&db.AutheliaInstance{Name: "missing", ConfigPath: missingCfg, DefaultPolicy: "one_factor", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed authelia: %v", err)
+	}
+
+	req := authRequest(t, "GET", "/api/authelia/coverage", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Instances []struct {
+			InstanceID   int64  `json:"instance_id"`
+			InstanceName string `json:"instance_name"`
+			Domains      []struct {
+				Domain  string `json:"domain"`
+				Service string `json:"service"`
+				Covered bool   `json:"covered"`
+				Policy  string `json:"policy"`
+			} `json:"domains"`
+		} `json:"instances"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Instances) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(resp.Instances))
+	}
+	byID := map[int64]struct {
+		Covered bool
+		Policy  string
+	}{}
+	for _, inst := range resp.Instances {
+		if len(inst.Domains) != 1 {
+			t.Fatalf("instance %s: expected 1 domain, got %d", inst.InstanceName, len(inst.Domains))
+		}
+		d := inst.Domains[0]
+		if d.Domain != "app.example.com" || d.Service != "web" {
+			t.Errorf("instance %s: unexpected domain entry %+v", inst.InstanceName, d)
+		}
+		byID[inst.InstanceID] = struct {
+			Covered bool
+			Policy  string
+		}{d.Covered, d.Policy}
+	}
+	if !byID[i1.ID].Covered {
+		t.Errorf("expected instance %d (covered) to report covered=true", i1.ID)
+	}
+	if byID[i2.ID].Covered {
+		t.Errorf("expected instance %d (missing) to report covered=false", i2.ID)
+	}
+	if byID[i2.ID].Policy != "one_factor" {
+		t.Errorf("expected missing instance policy one_factor, got %s", byID[i2.ID].Policy)
+	}
 }

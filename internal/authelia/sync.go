@@ -134,3 +134,11 @@ func hasAddActions(actions []SyncAction) bool {
 	}
 	return false
 }
+
+// EnsureDomainRules ensures Authelia access_control rules exist for the given
+// entries, creating any that are missing. It forces autoSync on so missing
+// entries are added (with dryRun, "add" actions are reported as "Would add..."
+// and the config is not written).
+func EnsureDomainRules(autheliaPath, dbPath string, entries []npm.ProxyEntry, defaultPolicy string, overrides map[string]string, dryRun bool) ([]SyncAction, error) {
+	return SyncConfig(autheliaPath, dbPath, entries, defaultPolicy, overrides, true, dryRun)
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"synapse/internal/authelia"
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	"synapse/internal/logging"
@@ -68,6 +69,16 @@ type serviceLinkInput struct {
 	KumaInstanceID  *int   `json:"kuma_instance_id"`
 	KumaMonitorID   *int   `json:"kuma_monitor_id"`
 	KumaMonitorName string `json:"kuma_monitor_name"`
+
+	// AutheliaInstanceID, when set, ensures an Authelia access_control rule
+	// exists for the service's derived domains as part of the link save.
+	AutheliaInstanceID *int   `json:"authelia_instance_id"`
+	AutheliaPolicy     string `json:"authelia_policy"`
+	DryRun             *bool  `json:"dry_run"`
+
+	// EnsureMissing, when true, auto-creates missing NPM hosts / Kuma monitors
+	// (derived from the compose service) instead of failing the link.
+	EnsureMissing bool `json:"ensure_missing"`
 }
 
 func (app *App) instanceNameMaps() (npmNames, kumaNames map[int]string) {
@@ -120,12 +131,12 @@ func (app *App) loadComposeService(name string) (synclib.ServiceDef, error) {
 
 // fetchNPMHostByName resolves a proxy host by one of its domain names and
 // returns the cached-detail JSON snapshot on the link.
-func (app *App) resolveNPMTarget(link *db.ServiceLink, instanceID int, hostName string) error {
+func (app *App) resolveNPMTarget(link *db.ServiceLink, instanceID int, hostName, serviceName string, ensureMissing bool) error {
 	client, err := app.npmRegistry.Get(instanceID)
 	if err != nil {
 		return &apiError{http.StatusBadRequest, err.Error()}
 	}
-	if strings.TrimSpace(hostName) == "" {
+	if strings.TrimSpace(hostName) == "" && !ensureMissing {
 		return &apiError{http.StatusBadRequest, "npm_host_name is required when linking to an NPM instance"}
 	}
 	hosts, err := client.GetProxyHostsFull()
@@ -143,17 +154,43 @@ func (app *App) resolveNPMTarget(link *db.ServiceLink, instanceID int, hostName 
 			}
 		}
 	}
+
+	// Target not found: auto-create from the compose service when requested.
+	if ensureMissing && serviceName != "" {
+		svc, err := app.loadComposeService(serviceName)
+		if err != nil {
+			return &apiError{http.StatusBadRequest, err.Error()}
+		}
+		cfg, ok := synclib.DeriveNPMHost(serviceName, svc)
+		if !ok || len(cfg.DomainNames) == 0 {
+			return &apiError{http.StatusBadRequest, fmt.Sprintf("could not derive a domain for service %q (add a synapse.domains label)", serviceName)}
+		}
+		created, err := client.CreateProxyHost(cfg)
+		if err != nil {
+			return &apiError{http.StatusBadGateway, fmt.Sprintf("failed to create NPM proxy host for %q: %v", serviceName, err)}
+		}
+		link.NPMInstanceID = instanceID
+		if len(created.DomainNames) > 0 {
+			link.NPMHostName = created.DomainNames[0]
+		} else {
+			link.NPMHostName = cfg.DomainNames[0]
+		}
+		details, _ := json.Marshal(created)
+		link.NPMDetails = string(details)
+		return nil
+	}
+
 	return &apiError{http.StatusBadRequest, fmt.Sprintf("NPM proxy host %q not found", hostName)}
 }
 
 // resolveKumaTarget resolves a Kuma monitor by id and/or name and caches its
 // details on the link.
-func (app *App) resolveKumaTarget(link *db.ServiceLink, instanceID, monitorID int, monitorName string) error {
+func (app *App) resolveKumaTarget(link *db.ServiceLink, instanceID, monitorID int, monitorName, serviceName string, ensureMissing bool) error {
 	client, err := app.kumaRegistry.Get(instanceID)
 	if err != nil {
 		return &apiError{http.StatusBadRequest, err.Error()}
 	}
-	if monitorID <= 0 && strings.TrimSpace(monitorName) == "" {
+	if monitorID <= 0 && strings.TrimSpace(monitorName) == "" && !ensureMissing {
 		return &apiError{http.StatusBadRequest, "kuma_monitor_id or kuma_monitor_name is required when linking to a Kuma instance"}
 	}
 	monitors, err := client.QueryMonitorsViaSocketIO()
@@ -179,7 +216,86 @@ func (app *App) resolveKumaTarget(link *db.ServiceLink, instanceID, monitorID in
 			return nil
 		}
 	}
+
+	// Target not found: auto-create from the compose service when requested.
+	if ensureMissing && serviceName != "" {
+		svc, err := app.loadComposeService(serviceName)
+		if err != nil {
+			return &apiError{http.StatusBadRequest, err.Error()}
+		}
+		monitorType, url, container, _ := synclib.DeriveKumaMonitor(serviceName, svc)
+		if monitorType != "http" && monitorType != "docker" {
+			return &apiError{http.StatusBadRequest, fmt.Sprintf("could not derive a monitor for service %q", serviceName)}
+		}
+
+		// Prefer an existing monitor with the derived display name.
+		for i := range monitors {
+			if monitors[i].Name == serviceName {
+				link.KumaInstanceID = instanceID
+				link.KumaMonitorID = monitors[i].ID
+				link.KumaMonitorName = monitors[i].Name
+				details, _ := json.Marshal(&monitors[i])
+				link.KumaDetails = string(details)
+				return nil
+			}
+		}
+
+		id, err := client.AddMonitorViaSocketIO(monitorType, serviceName, url, container, 0)
+		if err != nil {
+			return &apiError{http.StatusBadGateway, fmt.Sprintf("failed to create Kuma monitor for %q: %v", serviceName, err)}
+		}
+		created := kuma.KumaMonitor{
+			ID:              id,
+			Name:            serviceName,
+			Type:            monitorType,
+			URL:             url,
+			DockerContainer: container,
+			Interval:        60,
+			RetryInterval:   0,
+			MaxRetries:      0,
+		}
+		link.KumaInstanceID = instanceID
+		link.KumaMonitorID = id
+		link.KumaMonitorName = serviceName
+		details, _ := json.Marshal(&created)
+		link.KumaDetails = string(details)
+		return nil
+	}
+
 	return &apiError{http.StatusBadRequest, "Kuma monitor not found on the target instance"}
+}
+
+// ensureAutheliaRule ensures an Authelia access_control rule exists for the
+// service's derived domains. Returns the sync actions performed. The instance
+// must exist and be enabled (caller maps errors to a 400 response). The
+// effective policy is the per-link policy when set, otherwise the instance's
+// default policy; domain-keyed instance overrides still win.
+func (app *App) ensureAutheliaRule(serviceName string, instanceID int, policy string, dryRun bool) ([]authelia.SyncAction, error) {
+	inst, err := app.database.GetAutheliaInstance(int64(instanceID))
+	if err != nil || inst == nil || !inst.Enabled {
+		return nil, fmt.Errorf("authelia instance not found or disabled")
+	}
+	svc, err := app.loadComposeService(serviceName)
+	if err != nil {
+		return nil, err
+	}
+	domains := synclib.ServiceDomains(serviceName, svc)
+	if len(domains) == 0 {
+		return nil, fmt.Errorf("could not derive domains for service %q", serviceName)
+	}
+	entries := make([]npm.ProxyEntry, 0, len(domains))
+	for _, d := range domains {
+		entries = append(entries, npm.ProxyEntry{CNAME: d, Container: serviceName})
+	}
+	var overrides map[string]string
+	if inst.Overrides != "" && inst.Overrides != "{}" {
+		json.Unmarshal([]byte(inst.Overrides), &overrides)
+	}
+	effectiveDefault := inst.DefaultPolicy
+	if policy != "" {
+		effectiveDefault = policy
+	}
+	return authelia.EnsureDomainRules(inst.ConfigPath, inst.DBPath, entries, effectiveDefault, overrides, dryRun)
 }
 
 // ServiceLinks lists all persisted service links with resolved instance names.
@@ -220,16 +336,26 @@ func (app *App) CreateServiceLink(c *gin.Context) {
 		CreatedAt:   time.Now(),
 	}
 	if input.NPMInstanceID != nil && *input.NPMInstanceID > 0 {
-		if err := app.resolveNPMTarget(&link, *input.NPMInstanceID, input.NPMHostName); err != nil {
+		if err := app.resolveNPMTarget(&link, *input.NPMInstanceID, input.NPMHostName, input.ServiceName, input.EnsureMissing); err != nil {
 			c.JSON(apiStatus(err), gin.H{"error": err.Error()})
 			return
 		}
 	}
 	if input.KumaInstanceID != nil && *input.KumaInstanceID > 0 {
-		if err := app.resolveKumaTarget(&link, *input.KumaInstanceID, deref(input.KumaMonitorID), input.KumaMonitorName); err != nil {
+		if err := app.resolveKumaTarget(&link, *input.KumaInstanceID, deref(input.KumaMonitorID), input.KumaMonitorName, input.ServiceName, input.EnsureMissing); err != nil {
 			c.JSON(apiStatus(err), gin.H{"error": err.Error()})
 			return
 		}
+	}
+
+	var autheliaActions []authelia.SyncAction
+	if input.AutheliaInstanceID != nil && *input.AutheliaInstanceID > 0 {
+		actions, err := app.ensureAutheliaRule(input.ServiceName, *input.AutheliaInstanceID, input.AutheliaPolicy, derefBool(input.DryRun))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		autheliaActions = actions
 	}
 
 	created, err := app.database.UpsertServiceLink(&link)
@@ -238,7 +364,10 @@ func (app *App) CreateServiceLink(c *gin.Context) {
 		return
 	}
 	npmNames, kumaNames := app.instanceNameMaps()
-	c.JSON(http.StatusOK, toServiceLinkView(*created, npmNames, kumaNames))
+	c.JSON(http.StatusOK, gin.H{
+		"link":             toServiceLinkView(*created, npmNames, kumaNames),
+		"authelia_actions": autheliaActions,
+	})
 }
 
 // UpdateServiceLink changes the targets of an existing link, refreshing cached
@@ -265,7 +394,7 @@ func (app *App) UpdateServiceLink(c *gin.Context) {
 			link.NPMInstanceID = 0
 			link.NPMHostName = ""
 			link.NPMDetails = ""
-		} else if err := app.resolveNPMTarget(link, *input.NPMInstanceID, input.NPMHostName); err != nil {
+		} else if err := app.resolveNPMTarget(link, *input.NPMInstanceID, input.NPMHostName, input.ServiceName, input.EnsureMissing); err != nil {
 			c.JSON(apiStatus(err), gin.H{"error": err.Error()})
 			return
 		}
@@ -276,10 +405,20 @@ func (app *App) UpdateServiceLink(c *gin.Context) {
 			link.KumaMonitorID = 0
 			link.KumaMonitorName = ""
 			link.KumaDetails = ""
-		} else if err := app.resolveKumaTarget(link, *input.KumaInstanceID, deref(input.KumaMonitorID), input.KumaMonitorName); err != nil {
+		} else if err := app.resolveKumaTarget(link, *input.KumaInstanceID, deref(input.KumaMonitorID), input.KumaMonitorName, input.ServiceName, input.EnsureMissing); err != nil {
 			c.JSON(apiStatus(err), gin.H{"error": err.Error()})
 			return
 		}
+	}
+
+	var autheliaActions []authelia.SyncAction
+	if input.AutheliaInstanceID != nil && *input.AutheliaInstanceID > 0 {
+		actions, err := app.ensureAutheliaRule(input.ServiceName, *input.AutheliaInstanceID, input.AutheliaPolicy, derefBool(input.DryRun))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		autheliaActions = actions
 	}
 
 	if err := app.database.UpdateServiceLink(link); err != nil {
@@ -292,7 +431,10 @@ func (app *App) UpdateServiceLink(c *gin.Context) {
 		return
 	}
 	npmNames, kumaNames := app.instanceNameMaps()
-	c.JSON(http.StatusOK, toServiceLinkView(*updated, npmNames, kumaNames))
+	c.JSON(http.StatusOK, gin.H{
+		"link":             toServiceLinkView(*updated, npmNames, kumaNames),
+		"authelia_actions": autheliaActions,
+	})
 }
 
 // DeleteServiceLink removes a service link.
@@ -323,13 +465,13 @@ func (app *App) RefreshServiceLink(c *gin.Context) {
 		return
 	}
 	if link.NPMInstanceID > 0 {
-		if err := app.resolveNPMTarget(link, link.NPMInstanceID, link.NPMHostName); err != nil {
+		if err := app.resolveNPMTarget(link, link.NPMInstanceID, link.NPMHostName, link.ServiceName, false); err != nil {
 			c.JSON(apiStatus(err), gin.H{"error": err.Error()})
 			return
 		}
 	}
 	if link.KumaInstanceID > 0 {
-		if err := app.resolveKumaTarget(link, link.KumaInstanceID, link.KumaMonitorID, link.KumaMonitorName); err != nil {
+		if err := app.resolveKumaTarget(link, link.KumaInstanceID, link.KumaMonitorID, link.KumaMonitorName, link.ServiceName, false); err != nil {
 			c.JSON(apiStatus(err), gin.H{"error": err.Error()})
 			return
 		}
@@ -354,6 +496,13 @@ func deref(p *int) int {
 	return *p
 }
 
+func derefBool(p *bool) bool {
+	if p == nil {
+		return false
+	}
+	return *p
+}
+
 // --- NPM proxy host management ---
 
 // NPMProxyHostView flattens an NPM proxy host with its source instance.
@@ -365,25 +514,25 @@ type NPMProxyHostView struct {
 
 // npmProxyHostInput is the create/update payload for NPM proxy hosts.
 type npmProxyHostInput struct {
-	InstanceID            int                  `json:"instance_id"`
-	DomainNames           []string             `json:"domain_names"`
-	ForwardHost           string               `json:"forward_host"`
-	ForwardPort           int                  `json:"forward_port"`
-	ForwardScheme         string               `json:"forward_scheme"`
-	Enabled               *bool                `json:"enabled"`
-	SSLForced             bool                 `json:"ssl_forced"`
-	CertificateID         int                  `json:"certificate_id"`
-	HTTP2Support          bool                 `json:"http2_support"`
-	HSTSEnabled           bool                 `json:"hsts_enabled"`
-	HSTSSubdomains        bool                 `json:"hsts_subdomains"`
-	BlockExploits         bool                 `json:"block_exploits"`
-	CachingEnabled        bool                 `json:"caching_enabled"`
-	AllowWebsocketUpgrade bool                 `json:"allow_websocket_upgrade"`
-	AccessListID          int                  `json:"access_list_id"`
-	AdvancedConfig        string               `json:"advanced_config"`
-	Locations             []npm.ProxyLocation  `json:"locations"`
-	Meta                  map[string]any       `json:"meta"`
-	ServiceName           string               `json:"service_name"`
+	InstanceID            int                 `json:"instance_id"`
+	DomainNames           []string            `json:"domain_names"`
+	ForwardHost           string              `json:"forward_host"`
+	ForwardPort           int                 `json:"forward_port"`
+	ForwardScheme         string              `json:"forward_scheme"`
+	Enabled               *bool               `json:"enabled"`
+	SSLForced             bool                `json:"ssl_forced"`
+	CertificateID         int                 `json:"certificate_id"`
+	HTTP2Support          bool                `json:"http2_support"`
+	HSTSEnabled           bool                `json:"hsts_enabled"`
+	HSTSSubdomains        bool                `json:"hsts_subdomains"`
+	BlockExploits         bool                `json:"block_exploits"`
+	CachingEnabled        bool                `json:"caching_enabled"`
+	AllowWebsocketUpgrade bool                `json:"allow_websocket_upgrade"`
+	AccessListID          int                 `json:"access_list_id"`
+	AdvancedConfig        string              `json:"advanced_config"`
+	Locations             []npm.ProxyLocation `json:"locations"`
+	Meta                  map[string]any      `json:"meta"`
+	ServiceName           string              `json:"service_name"`
 }
 
 func (in *npmProxyHostInput) toProxyHostCreate() npm.ProxyHostCreate {

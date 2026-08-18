@@ -2,6 +2,7 @@ package sync
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"synapse/internal/npm"
@@ -9,7 +10,7 @@ import (
 
 // traefikHostRuleRe matches Host(...) host lists inside traefik router rule
 // label values, e.g. Host(`example.com`) or Host(`a.example.com`,`b.example.com`).
-var traefikHostRuleRe = regexp.MustCompile("(?i)Host\\(`([^`]+)`\\)")
+var traefikHostRuleRe = regexp.MustCompile(`(?i)Host\(([^)]*)\)`)
 
 // DeriveNPMHost derives the NPM proxy host configuration a compose service
 // should have from its definition and labels:
@@ -99,4 +100,30 @@ func extractDomains(labels map[string]string) []string {
 // (default 60).
 func DeriveKumaMonitor(name string, svc ServiceDef) (monitorType, url, container string, interval int) {
 	return desiredMonitor(name, svc)
+}
+
+// ServiceDomains returns the domains derived for a service from its labels,
+// in priority order: synapse.domains, synapse.domain, npm.domains, npm.domain,
+// then traefik Host(...) rules. Results are deduplicated; order is preserved.
+// The name parameter is reserved for context and does not affect the result.
+func ServiceDomains(name string, svc ServiceDef) []string {
+	return extractDomains(svc.Labels)
+}
+
+// ComposeAutheliaEntries maps every compose service's derived domains to the
+// npm.ProxyEntry shape used by Authelia sync: CNAME=<domain>, Container=<service name>.
+// Services without derivable domains contribute nothing.
+// Results are sorted by CNAME ascending for deterministic output.
+func ComposeAutheliaEntries(services map[string]ServiceDef) []npm.ProxyEntry {
+	var entries []npm.ProxyEntry
+	for name, svc := range services {
+		for _, domain := range ServiceDomains(name, svc) {
+			entries = append(entries, npm.ProxyEntry{
+				CNAME:     domain,
+				Container: name,
+			})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].CNAME < entries[j].CNAME })
+	return entries
 }

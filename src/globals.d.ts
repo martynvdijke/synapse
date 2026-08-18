@@ -20,6 +20,8 @@ declare function updateKumaMonitor(kumaId: number, instanceId: number, input: Re
 declare function deleteKumaMonitor(kumaId: number, instanceId: number): Promise<Response>;
 declare function getKumaInstances(): Promise<Response>;
 declare function getNPMInstances(): Promise<Response>;
+declare function getAutheliaCoverage(): Promise<Response>;
+declare function getAutheliaInstances(): Promise<Response>;
 
 // ── toast.js ────────────────────────────────────────────────────
 declare function toast(msg: string, type?: string): void;

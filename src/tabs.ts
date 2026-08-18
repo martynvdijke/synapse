@@ -1,5 +1,5 @@
 // Tab data loaders (Docker, Kuma, NPM, History)
-import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun, FeedItem, ReconcileResult, ServiceLink, NPMProxyHost } from './types';
+import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun, FeedItem, ReconcileResult, ServiceLink, NPMProxyHost, AutheliaCoverageResponse } from './types';
 
 function renderDockerDetailRow(svc: ServiceInfo): string {
     var fields: string[] = [];
@@ -64,9 +64,23 @@ export function loadDockerServices(): void {
     document.getElementById('docker-tbody')!.innerHTML = loadingRow(7);
     var svcReq = apiFetch('/api/services').then(function(r){return r.json() as Promise<(ServiceInfo & {error?: string})[]>;});
     var linkReq = apiFetch('/api/service-links').then(function(r){return r.ok ? r.json() as Promise<ServiceLink[]> : Promise.resolve([]);});
-    Promise.all([svcReq, linkReq]).then(function(res: any[]) {
+    var covReq = apiFetch('/api/authelia/coverage').then(function(r){return r.ok ? r.json() as Promise<AutheliaCoverageResponse> : Promise.resolve(null);});
+    Promise.all([svcReq, linkReq, covReq]).then(function(res: any[]) {
         var services = res[0] as (ServiceInfo & {error?: string})[];
         var links = res[1] as ServiceLink[];
+        var covResp = res[2] as AutheliaCoverageResponse | null;
+        var coverageByService: Record<string, { covered: boolean; policy: string }> = {};
+        if (covResp && covResp.instances) {
+            for (var instIdx = 0; instIdx < covResp.instances.length; instIdx++) {
+                var inst = covResp.instances[instIdx];
+                for (var dIdx = 0; dIdx < inst.domains.length; dIdx++) {
+                    var d = inst.domains[dIdx];
+                    if (d.service && !coverageByService[d.service]) {
+                        coverageByService[d.service] = { covered: d.covered, policy: d.policy };
+                    }
+                }
+            }
+        }
         var linkMap: Record<string, ServiceLink> = {};
         links.forEach(function(l) { linkMap[l.service_name] = l; });
         linkServices = services as ServiceInfo[];
@@ -89,6 +103,14 @@ export function loadDockerServices(): void {
                 }
                 if (link.kuma_monitor_name) {
                     linksHtml += '<span class="badge bg-info me-1" title="Kuma monitor">\u25CB ' + esc(link.kuma_monitor_name) + '</span>';
+                }
+            }
+            var cov = coverageByService[s.name];
+            if (cov) {
+                if (cov.covered) {
+                    linksHtml += '<span class="badge bg-success me-1" title="Authelia access rule: ' + esc(cov.policy) + '" style="cursor:pointer" onclick="event.stopPropagation();document.getElementById(\'tab-btn-authelia\').click()">\uD83D\uDEE1 ' + esc(cov.policy) + '</span>';
+                } else {
+                    linksHtml += '<span class="badge bg-warning me-1" title="Authelia access rule missing" style="cursor:pointer" onclick="event.stopPropagation();document.getElementById(\'tab-btn-authelia\').click()">\uD83D\uDEE1 missing</span>';
                 }
             }
             if (!linksHtml) {
@@ -133,6 +155,7 @@ var linkNPMHosts: NPMProxyHost[] = [];
 var linkKumaMonitors: MonitorResponse[] = [];
 var linkNPMInstances: Array<{ id: number; name: string }> = [];
 var linkKumaInstances: Array<{ id: number; name: string }> = [];
+var linkAutheliaInstances: Array<{ id: number; name: string }> = [];
 
 function populateSelect(el: HTMLSelectElement, items: Array<{ label: string; value: string }>, selectedValue: string): void {
     var html = '';
@@ -202,6 +225,16 @@ export function openLinkEditor(serviceName: string): void {
             linkKumaInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
     }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Kuma instances', 'error'); });
 
+    apiFetch('/api/authelia-instances').then(function(r){ return r.ok ? r.json() : Promise.resolve([]); }).then(function(insts: any[]) {
+        linkAutheliaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+        var sel = document.getElementById('link-authelia-instance') as HTMLSelectElement;
+        var opts = '<option value="">— Not linked —</option>';
+        for (var i = 0; i < linkAutheliaInstances.length; i++) {
+            opts += '<option value="' + linkAutheliaInstances[i].id + '">' + esc(linkAutheliaInstances[i].name) + '</option>';
+        }
+        sel.innerHTML = opts;
+    }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Authelia instances', 'error'); });
+
     apiFetch('/api/service-links').then(function(r){ return r.json() as Promise<ServiceLink[]>; }).then(function(links: ServiceLink[]) {
         for (var i = 0; i < links.length; i++) {
             if (links[i].service_name === serviceName) { linkEditorLink = links[i]; break; }
@@ -253,6 +286,14 @@ export function saveServiceLink(): void {
         input.kuma_monitor_id = 0;
         input.kuma_monitor_name = '';
     }
+    var ensureMissing = (document.getElementById('link-ensure-missing') as HTMLInputElement).checked;
+    input.ensure_missing = ensureMissing;
+    var autheliaSel = document.getElementById('link-authelia-instance') as HTMLSelectElement;
+    var autheliaId = parseInt(autheliaSel.value, 10);
+    input.authelia_instance_id = autheliaId > 0 ? autheliaId : null;
+    input.authelia_policy = (document.getElementById('link-authelia-policy') as HTMLSelectElement).value;
+    var ensureRule = (document.getElementById('link-authelia-ensure') as HTMLInputElement).checked;
+    input.dry_run = !ensureRule;
     var req = linkEditorLink
         ? updateServiceLink(linkEditorLink.id, input)
         : createServiceLink(input);
@@ -261,8 +302,25 @@ export function saveServiceLink(): void {
             return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
         }
         return r.json();
-    }).then(function() {
+    }).then(function(body: any) {
         toast('Service link saved');
+        var actions: Array<{ action: string; cname: string; policy?: string; message: string }> = (body && body.authelia_actions) || [];
+        var actionsBox = document.getElementById('link-authelia-actions')!;
+        var actionsList = document.getElementById('link-authelia-actions-list')!;
+        if (actions.length) {
+            var html = '';
+            for (var i = 0; i < actions.length; i++) {
+                var a = actions[i];
+                var cls = a.action === 'add' ? 'text-success' : 'text-muted';
+                html += '<div class="' + cls + '">\u2022 ' + esc(a.cname) + ' \u2014 ' + esc(a.message) + '</div>';
+            }
+            actionsList.innerHTML = html;
+            actionsBox.classList.remove('d-none');
+        } else {
+            actionsBox.classList.add('d-none');
+            actionsList.innerHTML = '';
+        }
+        if (actions.length) return;
         var modal = bootstrap.Modal.getInstance(document.getElementById('link-editor-modal')!);
         if (modal) modal.hide();
         loadDockerServices();

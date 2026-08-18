@@ -1,0 +1,20 @@
+version: "3"
+services:
+  web:
+    image: nginx:alpine
+    container_name: nginx-web
+    ports:
+      - "80:80"
+    labels:
+      synapse.domains: app.example.com
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  api:
+    image: myapp:latest
+    container_name: myapp-api
+    ports:
+      - "8080:8080"

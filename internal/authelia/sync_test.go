@@ -236,3 +236,128 @@ access_control:
 		t.Errorf("new.example.com not found in config after sync. Domains: %v", domains)
 	}
 }
+
+func writeTestConfig(t *testing.T, dir, content string) string {
+	t.Helper()
+	cfgPath := filepath.Join(dir, "configuration.yml")
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return cfgPath
+}
+
+func TestEnsureDomainRules_AddsMissingWithDefaultPolicy(t *testing.T) {
+	cfgPath := writeTestConfig(t, t.TempDir(), `
+access_control:
+  default_policy: deny
+  rules:
+    - domain: existing.example.com
+      policy: one_factor
+`)
+
+	entries := []npm.ProxyEntry{
+		{CNAME: "new.example.com", Container: "api"},
+	}
+
+	actions, err := EnsureDomainRules(cfgPath, "", entries, "", nil, false)
+	if err != nil {
+		t.Fatalf("ensure domain rules: %v", err)
+	}
+
+	if len(actions) != 1 || actions[0].Action != "add" {
+		t.Fatalf("expected 1 add action, got %+v", actions)
+	}
+	if actions[0].Policy != DefaultPolicy {
+		t.Errorf("expected policy %q (default), got %q", DefaultPolicy, actions[0].Policy)
+	}
+
+	ac, err := ParseConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config after ensure: %v", err)
+	}
+	if !slices.Contains(GetDomains(ac), "new.example.com") {
+		t.Errorf("new.example.com not written to config: %v", GetDomains(ac))
+	}
+}
+
+func TestEnsureDomainRules_RespectsOverride(t *testing.T) {
+	cfgPath := writeTestConfig(t, t.TempDir(), `
+access_control:
+  default_policy: deny
+  rules: []
+`)
+
+	entries := []npm.ProxyEntry{
+		{CNAME: "public.example.com", Container: "static"},
+	}
+
+	actions, err := EnsureDomainRules(cfgPath, "", entries, "one_factor", map[string]string{"public.example.com": "bypass"}, false)
+	if err != nil {
+		t.Fatalf("ensure domain rules: %v", err)
+	}
+
+	if len(actions) != 1 || actions[0].Action != "add" {
+		t.Fatalf("expected 1 add action, got %+v", actions)
+	}
+	if actions[0].Policy != "bypass" {
+		t.Errorf("expected policy=bypass (override wins), got %q", actions[0].Policy)
+	}
+}
+
+func TestEnsureDomainRules_SkipsCovered(t *testing.T) {
+	cfgContent := `
+access_control:
+  default_policy: deny
+  rules:
+    - domain: existing.example.com
+      policy: one_factor
+`
+	cfgPath := writeTestConfig(t, t.TempDir(), cfgContent)
+
+	entries := []npm.ProxyEntry{
+		{CNAME: "existing.example.com", Container: "web"},
+	}
+
+	actions, err := EnsureDomainRules(cfgPath, "", entries, "one_factor", nil, false)
+	if err != nil {
+		t.Fatalf("ensure domain rules: %v", err)
+	}
+
+	if len(actions) != 1 || actions[0].Action != "skip" {
+		t.Fatalf("expected 1 skip action, got %+v", actions)
+	}
+
+	data, _ := os.ReadFile(cfgPath)
+	if string(data) != cfgContent {
+		t.Errorf("config modified although nothing to add")
+	}
+}
+
+func TestEnsureDomainRules_DryRunWritesNothing(t *testing.T) {
+	cfgContent := `
+access_control:
+  default_policy: deny
+  rules:
+    - domain: existing.example.com
+      policy: one_factor
+`
+	cfgPath := writeTestConfig(t, t.TempDir(), cfgContent)
+
+	entries := []npm.ProxyEntry{
+		{CNAME: "new.example.com", Container: "api"},
+	}
+
+	actions, err := EnsureDomainRules(cfgPath, "", entries, "one_factor", nil, true)
+	if err != nil {
+		t.Fatalf("ensure domain rules (dry run): %v", err)
+	}
+
+	if len(actions) != 1 || actions[0].Action != "add" {
+		t.Fatalf("expected 1 add action in dry run, got %+v", actions)
+	}
+
+	data, _ := os.ReadFile(cfgPath)
+	if string(data) != cfgContent {
+		t.Errorf("config modified during dry run")
+	}
+}

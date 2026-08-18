@@ -131,6 +131,15 @@ export function getNPMInstances(): Promise<Response> {
     return apiFetch('/api/npm-instances');
 }
 
+// --- Authelia ---
+export function getAutheliaCoverage(): Promise<Response> {
+    return apiFetch('/api/authelia/coverage');
+}
+
+export function getAutheliaInstances(): Promise<Response> {
+    return apiFetch('/api/authelia-instances');
+}
+
 // Attach to window for inline event handlers
 window.esc = esc;
 window.apiFetch = apiFetch;
@@ -150,3 +159,5 @@ window.updateKumaMonitor = updateKumaMonitor;
 window.deleteKumaMonitor = deleteKumaMonitor;
 window.getKumaInstances = getKumaInstances;
 window.getNPMInstances = getNPMInstances;
+window.getAutheliaCoverage = getAutheliaCoverage;
+window.getAutheliaInstances = getAutheliaInstances;
