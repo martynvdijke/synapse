@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -95,6 +96,43 @@ type Client struct {
 	tokenExpiry time.Time
 	client      *http.Client
 	tracer      trace.Tracer
+
+	mu          sync.Mutex
+	hostCache   []ProxyHost // cached proxy host list
+	hostCacheAt time.Time   // when hostCache was populated
+}
+
+// proxyCacheTTL bounds how long a cached proxy-host query result is reused.
+// The dashboard fires several API calls in a burst (status, proxies,
+// proxy-hosts); without caching each call would perform a fresh HTTP round
+// trip to every NPM instance and block on the 30s client timeout when an
+// instance is unreachable. 15s keeps the burst instant while still letting
+// sync operations see recent changes.
+const proxyCacheTTL = 15 * time.Second
+
+// cachedHosts returns the cached proxy host list when it is still fresh.
+func (c *Client) cachedHosts() ([]ProxyHost, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.hostCache != nil && time.Since(c.hostCacheAt) < proxyCacheTTL {
+		return c.hostCache, true
+	}
+	return nil, false
+}
+
+func (c *Client) storeHosts(hosts []ProxyHost) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hostCache = hosts
+	c.hostCacheAt = time.Now()
+}
+
+// invalidateHosts clears the cached proxy host list. Call after successful
+// create/update/delete so subsequent queries reflect the change.
+func (c *Client) invalidateHosts() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hostCache = nil
 }
 
 func NewClient(url, user, pass string) *Client {
@@ -209,65 +247,8 @@ func (c *Client) GetProxyHosts() ([]ProxyEntry, error) {
 		slog.String("npm_url", c.url),
 	)
 
-	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", c.url)
-	req, err := http.NewRequest("GET", url, nil)
+	hosts, err := c.fetchHosts()
 	if err != nil {
-		logging.LogError("npm", "Failed to create NPM request",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-	if err := c.ensureLoggedIn(); err != nil {
-		logging.LogError("npm", "Failed to authenticate to NPM",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		errKind := logging.ErrorKindNetwork
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "timeout") {
-			errKind = logging.ErrorKindNetwork
-		}
-		logging.LogError("npm", "Failed to fetch proxy hosts from NPM",
-			slog.String("error", err.Error()),
-			slog.String("error_kind", string(errKind)),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errKind := logging.ErrorKindServer
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			errKind = logging.ErrorKindAuth
-		}
-		bodySnippet := ""
-		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
-			bodySnippet = strings.TrimSpace(string(bodyBytes))
-		}
-		err := fmt.Errorf("failed to get proxy hosts: status %d", resp.StatusCode)
-		logging.LogError("npm", "NPM request returned non-OK status",
-			slog.Int("status", resp.StatusCode),
-			slog.String("error_kind", string(errKind)),
-			slog.String("response_body_snippet", bodySnippet),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-
-	var hosts []ProxyHost
-	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
-		logging.LogError("npm", "Failed to decode NPM proxy hosts response",
-			slog.String("error", err.Error()),
-			slog.String("error_kind", string(logging.ErrorKindParse)),
-			slog.Duration("duration", time.Since(start)),
-		)
 		return nil, err
 	}
 
@@ -298,14 +279,15 @@ func (c *Client) GetProxyHosts() ([]ProxyEntry, error) {
 
 var npmTracer = otel.Tracer("npm")
 
-// GetProxyHostsFull returns all proxy hosts for the instance including
-// disabled ones, with full configuration fields (SSL, locations, advanced
-// config, meta). Used by service linking and reconciliation.
-func (c *Client) GetProxyHostsFull() ([]ProxyHost, error) {
-	_, span := c.tracer.Start(context.Background(), "GetProxyHostsFull",
-		trace.WithAttributes(attribute.String("npm_url", c.url)),
-	)
-	defer span.End()
+// fetchHosts returns the full proxy host list for the instance, reusing the
+// cached result when it is still within proxyCacheTTL. Concurrent callers
+// (the dashboard fires /api/status and /api/proxies in a burst) may both
+// miss the cache and fetch once each; the mutex keeps the cached fields
+// safe.
+func (c *Client) fetchHosts() ([]ProxyHost, error) {
+	if hosts, ok := c.cachedHosts(); ok {
+		return hosts, nil
+	}
 
 	start := time.Now()
 	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", c.url)
@@ -314,13 +296,17 @@ func (c *Client) GetProxyHostsFull() ([]ProxyHost, error) {
 		return nil, err
 	}
 	if err := c.ensureLoggedIn(); err != nil {
+		logging.LogError("npm", "Failed to authenticate to NPM",
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		logging.LogError("npm", "Failed to fetch full proxy hosts",
+		logging.LogError("npm", "Failed to fetch proxy hosts from NPM",
 			slog.String("error", err.Error()),
 			slog.Duration("duration", time.Since(start)),
 		)
@@ -333,16 +319,40 @@ func (c *Client) GetProxyHostsFull() ([]ProxyHost, error) {
 		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
 			bodySnippet = strings.TrimSpace(string(bodyBytes))
 		}
-		return nil, fmt.Errorf("failed to get full proxy hosts: status %d: %s", resp.StatusCode, bodySnippet)
+		err := fmt.Errorf("failed to get proxy hosts: status %d: %s", resp.StatusCode, bodySnippet)
+		logging.LogError("npm", "NPM request returned non-OK status",
+			slog.Int("status", resp.StatusCode),
+			slog.String("response_body_snippet", bodySnippet),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return nil, err
 	}
 
 	var hosts []ProxyHost
 	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
-		logging.LogError("npm", "Failed to decode full proxy hosts response",
+		logging.LogError("npm", "Failed to decode NPM proxy hosts response",
 			slog.String("error", err.Error()),
 			slog.String("error_kind", string(logging.ErrorKindParse)),
 			slog.Duration("duration", time.Since(start)),
 		)
+		return nil, err
+	}
+	c.storeHosts(hosts)
+	return hosts, nil
+}
+
+// GetProxyHostsFull returns all proxy hosts for the instance including
+// disabled ones, with full configuration fields (SSL, locations, advanced
+// config, meta). Used by service linking and reconciliation.
+func (c *Client) GetProxyHostsFull() ([]ProxyHost, error) {
+	_, span := c.tracer.Start(context.Background(), "GetProxyHostsFull",
+		trace.WithAttributes(attribute.String("npm_url", c.url)),
+	)
+	defer span.End()
+
+	start := time.Now()
+	hosts, err := c.fetchHosts()
+	if err != nil {
 		return nil, err
 	}
 	logging.LogInfo("npm", "Fetched full proxy hosts from NPM",
@@ -389,6 +399,7 @@ func (c *Client) CreateProxyHost(cfg ProxyHostCreate) (ProxyHost, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
 		return created, err
 	}
+	c.invalidateHosts()
 	return created, nil
 }
 
@@ -428,6 +439,7 @@ func (c *Client) UpdateProxyHost(id int, cfg ProxyHostCreate) (ProxyHost, error)
 	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
 		return updated, err
 	}
+	c.invalidateHosts()
 	return updated, nil
 }
 

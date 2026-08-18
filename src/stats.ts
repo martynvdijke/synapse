@@ -52,6 +52,8 @@ export function loadStatus(): void {
 
         (document.getElementById('btn-docker') as HTMLButtonElement).disabled = d.running;
         (document.getElementById('btn-npm') as HTMLButtonElement).disabled = d.running;
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
     });
     // Load authelia status separately
     apiFetch('/api/authelia/status').then(function(r){return r.json() as Promise<AutheliaStatusResponse>;}).then(function(d) {
@@ -68,6 +70,8 @@ export function loadStatus(): void {
         var matched = d.matched ? d.matched.length : 0;
         var coverage = total > 0 ? Math.round(matched / total * 100) : 0;
         el!.innerHTML = '<span class="badge ' + (coverage >= 100 ? 'bg-success' : coverage > 0 ? 'bg-warning text-dark' : 'bg-danger') + '">' + matched + '/' + total + ' (' + coverage + '%)</span>';
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
     });
 }
 

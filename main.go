@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"golang.org/x/crypto/bcrypt"
@@ -241,6 +242,20 @@ func main() {
 
 	r.Use(otelgin.Middleware("synapse"))
 	r.Use(telemetry.MetricsMiddleware())
+
+	// Compress responses (HTML, JS, CSS, JSON) on the fly. The SSE progress
+	// stream is excluded — compressing it breaks streaming proxies.
+	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/api/sync/progress"})))
+
+	// Allow the browser to cache built assets (static/dist) for an hour;
+	// index.html is revalidated via no-cache in the Dashboard handler.
+	r.Use(func(c *gin.Context) {
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/dist/") || strings.HasPrefix(p, "/static/") {
+			c.Header("Cache-Control", "public, max-age=3600")
+		}
+		c.Next()
+	})
 
 	r.LoadHTMLGlob("static/*.html")
 	r.Static("/dist", "./static/dist")
@@ -482,6 +497,7 @@ func (app *App) HandleLogout(c *gin.Context) {
 }
 
 func (app *App) Dashboard(c *gin.Context) {
+	c.Header("Cache-Control", "no-cache")
 	c.HTML(http.StatusOK, "index.html", gin.H{
 		"Version": version,
 	})
@@ -1290,68 +1306,116 @@ func (app *App) Status(c *gin.Context) {
 
 	// Kuma clients (used for NPM status + kuma health)
 	clients, _ := app.kumaRegistry.All()
-
-	// NPM health
 	npmClients, _ := app.npmRegistry.All()
-	npmCount := 0
-	npmErr := ""
-	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-	// Partial results are still served when only some instances fail.
-	npmCount = len(npmProxies)
-	if npmFetchErr != nil {
-		npmErr = npmFetchErr.Error()
-	}
+
+	kumaInstances, _ := app.database.GetEnabledKumaInstances()
+	npmInstances, _ := app.database.GetEnabledNPMInstances()
+
+	// The four upstream-dependent sections below run concurrently. Each used
+	// to run sequentially, so the response time was the SUM of every NPM and
+	// Kuma instance round trip (up to 30s per unreachable instance); with
+	// parallelism it is the MAX. The npm/kuma clients cache results for 15s,
+	// so the burst of dashboard requests shares a single upstream fetch.
+	var (
+		wg               sync.WaitGroup
+		mu               sync.Mutex
+		npmCount         int
+		npmErr           string
+		kumaErr          string
+		monitorCount     int
+		npmHealthList    []gin.H
+		kumaHealthList   []gin.H
+	)
+
+	// NPM proxy hosts + Kuma "in kuma" status. Partial results are still
+	// served when only some instances fail.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+		mu.Lock()
+		npmCount = len(npmProxies)
+		if npmFetchErr != nil {
+			npmErr = npmFetchErr.Error()
+		}
+		mu.Unlock()
+	}()
 
 	// Kuma health — check each enabled instance. Health is ok only if ALL
 	// enabled instances are reachable.
-	kumaErr := ""
-	kumaInstances, _ := app.database.GetEnabledKumaInstances()
-	kumaHealthList := make([]gin.H, 0, len(kumaInstances))
-	for _, inst := range kumaInstances {
-		instErr := ""
-		if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
-			instErr = err.Error()
-		}
-		kumaHealthList = append(kumaHealthList, gin.H{
-			"id":         inst.ID,
-			"name":       inst.Name,
-			"ok":         instErr == "",
-			"last_error": instErr,
-		})
-		if instErr != "" {
-			if kumaErr == "" {
-				kumaErr = instErr
-			} else {
-				kumaErr = inst.Name + ": " + instErr
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		list := make([]gin.H, 0, len(kumaInstances))
+		errStr := ""
+		for _, inst := range kumaInstances {
+			instErr := ""
+			if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
+				instErr = err.Error()
+			}
+			list = append(list, gin.H{
+				"id":         inst.ID,
+				"name":       inst.Name,
+				"ok":         instErr == "",
+				"last_error": instErr,
+			})
+			if instErr != "" {
+				if errStr == "" {
+					errStr = instErr
+				} else {
+					errStr = inst.Name + ": " + instErr
+				}
 			}
 		}
-	}
-	if len(kumaInstances) == 0 {
-		kumaErr = "no Kuma instances configured"
-	}
+		if len(kumaInstances) == 0 {
+			errStr = "no Kuma instances configured"
+		}
+		mu.Lock()
+		kumaHealthList = list
+		kumaErr = errStr
+		mu.Unlock()
+	}()
 
-	monitorCount, _ := app.kumaMonitorCount(clients)
+	// Live monitor total across all connected Kuma instances.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		total, _ := app.kumaMonitorCount(clients)
+		mu.Lock()
+		monitorCount = total
+		mu.Unlock()
+	}()
+
+	// NPM per-instance health. Uses the registry's cached clients (JWT +
+	// 15s result cache) instead of a fresh client per request.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		list := make([]gin.H, 0, len(npmInstances))
+		for _, inst := range npmInstances {
+			errMsg := ""
+			cl, err := app.npmRegistry.Get(int(inst.ID))
+			if err != nil {
+				errMsg = err.Error()
+			} else if _, err := cl.GetProxyHosts(); err != nil {
+				errMsg = err.Error()
+			}
+			list = append(list, gin.H{
+				"id":         inst.ID,
+				"name":       inst.Name,
+				"ok":         errMsg == "",
+				"last_error": errMsg,
+			})
+		}
+		mu.Lock()
+		npmHealthList = list
+		mu.Unlock()
+	}()
+
+	wg.Wait()
 
 	lastDocker, _ := app.database.GetLatestSyncRun("docker")
 	lastNPM, _ := app.database.GetLatestSyncRun("npm")
-
-	// NPM per-instance health
-	npmInstances, _ := app.database.GetEnabledNPMInstances()
-	npmHealthList := make([]gin.H, 0, len(npmInstances))
-	for _, inst := range npmInstances {
-		c := npm.NewClient(inst.URL, inst.Username, inst.Password)
-		_, err := c.GetProxyHosts()
-		errMsg := ""
-		if err != nil {
-			errMsg = err.Error()
-		}
-		npmHealthList = append(npmHealthList, gin.H{
-			"id":         inst.ID,
-			"name":       inst.Name,
-			"ok":         err == nil,
-			"last_error": errMsg,
-		})
-	}
 
 	connectionHealth := gin.H{
 		"docker": gin.H{

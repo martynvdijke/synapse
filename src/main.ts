@@ -172,10 +172,9 @@ document.querySelector('.nav-tabs')!.addEventListener('keydown', function(e) {
     if (tabs[newIdx] !== document.activeElement) tabs[newIdx].click();
 });
 
-// Initial load
-apiFetch('/api/status').then(function() { refreshAll(); }).catch(function(err: Error) {
-    if (err.message === 'not authenticated') return;
-});
+// Initial load — refreshAll() calls loadStatus() (which fetches /api/status
+// and /api/authelia/status) once, avoiding a duplicate status round trip.
+refreshAll();
 
 // Start SSE
 connectSSE();
