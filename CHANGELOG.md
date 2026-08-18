@@ -1,3 +1,10 @@
+# [1.18.0](https://github.com/martynvdijke/synapse/compare/v1.17.5...v1.18.0) (2026-08-18)
+
+
+### Features
+
+* **links:** complete service linking UI with NPM, Kuma and Authelia ([b9461bc](https://github.com/martynvdijke/synapse/commit/b9461bc2223997c667c9cbd354e410b3ef16926d))
+
 ## [1.17.5](https://github.com/martynvdijke/synapse/compare/v1.17.4...v1.17.5) (2026-08-18)
 
 
