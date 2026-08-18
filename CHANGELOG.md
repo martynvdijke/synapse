@@ -1,3 +1,11 @@
+## [1.17.5](https://github.com/martynvdijke/synapse/compare/v1.17.4...v1.17.5) (2026-08-18)
+
+
+### Bug Fixes
+
+* **deps:** update all non-major dependencies ([c78008e](https://github.com/martynvdijke/synapse/commit/c78008e794b5ec6abd8fb3ab22b72cd92d803fb5))
+* **kuma:** synchronize onEvent handoff to fix data race ([0aa3b6c](https://github.com/martynvdijke/synapse/commit/0aa3b6c1fade40378e4393ad2e6e44bf1078d36a))
+
 ## [1.17.4](https://github.com/martynvdijke/synapse/compare/v1.17.3...v1.17.4) (2026-08-16)
 
 
