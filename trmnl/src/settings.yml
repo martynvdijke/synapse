@@ -4,7 +4,7 @@ no_screen_padding: 'no'
 dark_mode: 'no'
 static_data: ''
 polling_verb: get
-framework_version: 2.3.7
+framework_version: latest
 serverless_language:
 polling_url: "https://<instance>/api/v1/trmnl/stats"
 polling_headers: "{\"Authorization\":\"Bearer <token>\"}"
@@ -30,7 +30,15 @@ oauth_token_field_name: ''
 oauth_expiry_field_name: ''
 oauth_expiry_strategy: ''
 oauth_fixed_expiry_ms: ''
-custom_fields: []
+custom_fields:
+- keyname: bio
+  name: About This Plugin
+  category: entertainment
+  field_type: author_bio
+  description: I am running a Synapse uptime monitoring instance, this pulls the stats into my trmnl.
+  github_url: https://github.com/martynvdijke/synapse
+  learn_more_url: https://github.com/martynvdijke/synapse
+  email_address: martyn@vandijke.xyz
 name: Synapse
 description: Synapse uptime stats for your wall
 refresh_interval: 60
