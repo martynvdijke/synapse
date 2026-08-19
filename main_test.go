@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,16 +47,53 @@ func setupTest(t *testing.T) (*App, *gin.Engine) {
 	return app, r
 }
 
+// testTokens maps sessionID -> bearer secret so authRequest can attach the
+// token automatically for mutation requests. Keeps existing mutation tests
+// working now that mutations require a bearer token.
+var (
+	testTokens   = map[string]string{}
+	testTokensMu sync.Mutex
+)
+
 func createTestSession(t *testing.T, app *App) string {
-	_, err := app.database.CreateAdminUser("admin", "$2a$10$dummyhashnotusedfortest")
+	sessionID, userID := createTestSessionRaw(t, app)
+	// Provision a bearer token for this session so mutation tests work.
+	secret := generateAPIToken()
+	if _, err := app.database.CreateAPIToken(userID, "test", hashToken(secret), nil); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	testTokensMu.Lock()
+	testTokens[sessionID] = secret
+	testTokensMu.Unlock()
+	return sessionID
+}
+
+// createTestSessionRaw creates an admin user and a session without provisioning
+// a bearer token. Used by security tests that exercise missing/invalid tokens.
+func createTestSessionRaw(t *testing.T, app *App) (string, int64) {
+	userID, err := app.database.CreateAdminUser("admin", "$2a$10$dummyhashnotusedfortest")
 	if err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
 	sessionID := generateSessionID()
 	sessionStoreMu.Lock()
-	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(1 * time.Hour)}
+	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(1 * time.Hour), UserID: userID}
 	sessionStoreMu.Unlock()
-	return sessionID
+	return sessionID, userID
+}
+
+// createTestUser creates a user with a distinct username and returns a session
+// for them, without provisioning a bearer token.
+func createTestUser(t *testing.T, app *App, username string) (string, int64) {
+	userID, err := app.database.CreateAdminUser(username, "$2a$10$dummyhashnotusedfortest")
+	if err != nil {
+		t.Fatalf("create user %s: %v", username, err)
+	}
+	sessionID := generateSessionID()
+	sessionStoreMu.Lock()
+	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(1 * time.Hour), UserID: userID}
+	sessionStoreMu.Unlock()
+	return sessionID, userID
 }
 
 func authRequest(t *testing.T, method, path string, body string, sessionID string) *http.Request {
@@ -65,6 +103,34 @@ func authRequest(t *testing.T, method, path string, body string, sessionID strin
 	}
 	if sessionID != "" {
 		req.AddCookie(&http.Cookie{Name: "session", Value: sessionID})
+		testTokensMu.Lock()
+		tok := testTokens[sessionID]
+		testTokensMu.Unlock()
+		if tok != "" && method != "GET" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+	}
+	return req
+}
+
+// authRequestNoToken builds a session-authenticated request without a bearer
+// token, for security tests asserting that mutations reject missing tokens.
+func authRequestNoToken(t *testing.T, method, path string, body string, sessionID string) *http.Request {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if sessionID != "" {
+		req.AddCookie(&http.Cookie{Name: "session", Value: sessionID})
+	}
+	return req
+}
+
+// authRequestWithToken builds a request with an explicit bearer token.
+func authRequestWithToken(t *testing.T, method, path string, body string, sessionID string, token string) *http.Request {
+	req := authRequestNoToken(t, method, path, body, sessionID)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	return req
 }
@@ -492,50 +558,17 @@ func TestTrmnlApiTokenSaveAndLoad(t *testing.T) {
 }
 
 func TestTrmnlStatsEndpoint(t *testing.T) {
-	app, r := setupTest(t)
+	_, r := setupTest(t)
 
-	// No token configured → 503, no data leak
-	reqNoToken := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
-	wNoToken := httptest.NewRecorder()
-	r.ServeHTTP(wNoToken, reqNoToken)
-	if wNoToken.Code != http.StatusServiceUnavailable {
-		t.Fatalf("no token configured: expected 503, got %d: %s", wNoToken.Code, wNoToken.Body.String())
-	}
-
-	// Configure token
-	if err := app.database.SaveSettingsMap(map[string]string{
-		"trmnl_api_token": "sekret",
-	}); err != nil {
-		t.Fatalf("save token: %v", err)
-	}
-
-	// Missing token → 401
-	reqMissing := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
-	wMissing := httptest.NewRecorder()
-	r.ServeHTTP(wMissing, reqMissing)
-	if wMissing.Code != http.StatusUnauthorized {
-		t.Fatalf("missing token: expected 401, got %d", wMissing.Code)
-	}
-
-	// Wrong token → 401
-	reqWrong := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
-	reqWrong.Header.Set("Authorization", "Bearer wrong")
-	wWrong := httptest.NewRecorder()
-	r.ServeHTTP(wWrong, reqWrong)
-	if wWrong.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong token: expected 401, got %d", wWrong.Code)
-	}
-
-	// Valid Bearer token → 200 + flat payload fields
-	reqOk := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
-	reqOk.Header.Set("Authorization", "Bearer sekret")
-	wOk := httptest.NewRecorder()
-	r.ServeHTTP(wOk, reqOk)
-	if wOk.Code != http.StatusOK {
-		t.Fatalf("valid bearer: expected 200, got %d: %s", wOk.Code, wOk.Body.String())
+	// Public read: no credential at all → 200 + flat payload fields.
+	req := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("public read: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var s map[string]any
-	json.NewDecoder(wOk.Body).Decode(&s)
+	json.NewDecoder(w.Body).Decode(&s)
 	for _, field := range []string{"docker_count", "npm_count", "monitor_count", "running", "last_docker", "last_npm", "docker_ok", "npm_ok", "kuma_ok", "up", "down"} {
 		if _, ok := s[field]; !ok {
 			t.Errorf("payload missing field %q: %v", field, s)
@@ -545,12 +578,14 @@ func TestTrmnlStatsEndpoint(t *testing.T) {
 		t.Errorf("payload must be flat, found connection_health: %v", s)
 	}
 
-	// Valid token via query param → 200
-	reqQuery := httptest.NewRequest("GET", "/api/v1/trmnl/stats?token=sekret", nil)
-	wQuery := httptest.NewRecorder()
-	r.ServeHTTP(wQuery, reqQuery)
-	if wQuery.Code != http.StatusOK {
-		t.Fatalf("valid query token: expected 200, got %d: %s", wQuery.Code, wQuery.Body.String())
+	// A stale bearer token must not change the outcome — the endpoint is
+	// intentionally unauthenticated per the api-authentication spec.
+	reqTok := httptest.NewRequest("GET", "/api/v1/trmnl/stats", nil)
+	reqTok.Header.Set("Authorization", "Bearer whatever")
+	wTok := httptest.NewRecorder()
+	r.ServeHTTP(wTok, reqTok)
+	if wTok.Code != http.StatusOK {
+		t.Fatalf("public read with stale token: expected 200, got %d: %s", wTok.Code, wTok.Body.String())
 	}
 }
 
@@ -867,49 +902,71 @@ func setupRouter(app *App) *gin.Engine {
 	{
 		api.POST("/logout", app.HandleLogout)
 		api.GET("/settings", app.GetSettings)
-		api.POST("/settings", app.SaveSettings)
 		api.GET("/status", app.Status)
+		api.GET("/sync/progress", app.ProgressSSE)
 		api.GET("/sync/history", app.SyncHistory)
-		api.GET("/services", app.Services)
-		api.GET("/kuma-instances", app.ListKumaInstances)
-		api.POST("/kuma-instances", app.CreateKumaInstance)
-		api.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
-		api.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
-		api.POST("/kuma-instances/:id/test", app.TestKumaInstance)
-		api.GET("/npm-instances", app.ListNPMInstances)
-		api.POST("/npm-instances", app.CreateNPMInstance)
-		api.PUT("/npm-instances/:id", app.UpdateNPMInstance)
-		api.DELETE("/npm-instances/:id", app.DeleteNPMInstance)
-		api.POST("/npm-instances/:id/test", app.TestNPMInstance)
-		api.POST("/sync/docker", app.DockerSync)
-		api.POST("/sync/npm", app.NPMSync)
-		api.GET("/monitors", app.KumaMonitors)
-		api.POST("/monitors", app.CreateKumaMonitor)
-		api.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
-		api.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
-		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
-		api.GET("/npm/proxy-hosts", app.NPMProxyHosts)
-		api.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
-		api.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
-		api.GET("/service-links", app.ServiceLinks)
-		api.POST("/service-links", app.CreateServiceLink)
-		api.PUT("/service-links/:id", app.UpdateServiceLink)
-		api.DELETE("/service-links/:id", app.DeleteServiceLink)
-		api.POST("/service-links/:id/refresh", app.RefreshServiceLink)
-		api.POST("/reconcile", app.Reconcile)
 		api.GET("/reconcile/runs", app.ReconcileRuns)
 		api.GET("/docker/events", app.DockerEvents)
 		api.GET("/events", app.EventsFeed)
-		api.POST("/notify/test", app.NotifyTest)
+		api.GET("/services", app.Services)
+		api.GET("/proxies", app.Proxies)
+		api.GET("/monitors", app.KumaMonitors)
+		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
+		api.GET("/npm/proxy-hosts", app.NPMProxyHosts)
+		api.GET("/service-links", app.ServiceLinks)
 		api.GET("/notify/missing", app.NotifyMissing)
+		api.GET("/logs", app.LogsHandler)
+		api.GET("/logs/stream", app.LogsStreamSSE)
 		api.GET("/authelia/status", app.AutheliaStatus)
 		api.GET("/authelia/coverage", app.AutheliaCoverage)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
-		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
 		api.GET("/authelia/temp-access", app.AutheliaTempAccess)
-		api.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
-		api.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
-		api.POST("/authelia/sync", app.AutheliaSync)
+		api.GET("/authelia-instances", app.ListAutheliaInstances)
+		api.GET("/kuma-instances", app.ListKumaInstances)
+		api.GET("/npm-instances", app.ListNPMInstances)
+
+		// Token lifecycle (session-only, owner-scoped)
+		api.POST("/tokens", app.CreateToken)
+		api.GET("/tokens", app.ListTokens)
+		api.POST("/tokens/:id/revoke", app.RevokeToken)
+		api.POST("/tokens/:id/rotate", app.RotateToken)
+
+		// Mutation subgroup: session + bearer token required.
+		mut := api.Group("")
+		mut.Use(app.bearerTokenMiddleware())
+		{
+			mut.POST("/settings", app.SaveSettings)
+			mut.POST("/test/npm", app.TestNPM)
+			mut.POST("/kuma-instances", app.CreateKumaInstance)
+			mut.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
+			mut.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
+			mut.POST("/kuma-instances/:id/test", app.TestKumaInstance)
+			mut.POST("/npm-instances", app.CreateNPMInstance)
+			mut.PUT("/npm-instances/:id", app.UpdateNPMInstance)
+			mut.DELETE("/npm-instances/:id", app.DeleteNPMInstance)
+			mut.POST("/npm-instances/:id/test", app.TestNPMInstance)
+			mut.POST("/sync/docker", app.DockerSync)
+			mut.POST("/sync/npm", app.NPMSync)
+			mut.POST("/reconcile", app.Reconcile)
+			mut.POST("/monitors", app.CreateKumaMonitor)
+			mut.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
+			mut.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
+			mut.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
+			mut.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
+			mut.POST("/service-links", app.CreateServiceLink)
+			mut.PUT("/service-links/:id", app.UpdateServiceLink)
+			mut.DELETE("/service-links/:id", app.DeleteServiceLink)
+			mut.POST("/service-links/:id/refresh", app.RefreshServiceLink)
+			mut.POST("/notify/test", app.NotifyTest)
+			mut.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
+			mut.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
+			mut.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
+			mut.POST("/authelia/sync", app.AutheliaSync)
+			mut.POST("/authelia-instances", app.CreateAutheliaInstance)
+			mut.PUT("/authelia-instances/:id", app.UpdateAutheliaInstance)
+			mut.DELETE("/authelia-instances/:id", app.DeleteAutheliaInstance)
+			mut.POST("/authelia-instances/:id/test", app.TestAutheliaInstance)
+		}
 	}
 
 	return r
@@ -1723,5 +1780,357 @@ func TestAutheliaCoverage_Endpoint(t *testing.T) {
 	}
 	if byID[i2.ID].Policy != "one_factor" {
 		t.Errorf("expected missing instance policy one_factor, got %s", byID[i2.ID].Policy)
+	}
+}
+
+// ---- api-authentication security tests (tasks 3.1, 3.2) ----
+
+func TestMutations_RequireSessionAndToken(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+	body := `{"compose_path":"/tmp/should-not-exist"}`
+
+	// 1. Anonymous (no session, no token) → 401
+	req := httptest.NewRequest("POST", "/api/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous mutation: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 2. Session only, no bearer token → 401, no write
+	req = authRequestNoToken(t, "POST", "/api/settings", body, sessionID)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("session-only mutation: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "missing bearer token" {
+		t.Errorf("session-only mutation: expected 'missing bearer token', got %q", resp["error"])
+	}
+	if s := app.settings(); s.ComposePath == "/tmp/should-not-exist" {
+		t.Error("session-only mutation must not persist settings")
+	}
+
+	// 3. Token only, no session → 401 (authMiddleware runs before bearer check)
+	testTokensMu.Lock()
+	secret := testTokens[sessionID]
+	testTokensMu.Unlock()
+	req = authRequestWithToken(t, "POST", "/api/settings", body, "", secret)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("token-only mutation: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 4. Malformed/unknown token → 401, no write
+	req = authRequestWithToken(t, "POST", "/api/settings", body, sessionID, "not-a-real-token")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown token mutation: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "invalid bearer token" {
+		t.Errorf("unknown token: expected 'invalid bearer token', got %q", resp["error"])
+	}
+	if s := app.settings(); s.ComposePath == "/tmp/should-not-exist" {
+		t.Error("unknown-token mutation must not persist settings")
+	}
+
+	// 5. Valid session + token → 200 and setting persisted
+	req = authRequest(t, "POST", "/api/settings", body, sessionID)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("valid mutation: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if s := app.settings(); s.ComposePath != "/tmp/should-not-exist" {
+		t.Errorf("expected compose_path to be persisted, got %q", s.ComposePath)
+	}
+}
+
+func TestMutations_ExpiredTokenRejected(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID, userID := createTestSessionRaw(t, app)
+	body := `{"compose_path":"/tmp/expired-no-write"}`
+
+	past := time.Now().Add(-1 * time.Hour)
+	expiredSecret := "expired-secret-value"
+	if _, err := app.database.CreateAPIToken(userID, "expired", hashToken(expiredSecret), &past); err != nil {
+		t.Fatalf("create expired token: %v", err)
+	}
+
+	req := authRequestWithToken(t, "POST", "/api/settings", body, sessionID, expiredSecret)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expired token mutation: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "token expired" {
+		t.Errorf("expected 'token expired', got %q", resp["error"])
+	}
+	if s := app.settings(); s.ComposePath == "/tmp/expired-no-write" {
+		t.Error("expired-token mutation must not persist settings")
+	}
+}
+
+func TestMutations_RevokedTokenRejected(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID, userID := createTestSessionRaw(t, app)
+	body := `{"compose_path":"/tmp/revoked-no-write"}`
+
+	revokedSecret := "revoked-secret-value"
+	id, err := app.database.CreateAPIToken(userID, "revoked", hashToken(revokedSecret), nil)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	if err := app.database.RevokeAPIToken(id); err != nil {
+		t.Fatalf("revoke token: %v", err)
+	}
+
+	req := authRequestWithToken(t, "POST", "/api/settings", body, sessionID, revokedSecret)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token mutation: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "token revoked" {
+		t.Errorf("expected 'token revoked', got %q", resp["error"])
+	}
+	if s := app.settings(); s.ComposePath == "/tmp/revoked-no-write" {
+		t.Error("revoked-token mutation must not persist settings")
+	}
+}
+
+func TestTokenLifecycle_CreateListRevokeRotate(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Create
+	req := authRequest(t, "POST", "/api/tokens", `{"name":"cli","expires_in_days":30}`, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create token: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		ID    int64  `json:"id"`
+		Name  string `json:"name"`
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created.ID == 0 || created.Token == "" || created.Name != "cli" {
+		t.Fatalf("unexpected create response: %+v", created)
+	}
+
+	// List — metadata only, no secret, no hash
+	req = authRequest(t, "GET", "/api/tokens", "", sessionID)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list tokens: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var listed []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	found := false
+	for _, tok := range listed {
+		if int64(tok["id"].(float64)) == created.ID {
+			found = true
+			if _, hasSecret := tok["token"]; hasSecret {
+				t.Error("list must not expose token secret")
+			}
+			if _, hasHash := tok["hash"]; hasHash {
+				t.Error("list must not expose token hash")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("created token %d not in list: %v", created.ID, listed)
+	}
+
+	// The created secret works for mutations
+	req = authRequestWithToken(t, "POST", "/api/settings", `{"compose_path":"/tmp/token-works"}`, sessionID, created.Token)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("created token mutation: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Rotate — new secret returned, old one stops working
+	req = authRequest(t, "POST", fmt.Sprintf("/api/tokens/%d/rotate", created.ID), "", sessionID)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rotate token: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var rotated struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&rotated); err != nil {
+		t.Fatalf("decode rotate: %v", err)
+	}
+	if rotated.Token == "" || rotated.Token == created.Token {
+		t.Fatalf("rotate must return a fresh secret: %+v", rotated)
+	}
+	req = authRequestWithToken(t, "POST", "/api/settings", `{"compose_path":"/tmp/old-token-dead"}`, sessionID, created.Token)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("old secret after rotate: expected 401, got %d", w.Code)
+	}
+	req = authRequestWithToken(t, "POST", "/api/settings", `{"compose_path":"/tmp/new-token-works"}`, sessionID, rotated.Token)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("new secret after rotate: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Revoke — token stops working
+	req = authRequest(t, "POST", fmt.Sprintf("/api/tokens/%d/revoke", created.ID), "", sessionID)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke token: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	req = authRequestWithToken(t, "POST", "/api/settings", `{"compose_path":"/tmp/revoked-dead"}`, sessionID, rotated.Token)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked secret: expected 401, got %d", w.Code)
+	}
+}
+
+func TestTokenLifecycle_OwnershipEnforced(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	// Second user owns a token; first user must not manage it.
+	otherSession, otherID := createTestUser(t, app, "other")
+	otherTokenID, err := app.database.CreateAPIToken(otherID, "other-token", hashToken("other-secret"), nil)
+	if err != nil {
+		t.Fatalf("create other token: %v", err)
+	}
+
+	for _, path := range []string{
+		fmt.Sprintf("/api/tokens/%d/revoke", otherTokenID),
+		fmt.Sprintf("/api/tokens/%d/rotate", otherTokenID),
+	} {
+		req := authRequest(t, "POST", path, "", sessionID)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%s: expected 403, got %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+
+	// The other user's token still works (not revoked/rotated by the first user).
+	req := authRequestWithToken(t, "POST", "/api/settings", `{"compose_path":"/tmp/other-ok"}`, otherSession, "other-secret")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("other user's token after cross-user attempt: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTokenLifecycle_OneTimeSecret(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID, _ := createTestSessionRaw(t, app)
+
+	req := authRequest(t, "POST", "/api/tokens", `{"name":"onetime"}`, sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create token: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Token == "" {
+		t.Fatal("create must return the secret once")
+	}
+
+	// DB stores only the hash, never the plaintext secret.
+	stored, err := app.database.GetAPITokenByID(created.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("get stored token: %v", err)
+	}
+	if stored.Hash == created.Token {
+		t.Error("DB must not store the plaintext secret")
+	}
+	if stored.Hash != hashToken(created.Token) {
+		t.Error("DB must store the SHA-256 hash of the secret")
+	}
+
+	// The secret is not returned again by any endpoint.
+	req = authRequest(t, "GET", "/api/tokens", "", sessionID)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list tokens: expected 200, got %d", w.Code)
+	}
+	var listed []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	for _, tok := range listed {
+		if s, ok := tok["token"].(string); ok && s != "" {
+			t.Error("token secret leaked in list response")
+		}
+		if s, ok := tok["hash"].(string); ok && s != "" {
+			t.Error("token hash leaked in list response")
+		}
+	}
+
+	// A second user cannot see the first user's token metadata.
+	otherSession, _ := createTestUser(t, app, "other")
+	req = authRequest(t, "GET", "/api/tokens", "", otherSession)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("other user list: expected 200, got %d", w.Code)
+	}
+	var otherList []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&otherList); err != nil {
+		t.Fatalf("decode other list: %v", err)
+	}
+	for _, tok := range otherList {
+		if int64(tok["id"].(float64)) == created.ID {
+			t.Error("token metadata leaked to another user")
+		}
+	}
+}
+
+func TestTokenLifecycle_RequiresSession(t *testing.T) {
+	_, r := setupTest(t)
+	// No session → 401 on all token lifecycle endpoints.
+	for _, tc := range []struct{ method, path string }{
+		{"POST", "/api/tokens"},
+		{"GET", "/api/tokens"},
+		{"POST", "/api/tokens/1/revoke"},
+		{"POST", "/api/tokens/1/rotate"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s without session: expected 401, got %d", tc.method, tc.path, w.Code)
+		}
 	}
 }

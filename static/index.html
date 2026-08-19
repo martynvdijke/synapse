@@ -698,13 +698,17 @@
                                 </div>
                             </div>
                             <div class="mb-2">
-                                <label class="form-label">TRMNL API Token</label>
-                                <input class="form-control form-control-sm" type="password" id="s-trmnl-token" placeholder="Set a token to secure the TRMNL stats endpoint" style="max-width:400px" autocomplete="new-password">
-                                <div class="form-text">Used to authenticate TRMNL e-ink devices polling <code>/api/v1/trmnl/stats</code>.</div>
+                                <label class="form-label">API Tokens</label>
+                                <div class="form-text mb-2">Mutations require a bearer token in addition to your session. Tokens are shown once at creation — store them somewhere safe.</div>
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <input class="form-control form-control-sm" id="s-token-name" placeholder="Token name (e.g. laptop, ci)" style="max-width:200px" autocomplete="off">
+                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="createToken()">Create token</button>
+                                </div>
+                                <div id="token-list" class="small"></div>
                             </div>
-                            <div class="mb-2 d-none" id="trmnl-url-section">
+                            <div class="mb-2" id="trmnl-url-section">
                                 <label class="form-label">TRMNL Polling URLs</label>
-                                <div class="form-text mb-2">Paste one of these into your TRMNL device's polling URL (with the token as a <code>Bearer</code> header or <code>?token=</code> query):</div>
+                                <div class="form-text mb-2">Paste one of these into your TRMNL device's polling URL — the endpoint is public read-only, no token needed:</div>
                                 <div id="trmnl-url-list" class="mb-2"></div>
                             </div>
                         </div>

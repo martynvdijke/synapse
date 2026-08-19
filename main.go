@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,6 +40,7 @@ var version = "1.18.1"
 
 type sessionInfo struct {
 	Expiry time.Time
+	UserID int64
 }
 
 var (
@@ -89,6 +90,60 @@ func authMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
 			return
 		}
+		c.Set("user_id", s.UserID)
+		c.Next()
+	}
+}
+
+// generateAPIToken returns a new 64-character hex bearer secret (32 random
+// bytes). Only its SHA-256 hash is persisted; the plaintext is returned to the
+// caller exactly once.
+func generateAPIToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+func hashToken(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// bearerTokenMiddleware requires a valid, non-revoked, non-expired bearer API
+// token on top of the session authentication applied by authMiddleware. It
+// stores the token id and owner id in the gin context for handlers that need
+// them. Failure aborts with 401 before any handler runs, so no write can occur.
+func (app *App) bearerTokenMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth := c.GetHeader("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			return
+		}
+		secret := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		if secret == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			return
+		}
+		token, err := app.database.GetAPITokenByHash(hashToken(secret))
+		if err != nil || token == nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid bearer token"})
+			return
+		}
+		if token.RevokedAt != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token revoked"})
+			return
+		}
+		if token.ExpiresAt != nil && time.Now().After(*token.ExpiresAt) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token expired"})
+			return
+		}
+		c.Set("api_token_id", token.ID)
+		c.Set("api_token_owner_id", token.OwnerID)
+		// Best-effort last-used tracking; never fail the request on a write error.
+		_ = app.database.TouchAPIToken(token.ID)
 		c.Next()
 	}
 }
@@ -191,6 +246,10 @@ func main() {
 	}
 	if err := database.MigrateNPMInstances(legacySettings); err != nil {
 		slog.Warn("npm instance migration failed", "error", err)
+	}
+	// Migrate the legacy TRMNL placeholder token into the API token store.
+	if err := database.MigrateTrmnlToken(); err != nil {
+		slog.Warn("trmnl token migration failed", "error", err)
 	}
 
 	app := &App{
@@ -298,73 +357,86 @@ func main() {
 	// the handler performs its own token verification.
 	apiV1 := r.Group("/api/v1")
 	{
+		// Public read-only integration endpoint for TRMNL devices. Per spec
+		// (api-authentication), this stays fully unauthenticated.
 		apiV1.GET("/trmnl/stats", app.TrmnlStats)
 	}
 
 	api := r.Group("/api")
 	api.Use(authMiddleware())
 	{
+		// Session-only routes: reads, logout, and token lifecycle. Token
+		// lifecycle is the bootstrap path — a token cannot be required to
+		// create the first token — and is owner-scoped to the session user.
 		api.POST("/logout", app.HandleLogout)
 		api.GET("/settings", app.GetSettings)
-		api.POST("/settings", app.SaveSettings)
-		api.POST("/test/npm", app.TestNPM)
-		api.GET("/kuma-instances", app.ListKumaInstances)
-		api.POST("/kuma-instances", app.CreateKumaInstance)
-		api.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
-		api.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
-		api.POST("/kuma-instances/:id/test", app.TestKumaInstance)
-		api.GET("/npm-instances", app.ListNPMInstances)
-		api.POST("/npm-instances", app.CreateNPMInstance)
-		api.PUT("/npm-instances/:id", app.UpdateNPMInstance)
-		api.DELETE("/npm-instances/:id", app.DeleteNPMInstance)
-		api.POST("/npm-instances/:id/test", app.TestNPMInstance)
-		api.POST("/sync/docker", app.DockerSync)
-		api.POST("/sync/npm", app.NPMSync)
+		api.GET("/status", app.Status)
 		api.GET("/sync/progress", app.ProgressSSE)
 		api.GET("/sync/history", app.SyncHistory)
-		api.POST("/reconcile", app.Reconcile)
 		api.GET("/reconcile/runs", app.ReconcileRuns)
 		api.GET("/docker/events", app.DockerEvents)
 		api.GET("/events", app.EventsFeed)
 		api.GET("/services", app.Services)
 		api.GET("/proxies", app.Proxies)
 		api.GET("/monitors", app.KumaMonitors)
-		api.POST("/monitors", app.CreateKumaMonitor)
-		api.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
-		api.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
 		api.GET("/monitors/:id/stats", app.KumaMonitorStats)
 		api.GET("/npm/proxy-hosts", app.NPMProxyHosts)
-		api.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
-		api.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
 		api.GET("/service-links", app.ServiceLinks)
-		api.POST("/service-links", app.CreateServiceLink)
-		api.PUT("/service-links/:id", app.UpdateServiceLink)
-		api.DELETE("/service-links/:id", app.DeleteServiceLink)
-		api.POST("/service-links/:id/refresh", app.RefreshServiceLink)
-		api.GET("/status", app.Status)
-
-		// Notification endpoints
-		api.POST("/notify/test", app.NotifyTest)
 		api.GET("/notify/missing", app.NotifyMissing)
-
-		// Logs endpoints
 		api.GET("/logs", app.LogsHandler)
 		api.GET("/logs/stream", app.LogsStreamSSE)
-
-		// Authelia endpoints
 		api.GET("/authelia/status", app.AutheliaStatus)
 		api.GET("/authelia/coverage", app.AutheliaCoverage)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
-		api.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
 		api.GET("/authelia/temp-access", app.AutheliaTempAccess)
-		api.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
-		api.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
-		api.POST("/authelia/sync", app.AutheliaSync)
 		api.GET("/authelia-instances", app.ListAutheliaInstances)
-		api.POST("/authelia-instances", app.CreateAutheliaInstance)
-		api.PUT("/authelia-instances/:id", app.UpdateAutheliaInstance)
-		api.DELETE("/authelia-instances/:id", app.DeleteAutheliaInstance)
-		api.POST("/authelia-instances/:id/test", app.TestAutheliaInstance)
+		api.GET("/kuma-instances", app.ListKumaInstances)
+		api.GET("/npm-instances", app.ListNPMInstances)
+
+		// Token lifecycle (session-only, owner-scoped)
+		api.POST("/tokens", app.CreateToken)
+		api.GET("/tokens", app.ListTokens)
+		api.POST("/tokens/:id/revoke", app.RevokeToken)
+		api.POST("/tokens/:id/rotate", app.RotateToken)
+
+		// Mutation subgroup: every state-changing route below requires a valid
+		// bearer API token in addition to the session. Future mutation routes
+		// MUST be registered here so the protection cannot be omitted.
+		mut := api.Group("")
+		mut.Use(app.bearerTokenMiddleware())
+		{
+			mut.POST("/settings", app.SaveSettings)
+			mut.POST("/test/npm", app.TestNPM)
+			mut.POST("/kuma-instances", app.CreateKumaInstance)
+			mut.PUT("/kuma-instances/:id", app.UpdateKumaInstance)
+			mut.DELETE("/kuma-instances/:id", app.DeleteKumaInstance)
+			mut.POST("/kuma-instances/:id/test", app.TestKumaInstance)
+			mut.POST("/npm-instances", app.CreateNPMInstance)
+			mut.PUT("/npm-instances/:id", app.UpdateNPMInstance)
+			mut.DELETE("/npm-instances/:id", app.DeleteNPMInstance)
+			mut.POST("/npm-instances/:id/test", app.TestNPMInstance)
+			mut.POST("/sync/docker", app.DockerSync)
+			mut.POST("/sync/npm", app.NPMSync)
+			mut.POST("/reconcile", app.Reconcile)
+			mut.POST("/monitors", app.CreateKumaMonitor)
+			mut.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
+			mut.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
+			mut.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
+			mut.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
+			mut.POST("/service-links", app.CreateServiceLink)
+			mut.PUT("/service-links/:id", app.UpdateServiceLink)
+			mut.DELETE("/service-links/:id", app.DeleteServiceLink)
+			mut.POST("/service-links/:id/refresh", app.RefreshServiceLink)
+			mut.POST("/notify/test", app.NotifyTest)
+			mut.POST("/authelia/alerts/:id/resolve", app.AutheliaResolveAlert)
+			mut.POST("/authelia/temp-access", app.AutheliaAddTempAccess)
+			mut.POST("/authelia/temp-access/:id/revoke", app.AutheliaRevokeTempAccess)
+			mut.POST("/authelia/sync", app.AutheliaSync)
+			mut.POST("/authelia-instances", app.CreateAutheliaInstance)
+			mut.PUT("/authelia-instances/:id", app.UpdateAutheliaInstance)
+			mut.DELETE("/authelia-instances/:id", app.DeleteAutheliaInstance)
+			mut.POST("/authelia-instances/:id/test", app.TestAutheliaInstance)
+		}
 	}
 
 	// Start periodic sync scheduler (if SYNC_INTERVAL > 0)
@@ -453,14 +525,14 @@ func (app *App) HandleLogin(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
 			return
 		}
-		_, err = app.database.CreateAdminUser(input.Username, string(hash))
+		userID, err := app.database.CreateAdminUser(input.Username, string(hash))
 		if err != nil {
 			c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
 			return
 		}
 		sessionID := generateSessionID()
 		sessionStoreMu.Lock()
-		sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour)}
+		sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour), UserID: userID}
 		sessionStoreMu.Unlock()
 		setSessionCookie(c, sessionID)
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -479,7 +551,7 @@ func (app *App) HandleLogin(c *gin.Context) {
 
 	sessionID := generateSessionID()
 	sessionStoreMu.Lock()
-	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour)}
+	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour), UserID: user.ID}
 	sessionStoreMu.Unlock()
 	setSessionCookie(c, sessionID)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -494,6 +566,137 @@ func (app *App) HandleLogout(c *gin.Context) {
 	}
 	c.SetCookie("session", "", -1, "/", "", false, true)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// sessionUserID returns the authenticated user id set by authMiddleware.
+func sessionUserID(c *gin.Context) (int64, bool) {
+	v, ok := c.Get("user_id")
+	if !ok {
+		return 0, false
+	}
+	id, ok := v.(int64)
+	return id, ok
+}
+
+// CreateToken provisions a new bearer API token owned by the session user.
+// The plaintext secret is returned exactly once; only its hash is stored.
+func (app *App) CreateToken(c *gin.Context) {
+	userID, ok := sessionUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	var input struct {
+		Name           string `json:"name"`
+		ExpiresInDays  int    `json:"expires_in_days"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if strings.TrimSpace(input.Name) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	var expiresAt *time.Time
+	if input.ExpiresInDays > 0 {
+		t := time.Now().Add(time.Duration(input.ExpiresInDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
+	secret := generateAPIToken()
+	if secret == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		return
+	}
+	id, err := app.database.CreateAPIToken(userID, input.Name, hashToken(secret), expiresAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":         id,
+		"name":       input.Name,
+		"token":      secret, // one-time display
+		"created_at": time.Now(),
+		"expires_at": expiresAt,
+	})
+}
+
+// ListTokens returns metadata for the session user's tokens. Secrets are never
+// included; only the hash is stored and it is not exposed.
+func (app *App) ListTokens(c *gin.Context) {
+	userID, ok := sessionUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	tokens, err := app.database.ListAPITokens(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
+		return
+	}
+	c.JSON(http.StatusOK, tokens)
+}
+
+// getOwnedToken loads a token by id and verifies it belongs to the session
+// user. Writes the error response and returns nil when access is denied.
+func (app *App) getOwnedToken(c *gin.Context) *db.APIToken {
+	userID, ok := sessionUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return nil
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid token id"})
+		return nil
+	}
+	token, err := app.database.GetAPITokenByID(id)
+	if err != nil || token == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
+		return nil
+	}
+	if token.OwnerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "token belongs to another user"})
+		return nil
+	}
+	return token
+}
+
+// RevokeToken revokes an owned token. Revoked tokens fail bearer validation
+// immediately, so no mutation can be performed with them.
+func (app *App) RevokeToken(c *gin.Context) {
+	token := app.getOwnedToken(c)
+	if token == nil {
+		return
+	}
+	if err := app.database.RevokeAPIToken(token.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "revoked", "id": token.ID})
+}
+
+// RotateToken replaces an owned token's secret with a fresh one. The previous
+// secret stops working immediately; the new secret is returned once.
+func (app *App) RotateToken(c *gin.Context) {
+	token := app.getOwnedToken(c)
+	if token == nil {
+		return
+	}
+	secret := generateAPIToken()
+	if secret == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		return
+	}
+	if err := app.database.RotateAPIToken(token.ID, hashToken(secret)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate token"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":    token.ID,
+		"token": secret, // one-time display
+	})
 }
 
 func (app *App) Dashboard(c *gin.Context) {
@@ -1448,28 +1651,6 @@ func (app *App) Status(c *gin.Context) {
 	})
 }
 
-// requireTrmnlToken verifies the TRMNL API token from the Authorization
-// Bearer header or ?token= query param. It writes the error response and
-// returns false when the request is not authorized.
-func (app *App) requireTrmnlToken(c *gin.Context) bool {
-	configured := app.settings().TrmnlApiToken
-	if configured == "" {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "TRMNL API token not configured"})
-		return false
-	}
-	submitted := ""
-	if auth := c.GetHeader("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-		submitted = strings.TrimPrefix(auth, "Bearer ")
-	} else if tok, ok := c.GetQuery("token"); ok {
-		submitted = tok
-	}
-	if submitted == "" || subtle.ConstantTimeCompare([]byte(submitted), []byte(configured)) != 1 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return false
-	}
-	return true
-}
-
 // TrmnlStats returns a flat, TRMNL-template-friendly stats payload for
 // kumaMonitorCount returns the live monitor total (and how many are up)
 // across all connected Kuma instances — matching what the Kuma tab shows.
@@ -1504,10 +1685,6 @@ func (app *App) kumaMonitorCount(clients []kuma.InstanceClient) (total, up int) 
 // e-ink wall displays. It reuses the Status computation path but flattens
 // the response so Liquid templates can read IDX_0.<field> directly.
 func (app *App) TrmnlStats(c *gin.Context) {
-	if !app.requireTrmnlToken(c) {
-		return
-	}
-
 	s := app.settings()
 
 	// Docker health

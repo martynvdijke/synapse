@@ -4,6 +4,7 @@
 // ── api.js ──────────────────────────────────────────────────────
 declare function esc(s: string): string;
 declare function apiFetch(url: string, opts?: RequestInit): Promise<Response>;
+declare function getToken(): Promise<string>;
 declare function logout(): void;
 declare function emptyRow(colspan: number, msg: string): string;
 declare function loadingRow(colspan: number): string;
@@ -56,6 +57,10 @@ declare function deleteMonitor(): void;
 declare function loadSettings(): void;
 declare function saveSettings(e: Event): void;
 declare function copyTrmnlUrl(btn: HTMLElement): void;
+declare function loadTokens(): void;
+declare function createToken(): void;
+declare function revokeToken(id: number): void;
+declare function rotateToken(id: number): void;
 declare function testConnection(service: string): void;
 declare function notifyTest(): void;
 declare function loadNotifyMissing(): void;

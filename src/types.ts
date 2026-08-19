@@ -249,7 +249,6 @@ export interface SettingsResponse {
   authelia_default_policy: string;
   authelia_sync_overrides: string;
   eink_enabled?: boolean;
-  trmnl_api_token?: string;
   notify_enabled?: boolean;
   notify_interval_minutes?: number;
   gotify_url?: string;
@@ -275,6 +274,16 @@ export interface NotifyMissingResponse {
   fetched_at: string;
   degraded: boolean;
   reasons?: string[];
+}
+
+export interface APIToken {
+  id: number;
+  owner_id: number;
+  name: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
 }
 
 export interface SyncRun {

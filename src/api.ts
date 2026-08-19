@@ -1,17 +1,73 @@
 // API fetch wrapper and HTML helpers
 
-export function esc(s: string): string {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+const TOKEN_KEY = 'synapse_api_token';
+let tokenPromise: Promise<string> | null = null;
 
-export function apiFetch(url: string, opts?: RequestInit): Promise<Response> {
-    return fetch(url, opts).then(function(r) {
+// getToken returns the browser's bearer token, provisioning one on first use.
+// The secret is stored in localStorage; the server only ever stores its hash.
+function getToken(): Promise<string> {
+    var existing = localStorage.getItem(TOKEN_KEY);
+    if (existing) return Promise.resolve(existing);
+    if (tokenPromise) return tokenPromise;
+    tokenPromise = fetch('/api/tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'browser' }),
+        credentials: 'same-origin'
+    }).then(function(r) {
         if (r.status === 401) {
             window.location.href = '/login';
             throw new Error('not authenticated');
         }
+        if (!r.ok) throw new Error('token provisioning failed');
+        return r.json();
+    }).then(function(d) {
+        localStorage.setItem(TOKEN_KEY, d.token);
+        return d.token as string;
+    }).finally(function() {
+        tokenPromise = null;
+    });
+    return tokenPromise;
+}
+
+function redirectToLogin(): never {
+    window.location.href = '/login';
+    throw new Error('not authenticated');
+}
+
+function withBearer(opts?: RequestInit, token?: string): RequestInit {
+    var headers = new Headers(opts && opts.headers);
+    if (token) headers.set('Authorization', 'Bearer ' + token);
+    return Object.assign({}, opts, { headers: headers });
+}
+
+export function apiFetch(url: string, opts?: RequestInit): Promise<Response> {
+    var method = (opts && opts.method) || 'GET';
+    var isMutation = method !== 'GET' && method !== 'HEAD';
+    if (!isMutation) {
+        return fetch(url, opts).then(function(r) {
+            if (r.status === 401) redirectToLogin();
+            return r;
+        });
+    }
+    // Mutations require a bearer token in addition to the session cookie.
+    return getToken().then(function(token) {
+        return fetch(url, withBearer(opts, token));
+    }).then(function(r) {
+        if (r.status !== 401) return r;
+        // Token may be revoked/expired — clear it, provision a fresh one, retry once.
+        localStorage.removeItem(TOKEN_KEY);
+        return getToken().then(function(token) {
+            return fetch(url, withBearer(opts, token));
+        });
+    }).then(function(r) {
+        if (r.status === 401) redirectToLogin();
         return r;
     });
+}
+
+export function esc(s: string): string {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 export function logout(): void {
@@ -143,6 +199,7 @@ export function getAutheliaInstances(): Promise<Response> {
 // Attach to window for inline event handlers
 window.esc = esc;
 window.apiFetch = apiFetch;
+window.getToken = getToken;
 window.logout = logout;
 window.emptyRow = emptyRow;
 window.loadingRow = loadingRow;

@@ -1,5 +1,5 @@
 // Settings tab logic
-import type { KumaInstanceJSON, NPMInstanceJSON, AutheliaInstanceJSON, SettingsResponse } from './types';
+import type { KumaInstanceJSON, NPMInstanceJSON, AutheliaInstanceJSON, SettingsResponse, APIToken } from './types';
 
 export function loadSettings(): void {
     apiFetch('/api/settings').then(function(r){return r.json() as Promise<SettingsResponse>;}).then(function(s) {
@@ -11,9 +11,7 @@ export function loadSettings(): void {
         (document.getElementById('s-auth-overrides') as HTMLTextAreaElement).value = (s.authelia_sync_overrides as string) || '';
         var eink = document.getElementById('s-eink-enabled') as HTMLInputElement | null;
         if (eink) eink.checked = !!(s.eink_enabled);
-        var trmnlToken = document.getElementById('s-trmnl-token') as HTMLInputElement | null;
-        if (trmnlToken) trmnlToken.value = (s.trmnl_api_token as string) || '';
-        renderTrmnlUrls(s.trmnl_api_token || '');
+        renderTrmnlUrls();
         var notifyEnabled = document.getElementById('s-notify-enabled') as HTMLInputElement | null;
         if (notifyEnabled) notifyEnabled.checked = !!(s.notify_enabled);
         var notifyInterval = document.getElementById('s-notify-interval') as HTMLInputElement | null;
@@ -51,17 +49,16 @@ export function loadSettings(): void {
     });
 }
 
-function renderTrmnlUrls(token: string): void {
+function renderTrmnlUrls(): void {
     var section = document.getElementById('trmnl-url-section');
     var list = document.getElementById('trmnl-url-list');
     if (!section || !list) return;
-    if (!token) { section.classList.add('d-none'); list.innerHTML = ''; return; }
     section.classList.remove('d-none');
-    var base = window.location.origin + '/api/v1/trmnl/stats?token=' + encodeURIComponent(token);
+    var base = window.location.origin + '/api/v1/trmnl/stats';
     var layouts = ['full', 'half_horizontal', 'half_vertical', 'quadrant'];
     var html = '';
     layouts.forEach(function(layout) {
-        var url = base + '&layout=' + layout;
+        var url = base + '?layout=' + layout;
         html += '<div class="input-group input-group-sm mb-1">'
             + '<span class="input-group-text" style="min-width:120px">' + layout + '</span>'
             + '<input class="form-control" type="text" readonly value="' + url + '">'
@@ -69,6 +66,71 @@ function renderTrmnlUrls(token: string): void {
             + '</div>';
     });
     list.innerHTML = html;
+}
+
+// ─── API Token management ───────────────────────────────────────
+
+export function loadTokens(): void {
+    var listEl = document.getElementById('token-list');
+    if (!listEl) return;
+    apiFetch('/api/tokens').then(function(r){return r.json() as Promise<APIToken[]>;}).then(function(tokens) {
+        if (!tokens || !tokens.length) {
+            listEl.innerHTML = '<span class="text-muted">No API tokens yet. Create one to use with scripts or the CLI.</span>';
+            return;
+        }
+        var html = '';
+        tokens.forEach(function(tok) {
+            var revoked = tok.revoked_at ? '<span class="badge bg-danger ms-1">Revoked</span>' : '';
+            var expires = tok.expires_at ? new Date(tok.expires_at).toLocaleString() : 'never';
+            var actions = tok.revoked_at
+                ? ''
+                : '<button type="button" class="btn btn-outline-info btn-sm" onclick="rotateToken(' + tok.id + ')">Rotate</button>'
+                + '<button type="button" class="btn btn-outline-danger btn-sm" onclick="revokeToken(' + tok.id + ')">Revoke</button>';
+            html += '<div class="d-flex flex-row align-items-center justify-content-between mb-1">'
+                + '<div class="flex-grow-1">'
+                + '<span class="fw-semibold">' + esc(tok.name) + '</span>' + revoked
+                + '<div class="small text-muted">Created ' + new Date(tok.created_at).toLocaleString() + ' &middot; Expires ' + expires + '</div>'
+                + '</div>'
+                + '<div class="d-flex gap-1">' + actions + '</div>'
+                + '</div>';
+        });
+        listEl.innerHTML = html;
+    }).catch(function(err: Error) {
+        if (err.message === 'not authenticated') return;
+        listEl.innerHTML = '<span class="text-danger">Failed to load tokens</span>';
+    });
+}
+
+export function createToken(): void {
+    var name = ((document.getElementById('s-token-name') as HTMLInputElement)?.value || '').trim();
+    if (!name) { toast('Token name is required', 'error'); return; }
+    apiFetch('/api/tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }) })
+        .then(function(r) { if (!r.ok) throw new Error('Create failed'); return r.json() as Promise<{token: string}>; })
+        .then(function(d) {
+            alert('Store this token now — it will not be shown again:\n\n' + d.token);
+            (document.getElementById('s-token-name') as HTMLInputElement).value = '';
+            loadTokens();
+        })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to create token', 'error'); });
+}
+
+export function revokeToken(id: number): void {
+    if (!confirm('Revoke this API token? It will stop working immediately.')) return;
+    apiFetch('/api/tokens/' + id + '/revoke', { method: 'POST' })
+        .then(function(r) { if (!r.ok) throw new Error('Revoke failed'); return r.json(); })
+        .then(function() { toast('Token revoked', 'success'); loadTokens(); })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to revoke token', 'error'); });
+}
+
+export function rotateToken(id: number): void {
+    if (!confirm('Rotate this API token? The current secret will stop working immediately.')) return;
+    apiFetch('/api/tokens/' + id + '/rotate', { method: 'POST' })
+        .then(function(r) { if (!r.ok) throw new Error('Rotate failed'); return r.json() as Promise<{token: string}>; })
+        .then(function(d) {
+            alert('New token — store it now, it will not be shown again:\n\n' + d.token);
+            loadTokens();
+        })
+        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to rotate token', 'error'); });
 }
 
 export function copyTrmnlUrl(btn: HTMLElement): void {
@@ -114,11 +176,7 @@ export function saveSettings(e: Event): void {
         notify_reconcile: (document.getElementById('s-notify-reconcile') as HTMLInputElement)?.checked || false,
         notify_cooldown_minutes: parseInt((document.getElementById('s-notify-cooldown') as HTMLInputElement)?.value || '5', 10) || 5
     };
-    // Only send the TRMNL token when it has a value, so unrelated saves
-    // never wipe a previously configured token (backend is only-sent-fields).
-    var trmnlToken = (document.getElementById('s-trmnl-token') as HTMLInputElement)?.value || '';
-    if (trmnlToken) payload.trmnl_api_token = trmnlToken;
-    // Same for the Gotify token: omit when empty ("Leave blank to keep current").
+    // Only send the Gotify token when it has a value ("Leave blank to keep current").
     var gotifyToken = (document.getElementById('s-gotify-token') as HTMLInputElement)?.value || '';
     if (gotifyToken) payload.gotify_token = gotifyToken;
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -581,6 +639,10 @@ window.saveSettings = saveSettings;
 window.notifyTest = notifyTest;
 window.loadNotifyMissing = loadNotifyMissing;
 window.copyTrmnlUrl = copyTrmnlUrl;
+window.loadTokens = loadTokens;
+window.createToken = createToken;
+window.revokeToken = revokeToken;
+window.rotateToken = rotateToken;
 window.testConnection = testConnection;
 window.loadKumaInstances = loadKumaInstances;
 window.showKumaInstanceForm = showKumaInstanceForm;

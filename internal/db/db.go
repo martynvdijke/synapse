@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"strconv"
 	"time"
 
@@ -123,6 +125,20 @@ type AdminUser struct {
 	Password string `json:"-"`
 }
 
+// APIToken is a bearer credential used to authorize mutation requests.
+// Only the SHA-256 hash of the secret is persisted; the plaintext secret is
+// shown exactly once at creation/rotation time and never stored or logged.
+type APIToken struct {
+	ID         int64      `json:"id"`
+	OwnerID    int64      `json:"owner_id"`
+	Name       string     `json:"name"`
+	Hash       string     `json:"-"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
 type AutheliaInstance struct {
 	ID             int64     `json:"id"`
 	Name           string    `json:"name"`
@@ -216,6 +232,9 @@ func Open(path string) (*DB, error) {
 	if err := db.createAutheliaTables(); err != nil {
 		return nil, err
 	}
+	if err := db.createAPITokensTable(); err != nil {
+		return nil, err
+	}
 	return db, nil
 }
 
@@ -254,6 +273,30 @@ func (db *DB) createAutheliaTables() error {
 	return err
 }
 
+// createAPITokensTable creates the bearer-token store. The migration is
+// reversible: dropping this table (and restoring the legacy trmnl_api_token
+// setting) restores the pre-change behavior, since no other table references it.
+func (db *DB) createAPITokensTable() error {
+	_, err := db.rawDB.Exec(`CREATE TABLE IF NOT EXISTS api_tokens (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		owner_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		hash TEXT NOT NULL UNIQUE,
+		created_at DATETIME NOT NULL,
+		expires_at DATETIME,
+		revoked_at DATETIME,
+		last_used_at DATETIME
+	)`)
+	if err != nil {
+		return err
+	}
+	if _, err := db.rawDB.Exec(`CREATE INDEX IF NOT EXISTS idx_api_tokens_owner ON api_tokens(owner_id)`); err != nil {
+		return err
+	}
+	_, err = db.rawDB.Exec(`CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(hash)`)
+	return err
+}
+
 func (db *DB) CreateAdminUser(username, passwordHash string) (int64, error) {
 	res, err := db.rawDB.Exec("INSERT INTO admin_users (username, password) VALUES (?, ?)", username, passwordHash)
 	if err != nil {
@@ -278,6 +321,191 @@ func (db *DB) CountAdminUsers() (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// GetFirstAdminUser returns the admin user with the lowest id (the original
+// setup user). Used as the default owner for migrated tokens.
+func (db *DB) GetFirstAdminUser() (*AdminUser, error) {
+	var u AdminUser
+	err := db.rawDB.QueryRow("SELECT id, username, password FROM admin_users ORDER BY id LIMIT 1").Scan(&u.ID, &u.Username, &u.Password)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// --- API token store ---
+
+// HashToken returns the hex-encoded SHA-256 digest of a token secret. This is
+// the only representation of a token that is ever persisted or compared.
+func HashToken(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+func scanAPIToken(row *sql.Row) (*APIToken, error) {
+	var t APIToken
+	var expiresAt, revokedAt, lastUsedAt sql.NullString
+	err := row.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Hash, &t.CreatedAt, &expiresAt, &revokedAt, &lastUsedAt)
+	if err != nil {
+		return nil, err
+	}
+	if expiresAt.Valid {
+		if ts, err := time.Parse(time.RFC3339, expiresAt.String); err == nil {
+			t.ExpiresAt = &ts
+		}
+	}
+	if revokedAt.Valid {
+		if ts, err := time.Parse(time.RFC3339, revokedAt.String); err == nil {
+			t.RevokedAt = &ts
+		}
+	}
+	if lastUsedAt.Valid {
+		if ts, err := time.Parse(time.RFC3339, lastUsedAt.String); err == nil {
+			t.LastUsedAt = &ts
+		}
+	}
+	return &t, nil
+}
+
+func (db *DB) CreateAPIToken(ownerID int64, name, hash string, expiresAt *time.Time) (int64, error) {
+	var exp interface{}
+	if expiresAt != nil {
+		exp = expiresAt.Format(time.RFC3339)
+	}
+	res, err := db.rawDB.Exec(
+		"INSERT INTO api_tokens (owner_id, name, hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+		ownerID, name, hash, time.Now().Format(time.RFC3339), exp,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (db *DB) GetAPITokenByHash(hash string) (*APIToken, error) {
+	row := db.rawDB.QueryRow(
+		"SELECT id, owner_id, name, hash, created_at, expires_at, revoked_at, last_used_at FROM api_tokens WHERE hash = ?",
+		hash,
+	)
+	t, err := scanAPIToken(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (db *DB) GetAPITokenByID(id int64) (*APIToken, error) {
+	row := db.rawDB.QueryRow(
+		"SELECT id, owner_id, name, hash, created_at, expires_at, revoked_at, last_used_at FROM api_tokens WHERE id = ?",
+		id,
+	)
+	t, err := scanAPIToken(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (db *DB) ListAPITokens(ownerID int64) ([]APIToken, error) {
+	rows, err := db.rawDB.Query(
+		"SELECT id, owner_id, name, hash, created_at, expires_at, revoked_at, last_used_at FROM api_tokens WHERE owner_id = ? ORDER BY created_at DESC",
+		ownerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []APIToken
+	for rows.Next() {
+		var t APIToken
+		var expiresAt, revokedAt, lastUsedAt sql.NullString
+		if err := rows.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Hash, &t.CreatedAt, &expiresAt, &revokedAt, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		if expiresAt.Valid {
+			if ts, err := time.Parse(time.RFC3339, expiresAt.String); err == nil {
+				t.ExpiresAt = &ts
+			}
+		}
+		if revokedAt.Valid {
+			if ts, err := time.Parse(time.RFC3339, revokedAt.String); err == nil {
+				t.RevokedAt = &ts
+			}
+		}
+		if lastUsedAt.Valid {
+			if ts, err := time.Parse(time.RFC3339, lastUsedAt.String); err == nil {
+				t.LastUsedAt = &ts
+			}
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+func (db *DB) RevokeAPIToken(id int64) error {
+	_, err := db.rawDB.Exec("UPDATE api_tokens SET revoked_at = ? WHERE id = ?", time.Now().Format(time.RFC3339), id)
+	return err
+}
+
+func (db *DB) RotateAPIToken(id int64, newHash string) error {
+	_, err := db.rawDB.Exec(
+		"UPDATE api_tokens SET hash = ?, revoked_at = NULL, last_used_at = NULL WHERE id = ?",
+		newHash, id,
+	)
+	return err
+}
+
+func (db *DB) TouchAPIToken(id int64) error {
+	_, err := db.rawDB.Exec("UPDATE api_tokens SET last_used_at = ? WHERE id = ?", time.Now().Format(time.RFC3339), id)
+	return err
+}
+
+func (db *DB) DeleteAPIToken(id int64) error {
+	_, err := db.rawDB.Exec("DELETE FROM api_tokens WHERE id = ?", id)
+	return err
+}
+
+// DeleteSetting removes a settings key. Used by the TRMNL token migration to
+// drop the obsolete placeholder credential after provisioning a real token.
+func (db *DB) DeleteSetting(key string) error {
+	_, err := db.client.Settings.Delete().Where(settings.KeyEQ(key)).Exec(context.Background())
+	return err
+}
+
+// MigrateTrmnlToken provisions an API token from the legacy trmnl_api_token
+// setting (owner = first admin user) and removes the obsolete setting key.
+// Idempotent: if a token with the same hash already exists, only the setting is
+// removed. No-op when the setting is empty or no admin user exists yet.
+func (db *DB) MigrateTrmnlToken() error {
+	s := db.GetSettings(Settings{})
+	if s.TrmnlApiToken == "" {
+		return nil
+	}
+	owner, err := db.GetFirstAdminUser()
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil // fresh install, nothing to migrate
+		}
+		return err
+	}
+	hash := HashToken(s.TrmnlApiToken)
+	existing, err := db.GetAPITokenByHash(hash)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		if _, err := db.CreateAPIToken(owner.ID, "TRMNL (migrated)", hash, nil); err != nil {
+			return err
+		}
+	}
+	return db.DeleteSetting("trmnl_api_token")
 }
 
 func (db *DB) Close() error {

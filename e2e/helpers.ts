@@ -112,6 +112,19 @@ export async function setupBaseMocks(page: Page) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_SETTINGS) });
     }
   });
+  await page.route('**/api/tokens', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, name: 'browser', token: 'test-bearer-token', created_at: '2026-01-01T00:00:00Z', expires_at: null }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+    }
+  });
+  await page.route('**/api/tokens/*/revoke', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'revoked', id: 1 }) });
+  });
+  await page.route('**/api/tokens/*/rotate', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, token: 'rotated-test-token' }) });
+  });
   await page.route('**/api/sync/progress', async (route) => {
     await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'data: {}\n\n' });
   });
