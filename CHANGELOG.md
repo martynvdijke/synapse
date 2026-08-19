@@ -1,3 +1,10 @@
+## [1.18.1](https://github.com/martynvdijke/synapse/compare/v1.18.0...v1.18.1) (2026-08-19)
+
+
+### Performance Improvements
+
+* **dashboard:** speed up UI load with caching, parallel health checks and gzip ([6267266](https://github.com/martynvdijke/synapse/commit/62672669c93415186ff0cc270bf37c7ed52be46b))
+
 # [1.18.0](https://github.com/martynvdijke/synapse/compare/v1.17.5...v1.18.0) (2026-08-18)
 
 
