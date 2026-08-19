@@ -1,3 +1,10 @@
+# [1.19.0](https://github.com/martynvdijke/synapse/compare/v1.18.1...v1.19.0) (2026-08-19)
+
+
+### Features
+
+* **api:** require bearer tokens for mutations and add token lifecycle ([2bb1162](https://github.com/martynvdijke/synapse/commit/2bb116228ffcb1ea116857cbed2aa390bdd622e4))
+
 ## [1.18.1](https://github.com/martynvdijke/synapse/compare/v1.18.0...v1.18.1) (2026-08-19)
 
 
