@@ -9,6 +9,8 @@ import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory, load
 import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance, loadAutheliaInstances, showAutheliaInstanceForm, hideAutheliaInstanceForm, saveAutheliaInstance } from './settings';
 import { loadAutheliaInstanceSelector, loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia';
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs';
+import { getVisibleTabButtons } from './tabVisibility';
+import './tabVisibility';
 
 // Wire SSE refreshAll reference
 setRefreshAll(refreshAll);
@@ -100,13 +102,18 @@ document.getElementById('monitor-detail-close')!.addEventListener('click', funct
     document.getElementById('monitor-detail-panel')!.classList.add('d-none');
 });
 
-// Clickable Docker stat card → switch to Docker tab
+// Clickable Docker stat card → switch to Docker tab (respects hidden tabs)
 function activateDockerTab(): void {
-    var tabBtn = document.getElementById('tab-btn-docker');
-    if (tabBtn) {
-        var tab = bootstrap.Tab.getInstance(tabBtn) || new bootstrap.Tab(tabBtn);
-        tab.show();
+    var tabBtn = document.getElementById('tab-btn-docker') as HTMLElement | null;
+    if (!tabBtn) return;
+    var li = tabBtn.closest('li') as HTMLElement | null;
+    if (li && li.classList.contains('d-none')) {
+        var visible = getVisibleTabButtons();
+        if (!visible.length) return;
+        tabBtn = visible[0];
     }
+    var tab = bootstrap.Tab.getInstance(tabBtn) || new bootstrap.Tab(tabBtn);
+    tab.show();
 }
 document.getElementById('stat-docker-card')!.addEventListener('click', activateDockerTab);
 document.getElementById('stat-docker-card')!.addEventListener('keydown', function(e) {
@@ -140,9 +147,9 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
     });
 });
 
-// WAI-ARIA keyboard navigation for tabs
+// WAI-ARIA keyboard navigation for tabs (skips hidden tabs)
 document.querySelector('.nav-tabs')!.addEventListener('keydown', function(e) {
-    var tabs = Array.from(document.querySelectorAll('[role="tab"]')) as HTMLElement[];
+    var tabs = getVisibleTabButtons();
     var currentIdx = tabs.indexOf(document.activeElement as HTMLElement);
     if (currentIdx === -1) return;
     var ke = e as KeyboardEvent;
