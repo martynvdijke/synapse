@@ -1,3 +1,5 @@
+## [1.19.1](https://github.com/martynvdijke/synapse/compare/v1.19.0...v1.19.1) (2026-08-20)
+
 # [1.19.0](https://github.com/martynvdijke/synapse/compare/v1.18.1...v1.19.0) (2026-08-19)
 
 

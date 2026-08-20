@@ -36,7 +36,7 @@ import (
 	"synapse/internal/telemetry"
 )
 
-var version = "1.19.0"
+var version = "1.19.1"
 
 type sessionInfo struct {
 	Expiry time.Time
