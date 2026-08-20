@@ -250,6 +250,11 @@ test.describe('Docker tab — service links & Authelia coverage', () => {
     // "Auto-create missing targets" is checked by default
     await expect(page.locator('#link-ensure-missing')).toBeChecked();
 
+    // Instance dropdowns live inside collapsible accordion sections — expand them first
+    await page.click('button[aria-controls="collapse-npm-create"]');
+    await page.click('button[aria-controls="collapse-kuma-create"]');
+    await page.click('button[aria-controls="collapse-authelia"]');
+
     // Instance dropdowns are populated; pick an NPM, Kuma and Authelia instance
     await page.waitForFunction(() => (document.getElementById('link-npm-instance') as HTMLSelectElement).options.length > 1);
     await page.selectOption('#link-npm-instance', '1');

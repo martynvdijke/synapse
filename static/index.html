@@ -813,7 +813,7 @@
 
 <!-- Service Link Editor Modal -->
 <div class="modal fade" id="link-editor-modal" tabindex="-1" aria-labelledby="link-editor-title" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Link Service <code id="link-editor-service"></code></h5>
@@ -826,103 +826,137 @@
                         <select class="form-select form-select-sm" id="link-npm-select">
                             <option value="">— Not linked —</option>
                         </select>
-                        <div class="form-text">Pick an existing proxy host, or create one below.</div>
+                        <div class="form-text">Pick an existing proxy host, or create one in “Create NPM Proxy Host” below.</div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="link-kuma-select">Kuma Monitor</label>
                         <select class="form-select form-select-sm" id="link-kuma-select">
                             <option value="">— Not linked —</option>
                         </select>
-                        <div class="form-text">Pick an existing monitor, or create one below.</div>
+                        <div class="form-text">Pick an existing monitor, or create one in “Create Kuma Monitor” below.</div>
                     </div>
                 </div>
+
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="link-ensure-missing" checked>
+                    <label class="form-check-label" for="link-ensure-missing">Auto-create missing targets</label>
+                    <div class="form-text">When saving, create the NPM proxy host / Kuma monitor / Authelia rule if they don't exist yet.</div>
+                </div>
+
                 <div class="d-flex gap-2 mb-3">
                     <button class="btn btn-primary btn-sm" id="link-save-btn">Save Link</button>
                     <button class="btn btn-outline-secondary btn-sm" id="link-refresh-btn" disabled>Refresh Details</button>
                     <button class="btn btn-outline-danger btn-sm" id="link-unlink-btn" disabled>Unlink</button>
                 </div>
-                <hr>
-                <h6 class="fw-semibold">Create NPM Proxy Host <span class="text-muted small fw-normal">(fields prefilled from compose labels)</span></h6>
-                <div class="row g-2 mb-2">
-                    <div class="col-md-2">
-                        <select class="form-select form-select-sm" id="link-npm-instance" aria-label="NPM instance"></select>
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control form-control-sm" id="link-npm-domains" placeholder="example.com, www.example.com">
-                    </div>
-                    <div class="col-md-2">
-                        <input class="form-control form-control-sm" id="link-npm-host" placeholder="Forward host">
-                    </div>
-                    <div class="col-md-2">
-                        <input class="form-control form-control-sm" id="link-npm-port" placeholder="Port" type="number" value="80">
-                    </div>
-                    <div class="col-md-1">
-                        <select class="form-select form-select-sm" id="link-npm-scheme" aria-label="Scheme">
-                            <option value="http">http</option>
-                            <option value="https">https</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2 d-flex align-items-end">
-                        <button class="btn btn-sm btn-outline-primary w-100" id="link-npm-create-btn">Create Host</button>
-                    </div>
-                </div>
-                <hr>
-                <h6 class="fw-semibold">Create Kuma Monitor <span class="text-muted small fw-normal">(type &amp; URL inferred from healthcheck)</span></h6>
-                <div class="row g-2 mb-2">
-                    <div class="col-md-2">
-                        <select class="form-select form-select-sm" id="link-kuma-instance" aria-label="Kuma instance"></select>
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control form-control-sm" id="link-kuma-name" placeholder="Monitor name">
-                    </div>
-                    <div class="col-md-2">
-                        <select class="form-select form-select-sm" id="link-kuma-type" aria-label="Monitor type">
-                            <option value="http">http</option>
-                            <option value="docker">docker</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2">
-                        <input class="form-control form-control-sm" id="link-kuma-url" placeholder="URL (http)">
-                    </div>
-                    <div class="col-md-2">
-                        <input class="form-control form-control-sm" id="link-kuma-container" placeholder="Container (docker)">
-                    </div>
-                    <div class="col-md-1 d-flex align-items-end">
-                        <button class="btn btn-sm btn-outline-primary w-100" id="link-kuma-create-btn">Create</button>
-                    </div>
-                </div>
-                <hr>
-                <div class="form-check mb-2">
-                    <input class="form-check-input" type="checkbox" id="link-ensure-missing" checked>
-                    <label class="form-check-label" for="link-ensure-missing">Auto-create missing targets</label>
-                    <div class="form-text">When saving, create the NPM proxy host / Kuma monitor / Authelia rule if they don't exist yet (derived from compose labels).</div>
-                </div>
-                <h6 class="fw-semibold">Authelia Access Rule</h6>
-                <div class="row g-2 mb-2 align-items-end">
-                    <div class="col-md-5">
-                        <select class="form-select form-select-sm" id="link-authelia-instance" aria-label="Authelia instance">
-                            <option value="">— Not linked —</option>
-                        </select>
-                    </div>
-                    <div class="col-md-4">
-                        <select class="form-select form-select-sm" id="link-authelia-policy" aria-label="Policy">
-                            <option value="">Instance default</option>
-                            <option value="bypass">bypass</option>
-                            <option value="one_factor">one_factor</option>
-                            <option value="two_factor">two_factor</option>
-                            <option value="deny">deny</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="link-authelia-ensure" checked>
-                            <label class="form-check-label" for="link-authelia-ensure">Ensure rule</label>
+
+                <div class="accordion" id="link-editor-accordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-npm-create" aria-expanded="false" aria-controls="collapse-npm-create">
+                                Create NPM Proxy Host
+                            </button>
+                        </h2>
+                        <div id="collapse-npm-create" class="accordion-collapse collapse">
+                            <div class="accordion-body">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-2">
+                                        <select class="form-select form-select-sm" id="link-npm-instance" aria-label="NPM instance"></select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input class="form-control form-control-sm" id="link-npm-domains" placeholder="example.com, www.example.com">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input class="form-control form-control-sm" id="link-npm-host" placeholder="Forward host">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input class="form-control form-control-sm" id="link-npm-port" placeholder="Port" type="number" value="80">
+                                    </div>
+                                    <div class="col-md-1">
+                                        <select class="form-select form-select-sm" id="link-npm-scheme" aria-label="Scheme">
+                                            <option value="http">http</option>
+                                            <option value="https">https</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2 d-flex align-items-end">
+                                        <button class="btn btn-sm btn-outline-primary w-100" id="link-npm-create-btn">Create Host</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="d-none" id="link-authelia-actions">
-                    <h6 class="fw-semibold">Authelia Sync</h6>
-                    <div id="link-authelia-actions-list" class="small"></div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-kuma-create" aria-expanded="false" aria-controls="collapse-kuma-create">
+                                Create Kuma Monitor
+                            </button>
+                        </h2>
+                        <div id="collapse-kuma-create" class="accordion-collapse collapse">
+                            <div class="accordion-body">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-2">
+                                        <select class="form-select form-select-sm" id="link-kuma-instance" aria-label="Kuma instance"></select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input class="form-control form-control-sm" id="link-kuma-name" placeholder="Monitor name">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <select class="form-select form-select-sm" id="link-kuma-type" aria-label="Monitor type">
+                                            <option value="http">http</option>
+                                            <option value="docker">docker</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input class="form-control form-control-sm" id="link-kuma-url" placeholder="URL (http)">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input class="form-control form-control-sm" id="link-kuma-container" placeholder="Container (docker)">
+                                    </div>
+                                    <div class="col-md-1 d-flex align-items-end">
+                                        <button class="btn btn-sm btn-outline-primary w-100" id="link-kuma-create-btn">Create</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-authelia" aria-expanded="false" aria-controls="collapse-authelia">
+                                Authelia Access Rule
+                            </button>
+                        </h2>
+                        <div id="collapse-authelia" class="accordion-collapse collapse">
+                            <div class="accordion-body">
+                                <div class="row g-2 mb-2 align-items-end">
+                                    <div class="col-md-5">
+                                        <label class="form-label small" for="link-authelia-instance">Instance</label>
+                                        <select class="form-select form-select-sm" id="link-authelia-instance" aria-label="Authelia instance">
+                                            <option value="">— Not linked —</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label small" for="link-authelia-policy">Policy</label>
+                                        <select class="form-select form-select-sm" id="link-authelia-policy" aria-label="Policy">
+                                            <option value="">Instance default</option>
+                                            <option value="bypass">bypass</option>
+                                            <option value="one_factor">one_factor</option>
+                                            <option value="two_factor">two_factor</option>
+                                            <option value="deny">deny</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="link-authelia-ensure" checked>
+                                            <label class="form-check-label" for="link-authelia-ensure">Ensure rule</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="d-none" id="link-authelia-actions">
+                                    <h6 class="fw-semibold">Authelia Sync</h6>
+                                    <div id="link-authelia-actions-list" class="small"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
