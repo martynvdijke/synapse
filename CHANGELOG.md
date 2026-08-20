@@ -1,3 +1,15 @@
+## [1.19.2](https://github.com/martynvdijke/synapse/compare/v1.19.1...v1.19.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* **notify:** treat service-linked items as covered in missing-from-Kuma check ([2b02e6d](https://github.com/martynvdijke/synapse/commit/2b02e6ded86a0db19631b311afc02f6ec7016de5))
+
+
+### Performance Improvements
+
+* **links:** parallelize link editor load and cache link targets ([be114f1](https://github.com/martynvdijke/synapse/commit/be114f1e1131b6c52009a838e2d45559ab0c9200))
+
 ## [1.19.1](https://github.com/martynvdijke/synapse/compare/v1.19.0...v1.19.1) (2026-08-20)
 
 # [1.19.0](https://github.com/martynvdijke/synapse/compare/v1.18.1...v1.19.0) (2026-08-19)
