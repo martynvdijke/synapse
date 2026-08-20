@@ -2298,35 +2298,29 @@ func (app *App) runNotifyCheck(ctx context.Context) {
 		npmNameMap[int(inst.ID)] = inst.Name
 	}
 
-	var dockerItems []notify.Item
+	var dockerItems, npmItems []notify.Item
 	if !degraded {
-		services, err := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
-		if err != nil {
+		services, sErr := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
+		if sErr != nil {
 			degraded = true
-			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", err))
-		} else {
-			for _, svc := range services {
-				dockerItems = append(dockerItems, notify.Item{
-					Name:   svc.ContainerName,
-					InKuma: svc.InKuma,
-				})
-			}
+			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", sErr))
 		}
-	}
-
-	var npmItems []notify.Item
-	if !degraded {
-		proxies, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-		if err != nil {
+		proxies, pErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+		if pErr != nil {
 			degraded = true
-			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", err))
-		} else {
-			for _, p := range proxies {
-				npmItems = append(npmItems, notify.Item{
-					Name:     p.CNAME,
-					InKuma:   p.InKuma,
-					Instance: npmNameMap[p.SourceInstanceID],
-				})
+			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", pErr))
+		}
+		if sErr == nil && pErr == nil {
+			links, lerr := app.database.GetServiceLinks()
+			if lerr != nil {
+				logging.LogWarn("notify", "Failed to load service links for coverage",
+					slog.String("error", lerr.Error()))
+			}
+			dockerItems, npmItems = buildMissingItems(services, proxies, links, npmNameMap)
+		} else if sErr == nil {
+			// Services loaded but proxies failed: report docker items without link coverage.
+			for _, svc := range services {
+				dockerItems = append(dockerItems, notify.Item{Name: svc.ContainerName, InKuma: svc.InKuma})
 			}
 		}
 	}
@@ -2358,6 +2352,45 @@ func (app *App) runNotifyCheck(ctx context.Context) {
 		slog.Int("missing_count", report.Total()),
 		slog.Duration("duration", time.Since(start)),
 	)
+}
+
+// buildMissingItems converts docker services and NPM proxies into notify.Items
+// for the missing-from-Kuma report. An item is marked covered (InKuma=true) when
+// it has a service link pointing at a Uptime Kuma monitor, so the report does not
+// nag about intentionally-linked items whose Kuma monitor name differs from the
+// compose container name (a common case with compose project prefixes, e.g.
+// container "myproject-web-1" vs monitor "web"). Only Kuma-linked items count;
+// linking to NPM alone is not Kuma coverage.
+func buildMissingItems(services []synclib.ServiceInfo, proxies []synclib.ProxyInfo, links []db.ServiceLink, npmNameMap map[int]string) (docker, npm []notify.Item) {
+	svcCovered := make(map[string]bool, len(links))
+	npmCovered := make(map[string]bool, len(links))
+	for _, l := range links {
+		if l.KumaMonitorID <= 0 {
+			continue
+		}
+		svcCovered[l.ServiceName] = true
+		if l.NPMHostName != "" {
+			npmCovered[l.NPMHostName] = true
+		}
+	}
+
+	docker = make([]notify.Item, 0, len(services))
+	for _, svc := range services {
+		docker = append(docker, notify.Item{
+			Name:   svc.ContainerName,
+			InKuma: svc.InKuma || svcCovered[svc.Name],
+		})
+	}
+
+	npm = make([]notify.Item, 0, len(proxies))
+	for _, p := range proxies {
+		npm = append(npm, notify.Item{
+			Name:     p.CNAME,
+			InKuma:   p.InKuma || npmCovered[p.CNAME],
+			Instance: npmNameMap[p.SourceInstanceID],
+		})
+	}
+	return docker, npm
 }
 
 // eventNotifierFor builds an EventNotifier from the current settings. A nil or
@@ -2623,35 +2656,29 @@ func (app *App) NotifyMissing(c *gin.Context) {
 		npmNameMap[int(inst.ID)] = inst.Name
 	}
 
-	var dockerItems []notify.Item
+	var dockerItems, npmItems []notify.Item
 	if !degraded {
-		services, err := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
-		if err != nil {
+		services, sErr := synclib.GetDockerServicesWithStatus(s.ComposePath, clients)
+		if sErr != nil {
 			degraded = true
-			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", err))
-		} else {
-			for _, svc := range services {
-				dockerItems = append(dockerItems, notify.Item{
-					Name:   svc.ContainerName,
-					InKuma: svc.InKuma,
-				})
-			}
+			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", sErr))
 		}
-	}
-
-	var npmItems []notify.Item
-	if !degraded {
-		proxies, err := synclib.GetNPMProxiesWithStatus(npmClients, clients)
-		if err != nil {
+		proxies, pErr := synclib.GetNPMProxiesWithStatus(npmClients, clients)
+		if pErr != nil {
 			degraded = true
-			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", err))
-		} else {
-			for _, p := range proxies {
-				npmItems = append(npmItems, notify.Item{
-					Name:     p.CNAME,
-					InKuma:   p.InKuma,
-					Instance: npmNameMap[p.SourceInstanceID],
-				})
+			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", pErr))
+		}
+		if sErr == nil && pErr == nil {
+			links, lerr := app.database.GetServiceLinks()
+			if lerr != nil {
+				logging.LogWarn("notify", "Failed to load service links for coverage",
+					slog.String("error", lerr.Error()))
+			}
+			dockerItems, npmItems = buildMissingItems(services, proxies, links, npmNameMap)
+		} else if sErr == nil {
+			// Services loaded but proxies failed: report docker items without link coverage.
+			for _, svc := range services {
+				dockerItems = append(dockerItems, notify.Item{Name: svc.ContainerName, InKuma: svc.InKuma})
 			}
 		}
 	}
