@@ -1,3 +1,10 @@
+# [1.20.0](https://github.com/martynvdijke/synapse/compare/v1.19.2...v1.20.0) (2026-08-20)
+
+
+### Features
+
+* **tabs:** make dashboard tabs configurable ([f310283](https://github.com/martynvdijke/synapse/commit/f3102834714851f0ff128bd83153a0f8f679384e))
+
 ## [1.19.2](https://github.com/martynvdijke/synapse/compare/v1.19.1...v1.19.2) (2026-08-20)
 
 
