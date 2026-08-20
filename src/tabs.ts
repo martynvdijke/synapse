@@ -165,26 +165,45 @@ function populateSelect(el: HTMLSelectElement, items: Array<{ label: string; val
     el.innerHTML = html;
 }
 
-function loadLinkTargets(): Promise<void> {
+// Cache link targets for a short window. The backend already caches the upstream
+// NPM/Kuma responses for 15s per client, but the editor is opened infrequently so
+// that cache is usually cold — re-fetching every open pays the full external
+// integration cost. A 30s client-side TTL keeps repeated opens instant while
+// staying close to the backend's freshness window.
+var linkTargetsCache: { npm: NPMProxyHost[]; kuma: MonitorResponse[]; ts: number } | null = null;
+var LINK_TARGETS_TTL = 30000;
+
+function populateLinkTargetSelects(): void {
+    var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
+    var opts = '<option value="">— Not linked —</option>';
+    for (var i = 0; i < linkNPMHosts.length; i++) {
+        var h = linkNPMHosts[i];
+        opts += '<option value="' + i + '">' + esc(h.domain_names.join(', ')) + ' (' + esc(h.instance_name || '?') + ')</option>';
+    }
+    npmSel.innerHTML = opts;
+    var kumaSel = document.getElementById('link-kuma-select') as HTMLSelectElement;
+    var kopts = '<option value="">— Not linked —</option>';
+    for (var j = 0; j < linkKumaMonitors.length; j++) {
+        var m = linkKumaMonitors[j];
+        kopts += '<option value="' + j + '">' + esc(m.name) + ' (' + esc(m.instance_name || '?') + ')</option>';
+    }
+    kumaSel.innerHTML = kopts;
+}
+
+function loadLinkTargets(force?: boolean): Promise<void> {
+    if (!force && linkTargetsCache && Date.now() - linkTargetsCache.ts < LINK_TARGETS_TTL) {
+        linkNPMHosts = linkTargetsCache.npm;
+        linkKumaMonitors = linkTargetsCache.kuma;
+        populateLinkTargetSelects();
+        return Promise.resolve();
+    }
     var npmReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([]); });
     var kumaReq = apiFetch('/api/monitors').then(function(r){ return r.ok ? r.json() as Promise<MonitorResponse[]> : Promise.resolve([]); });
     return Promise.all([npmReq, kumaReq]).then(function(res: any[]) {
         linkNPMHosts = res[0] || [];
         linkKumaMonitors = res[1] || [];
-        var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
-        var opts = '<option value="">— Not linked —</option>';
-        for (var i = 0; i < linkNPMHosts.length; i++) {
-            var h = linkNPMHosts[i];
-            opts += '<option value="' + i + '">' + esc(h.domain_names.join(', ')) + ' (' + esc(h.instance_name || '?') + ')</option>';
-        }
-        npmSel.innerHTML = opts;
-        var kumaSel = document.getElementById('link-kuma-select') as HTMLSelectElement;
-        var kopts = '<option value="">— Not linked —</option>';
-        for (var j = 0; j < linkKumaMonitors.length; j++) {
-            var m = linkKumaMonitors[j];
-            kopts += '<option value="' + j + '">' + esc(m.name) + ' (' + esc(m.instance_name || '?') + ')</option>';
-        }
-        kumaSel.innerHTML = kopts;
+        linkTargetsCache = { npm: linkNPMHosts, kuma: linkKumaMonitors, ts: Date.now() };
+        populateLinkTargetSelects();
     });
 }
 
@@ -213,36 +232,40 @@ export function openLinkEditor(serviceName: string): void {
     linkEditorLink = null;
     document.getElementById('link-editor-service')!.textContent = serviceName;
 
-    apiFetch('/api/npm-instances').then(function(r){ return r.json(); }).then(function(insts: any[]) {
-        linkNPMInstances = (insts || []).filter(function(i: any){ return i.enabled; });
-        populateSelect(document.getElementById('link-npm-instance') as HTMLSelectElement,
-            linkNPMInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
-    }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load NPM instances', 'error'); });
+    // Load the independent instance lists in parallel instead of chaining them.
+    var pInstances = Promise.all([
+        apiFetch('/api/npm-instances').then(function(r){ return r.json(); }).then(function(insts: any[]) {
+            linkNPMInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+            populateSelect(document.getElementById('link-npm-instance') as HTMLSelectElement,
+                linkNPMInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
+        }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load NPM instances', 'error'); }),
+        apiFetch('/api/kuma-instances').then(function(r){ return r.json(); }).then(function(insts: any[]) {
+            linkKumaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+            populateSelect(document.getElementById('link-kuma-instance') as HTMLSelectElement,
+                linkKumaInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
+        }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Kuma instances', 'error'); }),
+        apiFetch('/api/authelia-instances').then(function(r){ return r.ok ? r.json() : Promise.resolve([]); }).then(function(insts: any[]) {
+            linkAutheliaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+            var sel = document.getElementById('link-authelia-instance') as HTMLSelectElement;
+            var opts = '<option value="">— Not linked —</option>';
+            for (var i = 0; i < linkAutheliaInstances.length; i++) {
+                opts += '<option value="' + linkAutheliaInstances[i].id + '">' + esc(linkAutheliaInstances[i].name) + '</option>';
+            }
+            sel.innerHTML = opts;
+        }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Authelia instances', 'error'); }),
+    ]);
 
-    apiFetch('/api/kuma-instances').then(function(r){ return r.json(); }).then(function(insts: any[]) {
-        linkKumaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
-        populateSelect(document.getElementById('link-kuma-instance') as HTMLSelectElement,
-            linkKumaInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
-    }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Kuma instances', 'error'); });
-
-    apiFetch('/api/authelia-instances').then(function(r){ return r.ok ? r.json() : Promise.resolve([]); }).then(function(insts: any[]) {
-        linkAutheliaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
-        var sel = document.getElementById('link-authelia-instance') as HTMLSelectElement;
-        var opts = '<option value="">— Not linked —</option>';
-        for (var i = 0; i < linkAutheliaInstances.length; i++) {
-            opts += '<option value="' + linkAutheliaInstances[i].id + '">' + esc(linkAutheliaInstances[i].name) + '</option>';
-        }
-        sel.innerHTML = opts;
-    }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Authelia instances', 'error'); });
-
-    apiFetch('/api/service-links').then(function(r){ return r.json() as Promise<ServiceLink[]>; }).then(function(links: ServiceLink[]) {
+    var pLinks = apiFetch('/api/service-links').then(function(r){ return r.json() as Promise<ServiceLink[]>; }).then(function(links: ServiceLink[]) {
         for (var i = 0; i < links.length; i++) {
             if (links[i].service_name === serviceName) { linkEditorLink = links[i]; break; }
         }
         (document.getElementById('link-unlink-btn') as HTMLButtonElement).disabled = !linkEditorLink;
         (document.getElementById('link-refresh-btn') as HTMLButtonElement).disabled = !linkEditorLink;
-        return loadLinkTargets();
-    }).then(function() {
+    }).catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to load service links', 'error'); });
+
+    var pTargets = loadLinkTargets();
+
+    Promise.all([pInstances, pLinks, pTargets]).then(function() {
         if (linkEditorLink) {
             var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
             for (var i = 0; i < linkNPMHosts.length; i++) {
@@ -381,7 +404,7 @@ export function createNPMHostFromLink(): void {
         return r.json();
     }).then(function() {
         toast('NPM proxy host created');
-        return loadLinkTargets();
+        return loadLinkTargets(true);
     }).then(function() {
         var npmSel = document.getElementById('link-npm-select') as HTMLSelectElement;
         for (var i = 0; i < linkNPMHosts.length; i++) {
@@ -416,7 +439,7 @@ export function createKumaMonitorFromLink(): void {
         return r.json();
     }).then(function(res: MonitorResponse) {
         toast('Kuma monitor created');
-        return loadLinkTargets().then(function() {
+        return loadLinkTargets(true).then(function() {
             var kumaSel = document.getElementById('link-kuma-select') as HTMLSelectElement;
             for (var i = 0; i < linkKumaMonitors.length; i++) {
                 if (linkKumaMonitors[i].id === res.id && linkKumaMonitors[i].instance_id === res.instance_id) {
