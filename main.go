@@ -192,7 +192,11 @@ func (app *App) settings() db.Settings {
 		NotifyDockerHealth:        getEnv("NOTIFY_DOCKER_HEALTH", "") == "true",
 		NotifyDockerImage:         getEnv("NOTIFY_DOCKER_IMAGE", "") == "true",
 		NotifyReconcile:           getEnv("NOTIFY_RECONCILE", "") == "true",
+		NotifyAlerts:              getEnv("NOTIFY_ALERTS", "") == "true",
 		NotifyCooldownMinutes:     getEnvInt("NOTIFY_COOLDOWN_MINUTES", 5),
+		AlertsEnabled:             getEnv("ALERTS_ENABLED", "") == "true",
+		AlertEvalIntervalSeconds:  getEnvInt("ALERT_EVAL_INTERVAL_SECONDS", 60),
+		AlertReminderMinutes:      getEnvInt("ALERT_REMINDER_MINUTES", 0),
 	})
 }
 
@@ -770,7 +774,11 @@ func (app *App) GetSettings(c *gin.Context) {
 		"notify_docker_health":         s.NotifyDockerHealth,
 		"notify_docker_image":          s.NotifyDockerImage,
 		"notify_reconcile":             s.NotifyReconcile,
+		"notify_alerts":                s.NotifyAlerts,
 		"notify_cooldown_minutes":      s.NotifyCooldownMinutes,
+		"alerts_enabled":               s.AlertsEnabled,
+		"alert_eval_interval_seconds":  s.AlertEvalIntervalSeconds,
+		"alert_reminder_minutes":       s.AlertReminderMinutes,
 	})
 }
 
@@ -965,6 +973,38 @@ func (app *App) SaveSettings(c *gin.Context) {
 		var val bool
 		json.Unmarshal(v, &val)
 		pairs["notify_reconcile"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_alerts"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["notify_alerts"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["alerts_enabled"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["alerts_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["alert_eval_interval_seconds"]; ok {
+		var val int
+		json.Unmarshal(v, &val)
+		if val < 10 {
+			val = 10
+		}
+		if val > 3600 {
+			val = 3600
+		}
+		pairs["alert_eval_interval_seconds"] = strconv.Itoa(val)
+	}
+	if v, ok := raw["alert_reminder_minutes"]; ok {
+		var val int
+		json.Unmarshal(v, &val)
+		if val < 0 {
+			val = 0
+		}
+		if val > 1440 {
+			val = 1440
+		}
+		pairs["alert_reminder_minutes"] = strconv.Itoa(val)
 	}
 	if v, ok := raw["notify_cooldown_minutes"]; ok {
 		var val int
@@ -2496,6 +2536,7 @@ func (app *App) eventNotifierFor(s db.Settings) *notify.EventNotifier {
 				notify.CatDockerHealth: s.NotifyDockerHealth,
 				notify.CatDockerImage:  s.NotifyDockerImage,
 				notify.CatReconcile:    s.NotifyReconcile,
+				notify.CatAlerts:       s.NotifyAlerts,
 			},
 		},
 	)
