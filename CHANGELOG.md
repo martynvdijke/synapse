@@ -1,3 +1,10 @@
+# [1.25.0](https://github.com/martynvdijke/synapse/compare/v1.24.0...v1.25.0) (2026-08-22)
+
+
+### Features
+
+* **alerts:** dashboard Alerts tab with rules editor, incidents, and status counts ([6fa2c68](https://github.com/martynvdijke/synapse/commit/6fa2c68e12af0d880a306edc11f813db825894e7))
+
 # [1.24.0](https://github.com/martynvdijke/synapse/compare/v1.23.0...v1.24.0) (2026-08-22)
 
 
