@@ -14,6 +14,7 @@ export const ALL_TABS: TabDef[] = [
     { id: 'history', label: 'Sync History', btnId: 'tab-btn-history' },
     { id: 'events', label: 'Events', btnId: 'tab-btn-events' },
     { id: 'authelia', label: 'Authelia', btnId: 'tab-btn-authelia' },
+    { id: 'alerts', label: 'Alerts', btnId: 'tab-btn-alerts' },
     { id: 'logs', label: 'Logs', btnId: 'tab-btn-logs' },
     // Settings is always visible — not listed so it can't be hidden.
 ];

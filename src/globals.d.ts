@@ -107,6 +107,16 @@ declare function setupLogFilters(): void;
 declare function loadLogs(append: boolean): void;
 declare function connectLogSSE(): void;
 
+// ── alerts.js ───────────────────────────────────────────────────
+declare function loadAlertRules(): void;
+declare function loadIncidents(): void;
+declare function editAlertRule(id: number): void;
+declare function deleteAlertRule(id: number): void;
+declare function saveAlertRule(): void;
+declare function resetAlertRuleForm(): void;
+declare function ackIncident(id: number): void;
+declare function resolveIncident(id: number): void;
+
 // ── main.js ─────────────────────────────────────────────────────
 declare function startSync(source: string): void;
 
@@ -125,5 +135,12 @@ declare namespace bootstrap {
     constructor(element: Element);
     show(): void;
     static getInstance(element: Element): Tab | null;
+  }
+  class Collapse {
+    constructor(element: Element, options?: Record<string, unknown>);
+    show(): void;
+    hide(): void;
+    static getInstance(element: Element): Collapse | null;
+    static getOrCreateInstance(element: Element): Collapse;
   }
 }

@@ -52,6 +52,13 @@ export function loadStatus(): void {
 
         (document.getElementById('btn-docker') as HTMLButtonElement).disabled = d.running;
         (document.getElementById('btn-npm') as HTMLButtonElement).disabled = d.running;
+
+        // Open alert incidents
+        var statAlerts = document.getElementById('stat-alerts');
+        if (statAlerts) {
+            var openIncidents = d.open_incidents || 0;
+            statAlerts.innerHTML = '<span class="badge ' + (openIncidents > 0 ? 'bg-danger' : 'bg-success') + '">' + openIncidents + ' open</span>';
+        }
     }).catch(function(err: Error) {
         if (err.message === 'not authenticated') return;
     });

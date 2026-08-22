@@ -1746,6 +1746,11 @@ func (app *App) Status(c *gin.Context) {
 		},
 	}
 
+	openIncidents := 0
+	if n, err := app.database.CountOpenIncidents(); err == nil {
+		openIncidents = n
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"docker_count":      dockerCount,
 		"npm_count":         npmCount,
@@ -1756,6 +1761,7 @@ func (app *App) Status(c *gin.Context) {
 		"last_docker":       lastDocker,
 		"last_npm":          lastNPM,
 		"running":           app.running,
+		"open_incidents":    openIncidents,
 		"connection_health": connectionHealth,
 	})
 }

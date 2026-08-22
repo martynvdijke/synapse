@@ -39,11 +39,17 @@ A single-binary web application that synchronizes Docker Compose containers and 
 - **Auto-Cleanup** — Expired rules automatically cleaned up
 - **Revoke Rules** — Manually revoke access before expiration
 
+### Alerts
+- **Alert Rules** — Create rules for monitor downtime (`monitor_down_for`), container stops (`container_down`), stale syncs (`sync_stale`), and reconcile drift (`reconcile_drift`) with configurable thresholds and glob subjects
+- **Incident Lifecycle** — Open incidents auto-resolve when the condition clears; acknowledge to suppress from the open count or resolve manually from the dashboard (Alerts tab)
+- **Evaluation Engine** — Periodic evaluator with sustained-downtime tracking, per-subject state, and optional reminder notifications for still-open incidents
+- **Notifications** — Rule opens/resolves fan out through the multi-channel notifier when `NOTIFY_ALERTS` is enabled
+
 ### Dashboard & Monitoring
 - **Service Dashboard** — See all discovered services with monitor status
 - **Proxy Dashboard** — View all NPM proxy hosts with monitor status
 - **Monitor Detail View** — Full Uptime Kuma monitor details including uptime percentages (24h, 7d, 1y), average ping, and last message
-- **Status Overview** — Dashboard showing counts for Docker services, NPM proxies, and monitors
+- **Status Overview** — Dashboard showing counts for Docker services, NPM proxies, monitors, and open alert incidents (click to jump to Alerts)
 
 ### Synchronization
 - **On-Demand Sync** — Trigger Docker or NPM sync manually
@@ -125,6 +131,10 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `NOTIFY_DOCKER_IMAGE` | `false` | Notify when a container's image changes |
 | `NOTIFY_RECONCILE` | `false` | Notify when a reconcile run reports changes or errors |
 | `NOTIFY_COOLDOWN_MINUTES` | `5` | Cooldown window for repeat event notifications |
+| `NOTIFY_ALERTS` | `false` | Notify on alert rule transitions via configured notification channels |
+| `ALERTS_ENABLED` | `false` | Enable the alert rule evaluation engine |
+| `ALERT_EVAL_INTERVAL_SECONDS` | `60` | Interval between alert rule evaluation ticks (10–3600) |
+| `ALERT_REMINDER_MINUTES` | `0` | Repeat-notification interval for sustained open alerts in minutes (0 = no reminders) |
 
 ## API Endpoints
 
@@ -178,6 +188,18 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `POST` | `/api/authelia/temp-access` | Create temporary access rule |
 | `POST` | `/api/authelia/temp-access/:id/revoke` | Revoke temporary access |
 | `POST` | `/api/authelia/sync` | Run Authelia config sync |
+
+### Alerts
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/alert-rules` | List alert rules |
+| `POST` | `/api/alert-rules` | Create alert rule (`name`, `type`, `subject`, `threshold` as duration string or seconds, `enabled`) |
+| `PUT` | `/api/alert-rules/:id` | Update alert rule (partial) |
+| `DELETE` | `/api/alert-rules/:id` | Delete alert rule |
+| `GET` | `/api/incidents?status=&limit=` | List incidents (filter by `open`/`acknowledged`/`resolved`) |
+| `POST` | `/api/incidents/:id/ack` | Acknowledge an open incident |
+| `POST` | `/api/incidents/:id/resolve` | Resolve an open or acknowledged incident |
 
 ## Project Structure
 

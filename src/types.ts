@@ -228,6 +228,7 @@ export interface StatusResponse {
   kuma_error: string;
   last_docker: string;
   last_npm: string;
+  open_incidents?: number;
   connection_health?: {
     docker?: { ok: boolean };
     npm?: {
@@ -409,4 +410,28 @@ export interface LogFilters {
   source: string;
   search: string;
   error_kind: string;
+}
+
+export interface AlertRuleJSON {
+  id: number;
+  name: string;
+  type: string;
+  subject: string;
+  threshold_seconds: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertIncidentJSON {
+  id: number;
+  rule_id: number;
+  rule_name?: string;
+  subject: string;
+  status: string;
+  message: string;
+  opened_at: string;
+  ack_at?: string;
+  resolved_at?: string;
+  last_notified_at?: string;
 }

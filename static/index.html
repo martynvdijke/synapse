@@ -66,6 +66,16 @@
                 </div>
             </div>
         </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-0 shadow-sm" id="stat-alerts-card" style="cursor:pointer" role="button" tabindex="0" aria-label="Open alert incidents — click to view alerts" title="Click to view alert incidents">
+                <div class="card-body text-center py-3">
+                    <div class="text-muted small text-uppercase">Open Alerts</div>
+                    <div class="fs-6 fw-semibold mt-2" id="stat-alerts">
+                        <span class="skeleton skeleton-md" style="width:70px">&nbsp;</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="sync-section p-4 mb-3">
@@ -131,6 +141,11 @@
         <li class="nav-item" role="presentation">
             <button class="nav-link" id="tab-btn-authelia" role="tab" aria-selected="false" aria-controls="tab-authelia" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-authelia" type="button">
                 Authelia
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-btn-alerts" role="tab" aria-selected="false" aria-controls="tab-alerts" tabindex="-1" data-bs-toggle="tab" data-bs-target="#tab-alerts" type="button">
+                Alerts
             </button>
         </li>
         <li class="nav-item" role="presentation">
@@ -415,6 +430,95 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-alerts" role="tabpanel" aria-labelledby="tab-btn-alerts">
+            <div class="bg-white rounded shadow-sm p-3 mb-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h6 class="fw-semibold mb-0">Alert Rules</h6>
+                    <button class="btn btn-outline-primary btn-sm" id="btn-alert-rule-add" data-bs-toggle="collapse" data-bs-target="#alert-rule-form">+ Add Rule</button>
+                </div>
+                <div class="collapse mb-2" id="alert-rule-form">
+                    <div class="card card-body bg-light p-2">
+                        <input type="hidden" id="alert-rule-id">
+                        <div class="row g-1 mb-1">
+                            <div class="col-md-4">
+                                <input class="form-control form-control-sm" id="alert-rule-name" placeholder="Rule name" aria-label="Rule name">
+                            </div>
+                            <div class="col-md-3">
+                                <select class="form-select form-select-sm" id="alert-rule-type" aria-label="Rule type">
+                                    <option value="">Select type…</option>
+                                    <option value="monitor_down_for">Monitor down for</option>
+                                    <option value="container_down">Container down</option>
+                                    <option value="sync_stale">Sync stale</option>
+                                    <option value="reconcile_drift">Reconcile drift</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <input class="form-control form-control-sm" id="alert-rule-subject" placeholder="Subject (name or glob)" aria-label="Rule subject">
+                            </div>
+                            <div class="col-md-2">
+                                <input class="form-control form-control-sm" id="alert-rule-threshold" placeholder="Threshold (e.g. 10m)" aria-label="Rule threshold">
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <div class="form-check form-check-inline mb-0">
+                                <input class="form-check-input" type="checkbox" id="alert-rule-enabled" checked>
+                                <label class="form-check-label small" for="alert-rule-enabled">Enabled</label>
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="btn-alert-rule-save">Save Rule</button>
+                            <button class="btn btn-outline-secondary btn-sm" id="btn-alert-rule-cancel">Cancel</button>
+                            <span class="small text-muted" id="alert-rule-hint"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small" aria-label="Alert rules">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Subject</th>
+                                <th>Threshold</th>
+                                <th>Enabled</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alert-rules-tbody" aria-live="polite">
+                            <tr><td colspan="6" class="text-center text-muted py-3">No rules defined</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="bg-white rounded shadow-sm p-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h6 class="fw-semibold mb-0">Incidents</h6>
+                    <select class="form-select form-select-sm w-auto" id="incident-filter-status" aria-label="Filter incidents by status">
+                        <option value="">All Statuses</option>
+                        <option value="open">Open</option>
+                        <option value="acknowledged">Acknowledged</option>
+                        <option value="resolved">Resolved</option>
+                    </select>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small" aria-label="Alert incidents">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Rule</th>
+                                <th>Subject</th>
+                                <th>Status</th>
+                                <th>Opened</th>
+                                <th>Message</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="incidents-tbody" aria-live="polite">
+                            <tr><td colspan="6" class="text-center text-muted py-3">No incidents</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>

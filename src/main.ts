@@ -8,6 +8,7 @@ import { loadStatus, refreshAll } from './stats';
 import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory, loadEvents, runReconcile } from './tabs';
 import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance, loadAutheliaInstances, showAutheliaInstanceForm, hideAutheliaInstanceForm, saveAutheliaInstance } from './settings';
 import { loadAutheliaInstanceSelector, loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia';
+import { loadAlertRules, loadIncidents, saveAlertRule, resetAlertRuleForm } from './alerts';
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs';
 import { getVisibleTabButtons } from './tabVisibility';
 import './tabVisibility';
@@ -94,6 +95,15 @@ document.getElementById('btn-authelia-add')!.addEventListener('click', function(
 document.getElementById('btn-authelia-save')!.addEventListener('click', saveAutheliaInstance);
 document.getElementById('btn-authelia-cancel')!.addEventListener('click', hideAutheliaInstanceForm);
 
+// Alerts rule editor
+document.getElementById('btn-alert-rule-save')!.addEventListener('click', saveAlertRule);
+document.getElementById('btn-alert-rule-cancel')!.addEventListener('click', function() {
+    resetAlertRuleForm();
+    var collapse = bootstrap.Collapse.getInstance(document.getElementById('alert-rule-form')!);
+    if (collapse) collapse.hide();
+});
+document.getElementById('incident-filter-status')!.addEventListener('change', loadIncidents);
+
 // Authelia instance selector
 document.getElementById('auth-instance-selector')!.addEventListener('change', onInstanceSelectorChange);
 
@@ -120,6 +130,24 @@ document.getElementById('stat-docker-card')!.addEventListener('keydown', functio
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateDockerTab(); }
 });
 
+// Clickable Alerts stat card → switch to Alerts tab
+function activateAlertsTab(): void {
+    var tabBtn = document.getElementById('tab-btn-alerts') as HTMLElement | null;
+    if (!tabBtn) return;
+    var li = tabBtn.closest('li') as HTMLElement | null;
+    if (li && li.classList.contains('d-none')) {
+        var visible = getVisibleTabButtons();
+        if (!visible.length) return;
+        tabBtn = visible[0];
+    }
+    var tab = bootstrap.Tab.getInstance(tabBtn) || new bootstrap.Tab(tabBtn);
+    tab.show();
+}
+document.getElementById('stat-alerts-card')!.addEventListener('click', activateAlertsTab);
+document.getElementById('stat-alerts-card')!.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateAlertsTab(); }
+});
+
 // Tab switching with focus management
 function setupTabPanel(target: string): void {
     var pane = document.querySelector(target) as HTMLElement;
@@ -140,6 +168,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(tab) {
         else if (target === '#tab-events') loadEvents();
         else if (target === '#tab-settings') { loadSettings(); loadKumaInstances(); loadNPMInstances(); loadAutheliaInstances(); }
         else if (target === '#tab-authelia') loadAutheliaInstanceSelector();
+        else if (target === '#tab-alerts') { loadAlertRules(); loadIncidents(); }
         else if (target === '#tab-logs') {
             setupLogFilters();
             if (!isLogsLoaded()) { loadLogs(false); connectLogSSE(); }
