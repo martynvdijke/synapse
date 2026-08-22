@@ -1,3 +1,10 @@
+# [1.24.0](https://github.com/martynvdijke/synapse/compare/v1.23.0...v1.24.0) (2026-08-22)
+
+
+### Features
+
+* **alerts:** rule evaluation engine with incident lifecycle and notifier wiring ([ec35324](https://github.com/martynvdijke/synapse/commit/ec3532415a09a8004c85520226d9de15c93a607f))
+
 # [1.23.0](https://github.com/martynvdijke/synapse/compare/v1.22.0...v1.23.0) (2026-08-22)
 
 
