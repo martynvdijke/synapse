@@ -212,6 +212,7 @@ type Settings struct {
 	AlertsEnabled             bool   `json:"alerts_enabled"`
 	AlertEvalIntervalSeconds  int    `json:"alert_eval_interval_seconds"`
 	AlertReminderMinutes      int    `json:"alert_reminder_minutes"`
+	KumaDefaultTags           string `json:"kuma_default_tags"`
 }
 
 type DB struct {
@@ -1407,6 +1408,8 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			if v, err := strconv.Atoi(row.Value); err == nil {
 				s.AlertReminderMinutes = v
 			}
+		case "kuma_default_tags":
+			s.KumaDefaultTags = row.Value
 		}
 	}
 	return s
@@ -1476,6 +1479,7 @@ func (db *DB) SaveSettings(s Settings) error {
 		"alerts_enabled":               strconv.FormatBool(s.AlertsEnabled),
 		"alert_eval_interval_seconds":  strconv.Itoa(s.AlertEvalIntervalSeconds),
 		"alert_reminder_minutes":       strconv.Itoa(s.AlertReminderMinutes),
+		"kuma_default_tags":            s.KumaDefaultTags,
 	})
 }
 

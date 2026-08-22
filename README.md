@@ -135,6 +135,7 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `ALERTS_ENABLED` | `false` | Enable the alert rule evaluation engine |
 | `ALERT_EVAL_INTERVAL_SECONDS` | `60` | Interval between alert rule evaluation ticks (10–3600) |
 | `ALERT_REMINDER_MINUTES` | `0` | Repeat-notification interval for sustained open alerts in minutes (0 = no reminders) |
+| `KUMA_DEFAULT_TAGS` | — | Default tag IDs applied to newly created Kuma monitors (comma-separated or JSON array, e.g. `1,2` or `[1,2]`) |
 
 ## API Endpoints
 
@@ -172,7 +173,14 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 |--------|----------|-------------|
 | `GET` | `/api/services` | List Docker services with monitor status |
 | `GET` | `/api/proxies` | List NPM proxy hosts with monitor status |
-| `GET` | `/api/monitors` | List Uptime Kuma monitors with uptime stats |
+| `GET` | `/api/monitors` | List Uptime Kuma monitors with uptime stats, active state, interval/retry/maxretries, and tags |
+| `GET` | `/api/monitors/:id/stats?instance=` | Uptime stats detail for a single monitor |
+| `POST` | `/api/monitors` | Create a Kuma monitor (instance-targeted) |
+| `PUT` | `/api/monitors/:kumaId?instance=` | Update a Kuma monitor |
+| `DELETE` | `/api/monitors/:kumaId?instance=` | Delete a Kuma monitor |
+| `POST` | `/api/monitors/:kumaId/pause?instance=` | Pause a monitor (`pauseMonitor` Socket.IO command) |
+| `POST` | `/api/monitors/:kumaId/resume?instance=` | Resume a paused monitor (`resumeMonitor` Socket.IO command) |
+| `PUT` | `/api/monitors/:kumaId/tags?instance=` | Replace monitor tags (diff current vs desired, per-op results) |
 | `GET` | `/api/status` | Dashboard status overview |
 | `GET` | `/api/docker/events?type=&action=&container=&since=&limit=` | List tracked Docker events |
 | `GET` | `/api/events` | Unified feed (Docker events + reconcile runs) |

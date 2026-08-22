@@ -244,6 +244,17 @@ func (app *App) resolveKumaTarget(link *db.ServiceLink, instanceID, monitorID in
 		if err != nil {
 			return &apiError{http.StatusBadGateway, fmt.Sprintf("failed to create Kuma monitor for %q: %v", serviceName, err)}
 		}
+		if tagIDs := parseKumaDefaultTags(app.settings().KumaDefaultTags); len(tagIDs) > 0 && id > 0 {
+			for _, tagID := range tagIDs {
+				if err := client.AddMonitorTagViaSocketIO(id, tagID); err != nil {
+					logging.LogWarn("app", "Failed to add default tag to monitor",
+						slog.Int("monitor_id", id),
+						slog.Int("tag_id", tagID),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+		}
 		created := kuma.KumaMonitor{
 			ID:              id,
 			Name:            serviceName,
@@ -830,6 +841,18 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	// Apply default tags (non-fatal).
+	if tagIDs := parseKumaDefaultTags(app.settings().KumaDefaultTags); len(tagIDs) > 0 && id > 0 {
+		for _, tagID := range tagIDs {
+			if err := client.AddMonitorTagViaSocketIO(id, tagID); err != nil {
+				logging.LogWarn("app", "Failed to add default tag to monitor",
+					slog.Int("monitor_id", id),
+					slog.Int("tag_id", tagID),
+					slog.String("error", err.Error()),
+				)
+			}
+		}
+	}
 
 	c.JSON(http.StatusOK, KumaMonitorSummary{
 		ID:              id,
@@ -1044,6 +1067,44 @@ func (app *App) DeleteKumaMonitor(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// parseKumaDefaultTags parses a Kuma default-tags setting value into tag IDs.
+// Accepts JSON array ("[1,2]") or comma-separated ("1,2,3").
+func parseKumaDefaultTags(raw string) []int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var arr []int
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			return arr
+		}
+		// Try []string then parse.
+		var sarr []string
+		if err := json.Unmarshal([]byte(raw), &sarr); err == nil {
+			var out []int
+			for _, s := range sarr {
+				if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+					out = append(out, n)
+				}
+			}
+			return out
+		}
+		return nil
+	}
+	var out []int
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(p); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // updateLinksForKumaMonitor updates the Kuma monitor name/details on all

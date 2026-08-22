@@ -33,6 +33,13 @@ export interface AutheliaInstanceJSON {
   created_at: string;
 }
 
+export interface MonitorTag {
+  id: number;
+  name: string;
+  value?: string;
+  color?: string;
+}
+
 export interface MonitorResponse {
   id: number;
   name: string;
@@ -50,6 +57,8 @@ export interface MonitorResponse {
   last_msg?: string;
   instance_id: number;
   instance_name: string;
+  active?: boolean;
+  tags?: MonitorTag[];
 }
 
 export interface ProxyLocation {
@@ -262,6 +271,7 @@ export interface SettingsResponse {
   reconcile_enabled?: boolean;
   reconcile_interval_minutes?: number;
   reconcile_dry_run_default?: boolean;
+  kuma_default_tags?: string;
   notify_docker_die?: boolean;
   notify_docker_health?: boolean;
   notify_docker_image?: boolean;

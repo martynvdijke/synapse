@@ -1,5 +1,62 @@
 // Tab data loaders (Docker, Kuma, NPM, History)
-import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun, FeedItem, ReconcileResult, ServiceLink, NPMProxyHost, AutheliaCoverageResponse } from './types';
+import type { ServiceInfo, MonitorResponse, MonitorStats, ProxyResponse, SyncRun, FeedItem, ReconcileResult, ServiceLink, NPMProxyHost, AutheliaCoverageResponse, MonitorTag } from './types';
+
+function renderTagChips(tags?: MonitorTag[]): string {
+    if (!tags || !tags.length) return '<span class="text-muted">—</span>';
+    return tags.map(function(t) {
+        var label = esc(t.name || String(t.id));
+        if (t.value) label += ':' + esc(t.value);
+        if (t.color) {
+            return '<span class="badge me-1" style="background-color:' + esc(t.color) + ';color:#fff">' + label + '</span>';
+        }
+        return '<span class="badge bg-dark me-1">' + label + '</span>';
+    }).join('');
+}
+
+function parseTagsInput(raw: string): Array<{ id: number } | { name: string }> {
+    if (!raw.trim()) return [];
+    var parts = raw.split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length>0; });
+    var out: Array<{ id: number } | { name: string }> = [];
+    for (var i=0;i<parts.length;i++) {
+        var p = parts[i];
+        var n = parseInt(p, 10);
+        if (!isNaN(n) && String(n) === p) { out.push({ id: n }); continue; }
+        if (!isNaN(Number(p)) && Number.isInteger(Number(p))) { out.push({ id: Number(p) }); continue; }
+        // fallback to name object
+        out.push({ name: p } as any);
+    }
+    return out;
+}
+
+function tagsEqual(a?: MonitorTag[], b?: Array<{id:number}|{name:string}>): boolean {
+    var aIds = (a||[]).map(function(t){return String(t.id);}).sort().join(',');
+    var bIds = (b||[]).map(function(o:any){return String(o.id||o.name||'');}).sort().join(',');
+    return aIds===bIds;
+}
+
+export function pauseKumaMonitorAction(kumaId: number, instanceId: number): void {
+    (window as any).pauseKumaMonitor(kumaId, instanceId).then(function(r: Response){
+        return r.json().then(function(body:any){ if(!r.ok) throw new Error((body && body.error) || body.msg || body.message || ('HTTP '+r.status)); return body; });
+    }).then(function(body:any){
+        toast(body && body.msg ? body.msg : 'Monitor paused', 'success');
+        loadKumaMonitors();
+    }).catch(function(err: Error){
+        if(err.message==='not authenticated') return;
+        toast('Pause failed: '+err.message, 'error');
+    });
+}
+
+export function resumeKumaMonitorAction(kumaId: number, instanceId: number): void {
+    (window as any).resumeKumaMonitor(kumaId, instanceId).then(function(r: Response){
+        return r.json().then(function(body:any){ if(!r.ok) throw new Error((body && body.error) || body.msg || body.message || ('HTTP '+r.status)); return body; });
+    }).then(function(body:any){
+        toast(body && body.msg ? body.msg : 'Monitor resumed', 'success');
+        loadKumaMonitors();
+    }).catch(function(err: Error){
+        if(err.message==='not authenticated') return;
+        toast('Resume failed: '+err.message, 'error');
+    });
+}
 
 function renderDockerDetailRow(svc: ServiceInfo): string {
     var fields: string[] = [];
@@ -470,35 +527,50 @@ function getCachedStats(instanceId: string, monitorId: string): MonitorStats | n
     return null;
 }
 
-function renderMonitorStats(stats: MonitorStats): string {
+function renderMonitorStats(stats: MonitorStats, mon?: MonitorResponse): string {
     var statusBadge = stats.status === 1
         ? '<span class="badge bg-success">UP</span>'
         : stats.status === 0
         ? '<span class="badge bg-danger">DOWN</span>'
         : '<span class="badge bg-secondary">UNKNOWN</span>';
+    var activeBadge = '';
+    var tagsRow = '';
+    if (mon) {
+        if (mon.active === false) {
+            activeBadge = ' <span class="badge bg-warning text-dark">⏸ Paused</span>';
+        } else if (mon.active === true) {
+            activeBadge = ' <span class="badge bg-success">Active</span>';
+        }
+        if (mon.tags && mon.tags.length) {
+            tagsRow = '<div class="col-12"><div class="small text-muted">Tags</div><div>' + renderTagChips(mon.tags) + '</div></div>';
+        }
+    }
 
     return '<div class="row g-3">'
-        + '<div class="col-md-4"><div class="small text-muted">Status</div><div>' + statusBadge + '</div></div>'
+        + '<div class="col-md-4"><div class="small text-muted">Status</div><div>' + statusBadge + activeBadge + '</div></div>'
         + '<div class="col-md-4"><div class="small text-muted">Uptime 24h</div><div class="fs-5 fw-bold">' + (stats.uptime_24h != null ? stats.uptime_24h.toFixed(1) + '%' : '—') + '</div></div>'
         + '<div class="col-md-4"><div class="small text-muted">Uptime 7d</div><div class="fs-5 fw-bold">' + (stats.uptime_7d != null ? stats.uptime_7d.toFixed(1) + '%' : '—') + '</div></div>'
         + '<div class="col-md-4"><div class="small text-muted">Uptime 1y</div><div class="fs-5 fw-bold">' + (stats.uptime_1y != null ? stats.uptime_1y.toFixed(1) + '%' : '—') + '</div></div>'
         + '<div class="col-md-4"><div class="small text-muted">Avg Ping</div><div class="fs-5 fw-bold">' + (stats.avg_ping != null ? stats.avg_ping.toFixed(1) + 'ms' : '—') + '</div></div>'
         + '<div class="col-md-4"><div class="small text-muted">Last Message</div><div class="text-truncate">' + (stats.last_msg ? esc(stats.last_msg) : '—') + '</div></div>'
         + (stats.cert_info ? '<div class="col-12"><div class="small text-muted">Certificate</div><div><code>' + esc(stats.cert_info) + '</code></div></div>' : '')
+        + tagsRow
         + '</div>';
 }
 
 function loadMonitorStats(monitorId: string, instanceId: string): void {
     var cacheKey = instanceId + ':' + monitorId;
+    var mon: MonitorResponse | undefined;
+    for (var i=0;i<kumaMonitorList.length;i++){ if(String(kumaMonitorList[i].id)===monitorId && String(kumaMonitorList[i].instance_id)===instanceId){ mon=kumaMonitorList[i]; break; } }
     var cached = getCachedStats(instanceId, monitorId);
     if (cached) {
-        document.getElementById('monitor-detail-title')!.textContent = 'Monitor #' + monitorId;
-        document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(cached);
+        document.getElementById('monitor-detail-title')!.textContent = 'Monitor #' + monitorId + (mon ? ' — ' + mon.name : '');
+        document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(cached, mon);
         document.getElementById('monitor-detail-panel')!.classList.remove('d-none');
         return;
     }
 
-    document.getElementById('monitor-detail-title')!.textContent = 'Monitor #' + monitorId;
+    document.getElementById('monitor-detail-title')!.textContent = 'Monitor #' + monitorId + (mon ? ' — ' + mon.name : '');
     document.getElementById('monitor-detail-body')!.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm" role="status"></span> Loading stats...</div>';
     document.getElementById('monitor-detail-panel')!.classList.remove('d-none');
 
@@ -509,7 +581,7 @@ function loadMonitorStats(monitorId: string, instanceId: string): void {
         })
         .then(function(stats) {
             monitorStatsCache.set(cacheKey, { stats: stats, timestamp: Date.now() });
-            document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(stats);
+            document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(stats, mon);
         })
         .catch(function(err: Error) {
             if (err.message === 'not authenticated') return;
@@ -521,29 +593,40 @@ function loadMonitorStats(monitorId: string, instanceId: string): void {
 }
 
 export function loadKumaMonitors(): void {
-    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(9);
+    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(10);
     apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & {error?: string})[]>;}).then(function(monitors) {
         var tbody = document.getElementById('kuma-tbody')!;
         if ((monitors as any).error) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">' + esc((monitors as any).error) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">' + esc((monitors as any).error) + '</td></tr>';
             return;
         }
         if (!monitors.length) {
-            tbody.innerHTML = emptyRow(9, 'No monitors in Uptime Kuma');
+            tbody.innerHTML = emptyRow(10, 'No monitors in Uptime Kuma');
             return;
         }
         kumaMonitorList = monitors as MonitorResponse[];
         tbody.innerHTML = monitors.map(function(m) {
-            return '<tr style="cursor:pointer" data-monitor-id="' + m.id + '" data-instance-id="' + m.instance_id + '">'
+            var isPaused = m.active === false;
+            var pausedBadge = isPaused ? ' <span class="badge bg-warning text-dark">⏸ Paused</span>' : '';
+            var tagsHtml = renderTagChips(m.tags);
+            var rowOpacity = isPaused ? ' style="cursor:pointer;opacity:0.65"' : ' style="cursor:pointer"';
+            var toggleBtn = isPaused
+                ? '<button class="btn btn-sm btn-outline-success me-1" onclick="event.stopPropagation();resumeKumaMonitorAction(' + m.id + ',' + m.instance_id + ')">Resume</button>'
+                : '<button class="btn btn-sm btn-outline-warning me-1" onclick="event.stopPropagation();pauseKumaMonitorAction(' + m.id + ',' + m.instance_id + ')">Pause</button>';
+            var editBtn = isPaused
+                ? '<button class="btn btn-sm btn-outline-secondary" disabled title="Resume to edit" onclick="event.stopPropagation();openMonitorEdit(' + m.id + ',' + m.instance_id + ')">Edit</button>'
+                : '<button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation();openMonitorEdit(' + m.id + ',' + m.instance_id + ')">Edit</button>';
+            return '<tr' + rowOpacity + ' data-monitor-id="' + m.id + '" data-instance-id="' + m.instance_id + '">'
                 + '<td data-label="ID">#' + m.id + '</td>'
-                + '<td data-label="Name">' + esc(m.name) + '</td>'
+                + '<td data-label="Name">' + esc(m.name) + pausedBadge + '</td>'
                 + '<td data-label="Instance"><span class="badge bg-primary">' + esc(m.instance_name || '—') + '</span></td>'
                 + '<td data-label="Type"><span class="badge ' + (m.type === 'http' ? 'bg-info' : m.type === 'docker' ? 'bg-warning text-dark' : 'bg-secondary') + '">' + (m.type === 'http' ? '\u25CB ' : m.type === 'docker' ? '\u25A3 ' : '') + m.type.toUpperCase() + '</span></td>'
                 + '<td data-label="URL / Container" class="text-truncate" style="max-width:220px">' + (m.url ? esc(m.url) : m.docker_container ? esc(m.docker_container) : '—') + '</td>'
                 + '<td data-label="Interval">' + (m.interval ? m.interval + 's' : '—') + '</td>'
                 + '<td data-label="Retry">' + (m.retry_interval ? m.retry_interval + 's' : '—') + '</td>'
                 + '<td data-label="Max Retries">' + (m.maxretries || '—') + '</td>'
-                + '<td data-label="Actions" class="text-nowrap"><button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation();openMonitorEdit(' + m.id + ',' + m.instance_id + ')">Edit</button></td>'
+                + '<td data-label="Tags">' + tagsHtml + '</td>'
+                + '<td data-label="Actions" class="text-nowrap">' + toggleBtn + editBtn + '</td>'
                 + '</tr>';
         }).join('');
 
@@ -575,6 +658,19 @@ export function openMonitorEdit(monitorId: number, instanceId: number): void {
     (document.getElementById('monitor-edit-interval') as HTMLInputElement).value = mon.interval != null ? String(mon.interval) : '';
     (document.getElementById('monitor-edit-retry') as HTMLInputElement).value = mon.retry_interval != null ? String(mon.retry_interval) : '';
     (document.getElementById('monitor-edit-maxretries') as HTMLInputElement).value = mon.maxretries != null ? String(mon.maxretries) : '';
+    var tagsEl = document.getElementById('monitor-edit-tags') as HTMLInputElement | null;
+    if (tagsEl) {
+        tagsEl.value = mon.tags && mon.tags.length ? mon.tags.map(function(t){ return String(t.id); }).join(',') : '';
+    }
+    // Show paused badge in modal title area
+    var badgeEl = document.getElementById('monitor-edit-paused-badge');
+    if (badgeEl) {
+        badgeEl.innerHTML = mon.active === false ? '<span class="badge bg-warning text-dark ms-2">⏸ Paused</span>' : '';
+    }
+    var chipsEl = document.getElementById('monitor-edit-tags-preview');
+    if (chipsEl) {
+        chipsEl.innerHTML = mon.tags && mon.tags.length ? renderTagChips(mon.tags) : '<span class="text-muted small">No tags</span>';
+    }
     new bootstrap.Modal(document.getElementById('monitor-edit-modal')!).show();
 }
 
@@ -589,17 +685,53 @@ export function saveMonitorEdit(): void {
         retry_interval: parseInt((document.getElementById('monitor-edit-retry') as HTMLInputElement).value, 10) || undefined,
         maxretries: parseInt((document.getElementById('monitor-edit-maxretries') as HTMLInputElement).value, 10) || undefined
     };
+    var tagsEl = document.getElementById('monitor-edit-tags') as HTMLInputElement | null;
+    var tagsRaw = tagsEl ? tagsEl.value.trim() : '';
+    var tagsParsed = parseTagsInput(tagsRaw);
+    // Find original for diff
+    var origMon: MonitorResponse | null = null;
+    for (var i=0;i<kumaMonitorList.length;i++){ if(kumaMonitorList[i].id===monitorEditState.id && kumaMonitorList[i].instance_id===monitorEditState.instanceId){ origMon=kumaMonitorList[i]; break; } }
+    var tagsChanged = false;
+    if (origMon) {
+        tagsChanged = !tagsEqual(origMon.tags, tagsParsed as any);
+    } else {
+        tagsChanged = tagsRaw.length>0;
+    }
     updateKumaMonitor(monitorEditState.id, monitorEditState.instanceId, input).then(function(r) {
         if (!r.ok) {
             return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
         }
         return r.json();
     }).then(function() {
-        toast('Monitor updated');
-        var modal = bootstrap.Modal.getInstance(document.getElementById('monitor-edit-modal')!);
-        if (modal) modal.hide();
-        loadKumaMonitors();
-        loadDockerServices();
+        if (!tagsChanged) {
+            toast('Monitor updated');
+            var modal = bootstrap.Modal.getInstance(document.getElementById('monitor-edit-modal')!);
+            if (modal) modal.hide();
+            loadKumaMonitors();
+            loadDockerServices();
+            return null;
+        }
+        // Call setMonitorTags after update
+        return (window as any).setMonitorTags(monitorEditState!.id, monitorEditState!.instanceId, tagsParsed).then(function(r: Response){
+            return r.json().then(function(body:any){ if(!r.ok) throw new Error((body && body.error) || body.msg || ('HTTP '+r.status)); return body; });
+        }).then(function(body:any){
+            var msg = body && body.msg ? body.msg : (body && body.added ? 'Tags updated' : 'Monitor updated');
+            // surface Kuma ack verbatim if present
+            if (body && body.errors && body.errors.length) {
+                toast(msg + ' (' + body.errors.join('; ') + ')', body.errors.length ? 'error' : 'success');
+            } else {
+                toast(msg, 'success');
+            }
+            var modal2 = bootstrap.Modal.getInstance(document.getElementById('monitor-edit-modal')!);
+            if (modal2) modal2.hide();
+            loadKumaMonitors();
+            loadDockerServices();
+        }).catch(function(err: Error){
+            if(err.message==='not authenticated') return;
+            toast('Tags update failed: '+err.message, 'error');
+            // still reload to reflect monitor edit
+            loadKumaMonitors();
+        });
     }).catch(function(err: Error) {
         if (err.message === 'not authenticated') return;
         toast('Update failed: ' + err.message, 'error');
@@ -711,6 +843,7 @@ export function loadHistory(): void {
             else if (r.status === 'completed_with_errors') badge = 'bg-warning text-dark';
             else if (r.status === 'error') badge = 'bg-danger';
             var statusIcon = r.status === 'completed' ? '\u2713' : r.status === 'completed_with_errors' ? '\u26A0' : r.status === 'error' ? '\u2717' : '\u25CB';
+            var skippedCell = r.skipped > 0 ? '<span class="badge bg-secondary">' + r.skipped + '</span>' : String(r.skipped);
             return '<tr>'
                 + '<td data-label="ID">#' + r.id + '</td>'
                 + '<td data-label="Source"><span class="badge ' + (r.source === 'docker' ? 'bg-primary' : r.source === 'reconcile' ? 'bg-info' : 'bg-success') + '">' + r.source + '</span></td>'
@@ -718,7 +851,7 @@ export function loadHistory(): void {
                 + '<td data-label="Started" class="small">' + (r.started_at ? new Date(r.started_at).toLocaleString() : '') + '</td>'
                 + '<td data-label="Added">' + r.added + '</td>'
                 + '<td data-label="Updated">' + (r.updated ?? 0) + '</td>'
-                + '<td data-label="Skipped">' + r.skipped + '</td>'
+                + '<td data-label="Skipped">' + skippedCell + '</td>'
                 + '<td data-label="Failed">' + r.failed + '</td>'
                 + '<td data-label="Error" class="small text-danger">' + esc(r.error_message || '') + '</td>'
                 + '</tr>';
@@ -751,9 +884,32 @@ export function loadEvents(): void {
     });
 }
 
+function renderReconcileChanges(changes: ReconcileResult['changes']): string {
+    if (!changes || !changes.length) return '<div class="small text-muted mt-2">No changes</div>';
+    var rows = changes.map(function(c){
+        var badge = 'bg-primary';
+        if (c.action === 'created') badge = 'bg-success';
+        else if (c.action === 'updated') badge = 'bg-info';
+        else if (c.action === 'skipped') badge = 'bg-secondary';
+        else if (c.action === 'error') badge = 'bg-danger';
+        var isSkippedPaused = c.action === 'skipped' && c.detail && c.detail.toLowerCase().indexOf('paused') >= 0;
+        var trAttr = isSkippedPaused ? ' class="text-muted" style="opacity:0.7"' : '';
+        return '<tr' + trAttr + '>'
+            + '<td>' + esc(c.service) + '</td>'
+            + '<td><span class="badge ' + badge + '">' + esc(c.target) + '</span></td>'
+            + '<td><span class="badge ' + badge + '">' + esc(c.action) + '</span></td>'
+            + '<td class="small">' + esc(c.detail || '') + '</td>'
+            + '</tr>';
+    }).join('');
+    return '<div class="table-responsive bg-white rounded shadow-sm mt-2"><table class="table table-sm table-hover align-middle mb-0" aria-label="Reconcile changes">'
+        + '<thead class="table-light"><tr><th>Service</th><th>Target</th><th>Action</th><th>Detail</th></tr></thead>'
+        + '<tbody>' + rows + '</tbody></table></div>';
+}
+
 export function runReconcile(): void {
     var btn = document.getElementById('btn-reconcile') as HTMLButtonElement;
     var resultEl = document.getElementById('reconcile-result')!;
+    var changesEl = document.getElementById('reconcile-changes')!;
     var dryRun = (document.getElementById('reconcile-dry-run') as HTMLInputElement).checked;
     var service = (document.getElementById('reconcile-service') as HTMLInputElement).value.trim();
     var payload: Record<string, unknown> = { dry_run: dryRun };
@@ -761,6 +917,7 @@ export function runReconcile(): void {
 
     btn.disabled = true;
     resultEl.textContent = 'Running...';
+    if (changesEl) changesEl.innerHTML = '';
     apiFetch('/api/reconcile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r){return r.json() as Promise<ReconcileResult>;})
         .then(function(res) {
@@ -768,6 +925,7 @@ export function runReconcile(): void {
             if (res.dry_run) summary += ' (dry run)';
             resultEl.textContent = summary;
             toast('Reconcile ' + (res.dry_run ? 'preview' : 'finished') + ': ' + res.changes.length + ' change(s)', res.run.status === 'completed_with_errors' ? 'error' : 'success');
+            if (changesEl) changesEl.innerHTML = renderReconcileChanges(res.changes);
             if (res.changes.length) { loadEvents(); loadHistory(); loadDockerServices(); }
         })
         .catch(function(err: Error) {
@@ -795,6 +953,8 @@ window.openMonitorEdit = openMonitorEdit;
 window.saveMonitorEdit = saveMonitorEdit;
 window.deleteMonitor = deleteMonitor;
 window.toggleNPMProxyDetail = toggleNPMProxyDetail;
+(window as any).pauseKumaMonitorAction = pauseKumaMonitorAction;
+(window as any).resumeKumaMonitorAction = resumeKumaMonitorAction;
 
 // Wire modal actions (modals exist in static/index.html before this module runs)
 document.getElementById('link-save-btn')!.addEventListener('click', saveServiceLink);
@@ -804,3 +964,17 @@ document.getElementById('link-npm-create-btn')!.addEventListener('click', create
 document.getElementById('link-kuma-create-btn')!.addEventListener('click', createKumaMonitorFromLink);
 document.getElementById('monitor-edit-save')!.addEventListener('click', saveMonitorEdit);
 document.getElementById('monitor-edit-delete')!.addEventListener('click', deleteMonitor);
+var tagsInputEl = document.getElementById('monitor-edit-tags') as HTMLInputElement | null;
+if (tagsInputEl) {
+    tagsInputEl.addEventListener('input', function(){
+        var preview = document.getElementById('monitor-edit-tags-preview');
+        if (!preview) return;
+        var parsed = parseTagsInput(tagsInputEl!.value);
+        if (!parsed.length) { preview.innerHTML = '<span class="text-muted small">No tags</span>'; return; }
+        var tmp: MonitorTag[] = parsed.map(function(p:any){
+            if ((p as any).id) return { id: (p as any).id, name: String((p as any).id) } as MonitorTag;
+            return { id: 0, name: (p as any).name } as MonitorTag;
+        });
+        preview.innerHTML = tmp.map(function(t){ return '<span class="badge bg-dark me-1">' + esc(t.name) + '</span>'; }).join('');
+    });
+}

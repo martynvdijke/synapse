@@ -44,6 +44,8 @@ export function loadSettings(): void {
         if (notifyImage) notifyImage.checked = !!(s.notify_docker_image);
         var notifyReconcile = document.getElementById('s-notify-reconcile') as HTMLInputElement | null;
         if (notifyReconcile) notifyReconcile.checked = !!(s.notify_reconcile);
+        var kumaDefaultTags = document.getElementById('s-kuma-default-tags') as HTMLInputElement | null;
+        if (kumaDefaultTags) kumaDefaultTags.value = (s.kuma_default_tags as string) || '';
         var notifyCooldown = document.getElementById('s-notify-cooldown') as HTMLInputElement | null;
         if (notifyCooldown) notifyCooldown.value = String(s.notify_cooldown_minutes || 5);
         loadNotifyMissing();
@@ -266,6 +268,7 @@ export function saveSettings(e: Event): void {
         reconcile_enabled: (document.getElementById('s-reconcile-enabled') as HTMLInputElement)?.checked || false,
         reconcile_interval_minutes: parseInt((document.getElementById('s-reconcile-interval') as HTMLInputElement)?.value || '60', 10) || 60,
         reconcile_dry_run_default: (document.getElementById('s-reconcile-dry-run') as HTMLInputElement)?.checked || false,
+        kuma_default_tags: (document.getElementById('s-kuma-default-tags') as HTMLInputElement)?.value || '',
         notify_docker_die: (document.getElementById('s-notify-docker-die') as HTMLInputElement)?.checked || false,
         notify_docker_health: (document.getElementById('s-notify-docker-health') as HTMLInputElement)?.checked || false,
         notify_docker_image: (document.getElementById('s-notify-docker-image') as HTMLInputElement)?.checked || false,

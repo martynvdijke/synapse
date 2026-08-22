@@ -178,6 +178,22 @@ export function deleteKumaMonitor(kumaId: number, instanceId: number): Promise<R
     return apiFetch('/api/monitors/' + kumaId + '?instance=' + instanceId, { method: 'DELETE' });
 }
 
+export function pauseKumaMonitor(kumaId: number, instanceId: number): Promise<Response> {
+    return apiFetch('/api/monitors/' + kumaId + '/pause?instance=' + instanceId, { method: 'POST' });
+}
+
+export function resumeKumaMonitor(kumaId: number, instanceId: number): Promise<Response> {
+    return apiFetch('/api/monitors/' + kumaId + '/resume?instance=' + instanceId, { method: 'POST' });
+}
+
+export function setMonitorTags(kumaId: number, instanceId: number, tags: Array<number | { id: number; name?: string; value?: string; color?: string } | string>): Promise<Response> {
+    return apiFetch('/api/monitors/' + kumaId + '/tags?instance=' + instanceId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: tags })
+    });
+}
+
 // --- Instances ---
 export function getKumaInstances(): Promise<Response> {
     return apiFetch('/api/kuma-instances');
@@ -214,6 +230,9 @@ window.updateNPMProxyHost = updateNPMProxyHost;
 window.createKumaMonitor = createKumaMonitor;
 window.updateKumaMonitor = updateKumaMonitor;
 window.deleteKumaMonitor = deleteKumaMonitor;
+(window as any).pauseKumaMonitor = pauseKumaMonitor;
+(window as any).resumeKumaMonitor = resumeKumaMonitor;
+(window as any).setMonitorTags = setMonitorTags;
 window.getKumaInstances = getKumaInstances;
 window.getNPMInstances = getNPMInstances;
 window.getAutheliaCoverage = getAutheliaCoverage;

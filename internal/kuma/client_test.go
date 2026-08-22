@@ -163,3 +163,161 @@ func TestClientEditMonitorUsesClientTestHook(t *testing.T) {
 		t.Fatal("client-level hook not called")
 	}
 }
+
+func TestClientPauseMonitorSuccess(t *testing.T) {
+	restore := SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		if monitorID != 5 {
+			return fmt.Errorf("unexpected id %d", monitorID)
+		}
+		return nil
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	// prime cache
+	restoreQ := SetQueryMonitorsTestHook(func(url, user, pass string) ([]KumaMonitor, error) {
+		return []KumaMonitor{{ID: 1}}, nil
+	})
+	defer restoreQ()
+	c.QueryMonitorsViaSocketIO()
+	c.mu.Lock()
+	hasCache := c.monCache != nil
+	c.mu.Unlock()
+	if !hasCache {
+		t.Fatal("cache should be set")
+	}
+	if err := c.PauseMonitorViaSocketIO(5); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	c.mu.Lock()
+	hasCache = c.monCache != nil
+	c.mu.Unlock()
+	if hasCache {
+		t.Fatal("cache should be invalidated after pause success")
+	}
+}
+
+func TestClientPauseMonitorErrorPropagates(t *testing.T) {
+	restore := SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return fmt.Errorf("pause monitor rejected: boom")
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	err := c.PauseMonitorViaSocketIO(1)
+	if err == nil || err.Error() != "pause monitor rejected: boom" {
+		t.Fatalf("expected propagated error, got %v", err)
+	}
+}
+
+func TestClientResumeMonitorSuccess(t *testing.T) {
+	restore := SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return nil
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	restoreQ := SetQueryMonitorsTestHook(func(url, user, pass string) ([]KumaMonitor, error) {
+		return []KumaMonitor{{ID: 1}}, nil
+	})
+	defer restoreQ()
+	c.QueryMonitorsViaSocketIO()
+	if err := c.ResumeMonitorViaSocketIO(3); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	c.mu.Lock()
+	hasCache := c.monCache != nil
+	c.mu.Unlock()
+	if hasCache {
+		t.Fatal("cache should be invalidated after resume")
+	}
+}
+
+func TestClientResumeMonitorErrorPropagates(t *testing.T) {
+	restore := SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return fmt.Errorf("resume monitor rejected: fail")
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	err := c.ResumeMonitorViaSocketIO(2)
+	if err == nil || err.Error() != "resume monitor rejected: fail" {
+		t.Fatalf("expected error, got %v", err)
+	}
+}
+
+func TestClientAddMonitorTagSuccess(t *testing.T) {
+	restore := SetAddMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
+		if monitorID != 10 || tagID != 3 {
+			return fmt.Errorf("unexpected args %d %d", monitorID, tagID)
+		}
+		return nil
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	if err := c.AddMonitorTagViaSocketIO(10, 3); err != nil {
+		t.Fatalf("add tag: %v", err)
+	}
+}
+
+func TestClientAddMonitorTagError(t *testing.T) {
+	restore := SetAddMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
+		return fmt.Errorf("add monitor tag rejected: oops")
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	err := c.AddMonitorTagViaSocketIO(1, 2)
+	if err == nil || err.Error() != "add monitor tag rejected: oops" {
+		t.Fatalf("expected error, got %v", err)
+	}
+}
+
+func TestClientDeleteMonitorTagSuccess(t *testing.T) {
+	restore := SetDeleteMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
+		return nil
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	if err := c.DeleteMonitorTagViaSocketIO(7, 2); err != nil {
+		t.Fatalf("delete tag: %v", err)
+	}
+}
+
+func TestClientDeleteMonitorTagError(t *testing.T) {
+	restore := SetDeleteMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
+		return fmt.Errorf("delete monitor tag rejected: bad")
+	})
+	defer restore()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	err := c.DeleteMonitorTagViaSocketIO(7, 2)
+	if err == nil || err.Error() != "delete monitor tag rejected: bad" {
+		t.Fatalf("expected error, got %v", err)
+	}
+}
+
+func TestClientPauseResumeTagCacheInvalidationOnFailure(t *testing.T) {
+	// failures should NOT invalidate cache
+	restoreQ := SetQueryMonitorsTestHook(func(url, user, pass string) ([]KumaMonitor, error) {
+		return []KumaMonitor{{ID: 1}}, nil
+	})
+	defer restoreQ()
+	c := NewClient("http://kuma")
+	c.Login("u", "p")
+	c.QueryMonitorsViaSocketIO()
+
+	restore := SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return fmt.Errorf("fail")
+	})
+	defer restore()
+	_ = c.PauseMonitorViaSocketIO(1)
+	c.mu.Lock()
+	hasCache := c.monCache != nil
+	c.mu.Unlock()
+	if !hasCache {
+		t.Fatal("cache should remain on failure")
+	}
+}

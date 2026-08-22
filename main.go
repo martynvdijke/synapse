@@ -198,6 +198,7 @@ func (app *App) settings() db.Settings {
 		AlertsEnabled:             getEnv("ALERTS_ENABLED", "") == "true",
 		AlertEvalIntervalSeconds:  getEnvInt("ALERT_EVAL_INTERVAL_SECONDS", 60),
 		AlertReminderMinutes:      getEnvInt("ALERT_REMINDER_MINUTES", 0),
+		KumaDefaultTags:           getEnv("KUMA_DEFAULT_TAGS", ""),
 	})
 }
 
@@ -453,6 +454,9 @@ func main() {
 			mut.POST("/monitors", app.CreateKumaMonitor)
 			mut.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
 			mut.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
+			mut.POST("/monitors/:kumaId/pause", app.PauseKumaMonitor)
+			mut.POST("/monitors/:kumaId/resume", app.ResumeKumaMonitor)
+			mut.PUT("/monitors/:kumaId/tags", app.SetMonitorTags)
 			mut.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
 			mut.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
 			mut.POST("/service-links", app.CreateServiceLink)
@@ -791,6 +795,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"alerts_enabled":               s.AlertsEnabled,
 		"alert_eval_interval_seconds":  s.AlertEvalIntervalSeconds,
 		"alert_reminder_minutes":       s.AlertReminderMinutes,
+		"kuma_default_tags":            s.KumaDefaultTags,
 	})
 }
 
@@ -1028,6 +1033,11 @@ func (app *App) SaveSettings(c *gin.Context) {
 			val = 1440
 		}
 		pairs["notify_cooldown_minutes"] = strconv.Itoa(val)
+	}
+	if v, ok := raw["kuma_default_tags"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		pairs["kuma_default_tags"] = val
 	}
 
 	if err := app.database.SaveSettingsMap(pairs); err != nil {
@@ -1932,22 +1942,24 @@ func (app *App) Proxies(c *gin.Context) {
 }
 
 type KumaMonitorSummary struct {
-	ID              int     `json:"id"`
-	Name            string  `json:"name"`
-	Type            string  `json:"type"`
-	URL             string  `json:"url,omitempty"`
-	DockerContainer string  `json:"docker_container,omitempty"`
-	Status          int     `json:"status,omitempty"`
-	Uptime24h       float64 `json:"uptime_24h,omitempty"`
-	Uptime7d        float64 `json:"uptime_7d,omitempty"`
-	Uptime1y        float64 `json:"uptime_1y,omitempty"`
-	AvgPing         float64 `json:"ping,omitempty"`
-	LastMsg         string  `json:"last_msg,omitempty"`
-	Interval        int     `json:"interval,omitempty"`
-	RetryInterval   int     `json:"retry_interval,omitempty"`
-	MaxRetries      int     `json:"maxretries,omitempty"`
-	InstanceID      int     `json:"instance_id"`
-	InstanceName    string  `json:"instance_name"`
+	ID              int              `json:"id"`
+	Name            string           `json:"name"`
+	Type            string           `json:"type"`
+	URL             string           `json:"url,omitempty"`
+	DockerContainer string           `json:"docker_container,omitempty"`
+	Status          int              `json:"status,omitempty"`
+	Uptime24h       float64          `json:"uptime_24h,omitempty"`
+	Uptime7d        float64          `json:"uptime_7d,omitempty"`
+	Uptime1y        float64          `json:"uptime_1y,omitempty"`
+	AvgPing         float64          `json:"ping,omitempty"`
+	LastMsg         string           `json:"last_msg,omitempty"`
+	Interval        int              `json:"interval,omitempty"`
+	RetryInterval   int              `json:"retry_interval,omitempty"`
+	MaxRetries      int              `json:"maxretries,omitempty"`
+	Active          bool             `json:"active"`
+	Tags            []kuma.MonitorTag `json:"tags,omitempty"`
+	InstanceID      int              `json:"instance_id"`
+	InstanceName    string           `json:"instance_name"`
 }
 
 func (app *App) KumaMonitors(c *gin.Context) {
@@ -1995,6 +2007,8 @@ func (app *App) KumaMonitors(c *gin.Context) {
 				Interval:        m.Interval,
 				RetryInterval:   m.RetryInterval,
 				MaxRetries:      m.MaxRetries,
+				Active:          m.Active,
+				Tags:            m.Tags,
 				InstanceID:      ic.InstanceID,
 				InstanceName:    instanceName,
 			})
@@ -2038,6 +2052,168 @@ func (app *App) KumaMonitorStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+func (app *App) PauseKumaMonitor(c *gin.Context) {
+	kumaID, err := strconv.Atoi(c.Param("kumaId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid monitor id"})
+		return
+	}
+	instanceID, err := strconv.Atoi(c.Query("instance"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
+		return
+	}
+	client, err := app.kumaRegistry.Get(instanceID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
+		return
+	}
+	if err := client.PauseMonitorViaSocketIO(kumaID); err != nil {
+		logging.LogWarn("app", "Socket.IO pause monitor failed", slog.Int("monitor_id", kumaID), slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (app *App) ResumeKumaMonitor(c *gin.Context) {
+	kumaID, err := strconv.Atoi(c.Param("kumaId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid monitor id"})
+		return
+	}
+	instanceID, err := strconv.Atoi(c.Query("instance"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
+		return
+	}
+	client, err := app.kumaRegistry.Get(instanceID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
+		return
+	}
+	if err := client.ResumeMonitorViaSocketIO(kumaID); err != nil {
+		logging.LogWarn("app", "Socket.IO resume monitor failed", slog.Int("monitor_id", kumaID), slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (app *App) SetMonitorTags(c *gin.Context) {
+	kumaID, err := strconv.Atoi(c.Param("kumaId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid monitor id"})
+		return
+	}
+	instanceID, err := strconv.Atoi(c.Query("instance"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
+		return
+	}
+	client, err := app.kumaRegistry.Get(instanceID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
+		return
+	}
+	// Parse desired tags: support {tags:[...]} or raw array.
+	var rawBody json.RawMessage
+	if err := c.ShouldBindJSON(&rawBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	desiredIDs := []int{}
+	// Try wrapper object {tags: [...]}
+	var wrapper struct {
+		Tags json.RawMessage `json:"tags"`
+	}
+	if err := json.Unmarshal(rawBody, &wrapper); err == nil && len(wrapper.Tags) != 0 {
+		rawBody = wrapper.Tags
+	}
+	// Try []int
+	var asInts []int
+	if err := json.Unmarshal(rawBody, &asInts); err == nil {
+		desiredIDs = asInts
+	} else {
+		// Try []MonitorTag / []{id,name}
+		var asTags []kuma.MonitorTag
+		if err := json.Unmarshal(rawBody, &asTags); err == nil {
+			for _, t := range asTags {
+				if t.ID != 0 {
+					desiredIDs = append(desiredIDs, t.ID)
+				}
+			}
+		} else {
+			// Try []string (names) — ignore, no ID mapping
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tags must be array of ids or tag objects with id"})
+			return
+		}
+	}
+	monitors, err := client.QueryMonitorsViaSocketIO()
+	if err != nil {
+		logging.LogWarn("app", "Failed to fetch monitors for tag diff", slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	var cur *kuma.KumaMonitor
+	for i := range monitors {
+		if monitors[i].ID == kumaID {
+			cur = &monitors[i]
+			break
+		}
+	}
+	if cur == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("monitor %d not found", kumaID)})
+		return
+	}
+	currentSet := make(map[int]bool)
+	for _, t := range cur.Tags {
+		currentSet[t.ID] = true
+	}
+	desiredSet := make(map[int]bool)
+	for _, id := range desiredIDs {
+		desiredSet[id] = true
+	}
+	var toAdd, toRemove []int
+	for id := range desiredSet {
+		if !currentSet[id] {
+			toAdd = append(toAdd, id)
+		}
+	}
+	for id := range currentSet {
+		if !desiredSet[id] {
+			toRemove = append(toRemove, id)
+		}
+	}
+	type tagResult struct {
+		Added   []int    `json:"added"`
+		Removed []int    `json:"removed"`
+		Errors  []string `json:"errors,omitempty"`
+	}
+	res := tagResult{Added: []int{}, Removed: []int{}}
+	var errs []string
+	for _, id := range toAdd {
+		if err := client.AddMonitorTagViaSocketIO(kumaID, id); err != nil {
+			msg := err.Error()
+			errs = append(errs, fmt.Sprintf("add %d: %s", id, msg))
+			logging.LogWarn("app", "Add monitor tag failed", slog.Int("monitor_id", kumaID), slog.Int("tag_id", id), slog.String("error", msg))
+		} else {
+			res.Added = append(res.Added, id)
+		}
+	}
+	for _, id := range toRemove {
+		if err := client.DeleteMonitorTagViaSocketIO(kumaID, id); err != nil {
+			msg := err.Error()
+			errs = append(errs, fmt.Sprintf("delete %d: %s", id, msg))
+			logging.LogWarn("app", "Delete monitor tag failed", slog.Int("monitor_id", kumaID), slog.Int("tag_id", id), slog.String("error", msg))
+		} else {
+			res.Removed = append(res.Removed, id)
+		}
+	}
+	res.Errors = errs
+	c.JSON(http.StatusOK, res)
 }
 
 func (app *App) SyncHistory(c *gin.Context) {

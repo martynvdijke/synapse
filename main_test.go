@@ -953,6 +953,9 @@ func setupRouter(app *App) *gin.Engine {
 			mut.POST("/monitors", app.CreateKumaMonitor)
 			mut.PUT("/monitors/:kumaId", app.UpdateKumaMonitor)
 			mut.DELETE("/monitors/:kumaId", app.DeleteKumaMonitor)
+			mut.POST("/monitors/:kumaId/pause", app.PauseKumaMonitor)
+			mut.POST("/monitors/:kumaId/resume", app.ResumeKumaMonitor)
+			mut.PUT("/monitors/:kumaId/tags", app.SetMonitorTags)
 			mut.POST("/npm/proxy-hosts", app.CreateNPMProxyHost)
 			mut.PUT("/npm/proxy-hosts/:id", app.UpdateNPMProxyHost)
 			mut.POST("/service-links", app.CreateServiceLink)
@@ -2139,5 +2142,180 @@ func TestTokenLifecycle_RequiresSession(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s without session: expected 401, got %d", tc.method, tc.path, w.Code)
 		}
+	}
+}
+
+func TestPauseKumaMonitor_Success(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	inst, err := app.database.CreateKumaInstance(&db.KumaInstance{Name: "k1", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
+	defer restoreVerify()
+	restore := kuma.SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		if monitorID != 5 {
+			t.Errorf("unexpected monitorID %d", monitorID)
+		}
+		return nil
+	})
+	defer restore()
+	req := authRequest(t, "POST", fmt.Sprintf("/api/monitors/5/pause?instance=%d", inst.ID), "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPauseKumaMonitor_AckFailure(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	inst, err := app.database.CreateKumaInstance(&db.KumaInstance{Name: "k1", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
+	defer restoreVerify()
+	restore := kuma.SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return fmt.Errorf("pause monitor rejected: boom")
+	})
+	defer restore()
+	req := authRequest(t, "POST", fmt.Sprintf("/api/monitors/1/pause?instance=%d", inst.ID), "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "pause monitor rejected: boom") {
+		t.Fatalf("expected verbatim error, got %s", w.Body.String())
+	}
+}
+
+func TestPauseKumaMonitor_InvalidID(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	req := authRequest(t, "POST", "/api/monitors/abc/pause?instance=1", "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPauseKumaMonitor_MissingInstance(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
+	defer restoreVerify()
+	// no instance in DB
+	req := authRequest(t, "POST", "/api/monitors/1/pause?instance=999", "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestResumeKumaMonitor_SuccessAndFailure(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	inst, _ := app.database.CreateKumaInstance(&db.KumaInstance{Name: "k1", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true})
+	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
+	defer restoreVerify()
+	restore := kuma.SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error { return nil })
+	defer restore()
+	req := authRequest(t, "POST", fmt.Sprintf("/api/monitors/7/resume?instance=%d", inst.ID), "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	restore2 := kuma.SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error {
+		return fmt.Errorf("resume monitor rejected: fail")
+	})
+	defer restore2()
+	// need fresh restore after first defer? Use second hook overwrite
+	req2 := authRequest(t, "POST", fmt.Sprintf("/api/monitors/7/resume?instance=%d", inst.ID), "", sid)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", w2.Code, w2.Body.String())
+	}
+	if !strings.Contains(w2.Body.String(), "resume monitor rejected: fail") {
+		t.Fatalf("expected verbatim error, got %s", w2.Body.String())
+	}
+}
+
+func TestSetMonitorTags_Diff(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	inst, _ := app.database.CreateKumaInstance(&db.KumaInstance{Name: "k1", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true})
+	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
+	defer restoreVerify()
+	restoreQ := kuma.SetQueryMonitorsTestHook(func(url, user, pass string) ([]kuma.KumaMonitor, error) {
+		return []kuma.KumaMonitor{{ID: 10, Name: "m", Tags: []kuma.MonitorTag{{ID: 1}, {ID: 2}}}}, nil
+	})
+	defer restoreQ()
+	var added, deleted []int
+	restoreAdd := kuma.SetAddMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
+		added = append(added, tagID)
+		return nil
+	})
+	defer restoreAdd()
+	restoreDel := kuma.SetDeleteMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
+		deleted = append(deleted, tagID)
+		return nil
+	})
+	defer restoreDel()
+
+	// Desired tags [1,2] with current [1,2] => no-ops
+	body := `{"tags":[1,2]}`
+	req := authRequest(t, "PUT", fmt.Sprintf("/api/monitors/10/tags?instance=%d", inst.ID), body, sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(added) != 0 || len(deleted) != 0 {
+		t.Fatalf("expected no ops, got added=%v deleted=%v", added, deleted)
+	}
+
+	// Desired tags with object form [{"id":1},{"id":3}] => add 3, remove 2
+	added, deleted = nil, nil
+	body2 := `{"tags":[{"id":1,"name":"x"},{"id":3,"name":"y"}]}`
+	req2 := authRequest(t, "PUT", fmt.Sprintf("/api/monitors/10/tags?instance=%d", inst.ID), body2, sid)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w2.Body).Decode(&resp)
+
+	// Desired empty diff? Also test raw array form [1,2]
+	added, deleted = nil, nil
+	body3 := `[1,2]`
+	req3 := authRequest(t, "PUT", fmt.Sprintf("/api/monitors/10/tags?instance=%d", inst.ID), body3, sid)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("expected 200 raw array, got %d: %s", w3.Code, w3.Body.String())
+	}
+}
+
+func TestSetMonitorTags_InvalidPayload(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	inst, _ := app.database.CreateKumaInstance(&db.KumaInstance{Name: "k1", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true})
+	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
+	defer restoreVerify()
+	body := `{"tags":"not-an-array"}`
+	req := authRequest(t, "PUT", fmt.Sprintf("/api/monitors/1/tags?instance=%d", inst.ID), body, sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid tags, got %d: %s", w.Code, w.Body.String())
 	}
 }

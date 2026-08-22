@@ -19,6 +19,9 @@ declare function updateNPMProxyHost(id: number, input: Record<string, unknown>):
 declare function createKumaMonitor(input: Record<string, unknown>): Promise<Response>;
 declare function updateKumaMonitor(kumaId: number, instanceId: number, input: Record<string, unknown>): Promise<Response>;
 declare function deleteKumaMonitor(kumaId: number, instanceId: number): Promise<Response>;
+declare function pauseKumaMonitor(kumaId: number, instanceId: number): Promise<Response>;
+declare function resumeKumaMonitor(kumaId: number, instanceId: number): Promise<Response>;
+declare function setMonitorTags(kumaId: number, instanceId: number, tags: Array<number | { id: number; name?: string } | string>): Promise<Response>;
 declare function getKumaInstances(): Promise<Response>;
 declare function getNPMInstances(): Promise<Response>;
 declare function getAutheliaCoverage(): Promise<Response>;
@@ -52,6 +55,8 @@ declare function createKumaMonitorFromLink(): void;
 declare function openMonitorEdit(monitorId: number, instanceId: number): void;
 declare function saveMonitorEdit(): void;
 declare function deleteMonitor(): void;
+declare function pauseKumaMonitorAction(kumaId: number, instanceId: number): void;
+declare function resumeKumaMonitorAction(kumaId: number, instanceId: number): void;
 
 // ── settings.js ─────────────────────────────────────────────────
 declare function loadSettings(): void;

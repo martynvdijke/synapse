@@ -526,3 +526,125 @@ func TestQueryMonitorsViaSocketIO_PollingFallback(t *testing.T) {
 		t.Fatal("login packet was never received over polling transport")
 	}
 }
+
+func TestQueryMonitorsViaSocketIO_ParsesMonitorListFields(t *testing.T) {
+	orig := dataCollectionWindow
+	dataCollectionWindow = 300 * time.Millisecond
+	defer func() { dataCollectionWindow = orig }()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		c.WriteMessage(websocket.TextMessage, []byte(`0{"sid":"mock","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}`))
+		_, msg, _ := c.ReadMessage()
+		if string(msg) != "40" {
+			return
+		}
+		c.WriteMessage(websocket.TextMessage, []byte(`40{"sid":"mock"}`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["loginRequired"]`))
+		_, msg, _ = c.ReadMessage()
+		ackID := strings.TrimPrefix(string(msg), "42")
+		for i, ch := range ackID {
+			if ch < '0' || ch > '9' {
+				ackID = ackID[:i]
+				break
+			}
+		}
+		c.WriteMessage(websocket.TextMessage, []byte("43"+ackID+`[{"ok":true,"token":"jwt"}]`))
+		// active:false, interval/retryInterval/maxretries, tags populated
+		c.WriteMessage(websocket.TextMessage, []byte(`42["monitorList",{"10":{"id":10,"name":"paused-svc","url":"http://paused.local","type":"http","active":false,"interval":45,"retryInterval":30,"maxretries":5,"tags":[{"id":1,"name":"prod","color":"#ff0000"},{"id":2,"name":"infra","color":"#00ff00"}]}}]`))
+		time.Sleep(600 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+
+	monitors, err := QueryMonitorsViaSocketIO(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(monitors) != 1 {
+		t.Fatalf("expected 1 monitor, got %d", len(monitors))
+	}
+	m := monitors[0]
+	if m.ID != 10 || m.Name != "paused-svc" {
+		t.Errorf("unexpected id/name: %+v", m)
+	}
+	if m.Active != false {
+		t.Errorf("expected active false, got %v", m.Active)
+	}
+	if m.Interval != 45 || m.RetryInterval != 30 || m.MaxRetries != 5 {
+		t.Errorf("expected intervals 45/30/5, got %d/%d/%d", m.Interval, m.RetryInterval, m.MaxRetries)
+	}
+	if len(m.Tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d: %+v", len(m.Tags), m.Tags)
+	}
+	if m.Tags[0].ID != 1 || m.Tags[0].Name != "prod" {
+		t.Errorf("unexpected tag 0: %+v", m.Tags[0])
+	}
+	if m.Tags[1].ID != 2 || m.Tags[1].Name != "infra" {
+		t.Errorf("unexpected tag 1: %+v", m.Tags[1])
+	}
+}
+
+func TestQueryMonitorsViaSocketIO_ParsesMonitorListDefaults(t *testing.T) {
+	orig := dataCollectionWindow
+	dataCollectionWindow = 300 * time.Millisecond
+	defer func() { dataCollectionWindow = orig }()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		c.WriteMessage(websocket.TextMessage, []byte(`0{"sid":"mock","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}`))
+		_, msg, _ := c.ReadMessage()
+		if string(msg) != "40" {
+			return
+		}
+		c.WriteMessage(websocket.TextMessage, []byte(`40{"sid":"mock"}`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["loginRequired"]`))
+		_, msg, _ = c.ReadMessage()
+		ackID := strings.TrimPrefix(string(msg), "42")
+		for i, ch := range ackID {
+			if ch < '0' || ch > '9' {
+				ackID = ackID[:i]
+				break
+			}
+		}
+		c.WriteMessage(websocket.TextMessage, []byte("43"+ackID+`[{"ok":true,"token":"jwt"}]`))
+		// entry 1 omits active (should default true) and has empty tags
+		// entry 2 has active true and tags empty array explicitly
+		c.WriteMessage(websocket.TextMessage, []byte(`42["monitorList",{"1":{"id":1,"name":"no-active","url":"http://a.local","type":"http","interval":60},"2":{"id":2,"name":"with-tags","url":"http://b.local","type":"http","active":true,"tags":[]}}]`))
+		time.Sleep(600 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+
+	monitors, err := QueryMonitorsViaSocketIO(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(monitors) != 2 {
+		t.Fatalf("expected 2 monitors, got %d", len(monitors))
+	}
+	if !monitors[0].Active {
+		t.Errorf("expected active default true for monitor without active field, got false")
+	}
+	if len(monitors[0].Tags) != 0 {
+		t.Errorf("expected empty tags for monitor 1, got %+v", monitors[0].Tags)
+	}
+	if !monitors[1].Active {
+		t.Errorf("expected active true for monitor 2, got false")
+	}
+	if monitors[1].Tags != nil && len(monitors[1].Tags) != 0 {
+		t.Errorf("expected empty tags for monitor 2, got %+v", monitors[1].Tags)
+	}
+	// tags empty vs populated edge: first is nil/empty, second also empty
+	if monitors[0].Interval != 60 {
+		t.Errorf("expected interval 60, got %d", monitors[0].Interval)
+	}
+}

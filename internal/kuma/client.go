@@ -17,10 +17,14 @@ var ErrRESTNotSupported = errors.New("REST API not supported by Uptime Kuma; use
 // When a hook is set on a Client, it takes priority over the global
 // function variable defaults.
 type ClientTestHooks struct {
-	QueryMonitors func() ([]KumaMonitor, error)
-	AddMonitor    func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error)
-	DeleteMonitor func(monitorID int) error
-	EditMonitor   func(monitorID int, payload map[string]any) error
+	QueryMonitors   func() ([]KumaMonitor, error)
+	AddMonitor      func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error)
+	DeleteMonitor   func(monitorID int) error
+	EditMonitor     func(monitorID int, payload map[string]any) error
+	PauseMonitor    func(monitorID int) error
+	ResumeMonitor   func(monitorID int) error
+	AddMonitorTag   func(monitorID, tagID int) error
+	DeleteMonitorTag func(monitorID, tagID int) error
 }
 
 type Client struct {
@@ -110,8 +114,12 @@ func SetAddMonitorTestHook(fn func(url, user, pass string, monitorType, name, mo
 // deleteMonitorFn / editMonitorFn are package-level hooks overridable in
 // tests without a real Kuma Socket.IO server.
 var (
-	deleteMonitorFn = DeleteMonitorViaSocketIO
-	editMonitorFn   = EditMonitorViaSocketIO
+	deleteMonitorFn    = DeleteMonitorViaSocketIO
+	editMonitorFn      = EditMonitorViaSocketIO
+	pauseMonitorFn     = PauseMonitorViaSocketIO
+	resumeMonitorFn    = ResumeMonitorViaSocketIO
+	addMonitorTagFn    = AddMonitorTagViaSocketIO
+	deleteMonitorTagFn = DeleteMonitorTagViaSocketIO
 )
 
 // SetDeleteMonitorTestHook installs a package-level override for
@@ -128,6 +136,30 @@ func SetEditMonitorTestHook(fn func(url, user, pass string, monitorID int, paylo
 	orig := editMonitorFn
 	editMonitorFn = fn
 	return func() { editMonitorFn = orig }
+}
+
+func SetPauseMonitorTestHook(fn func(url, user, pass string, monitorID int) error) func() {
+	orig := pauseMonitorFn
+	pauseMonitorFn = fn
+	return func() { pauseMonitorFn = orig }
+}
+
+func SetResumeMonitorTestHook(fn func(url, user, pass string, monitorID int) error) func() {
+	orig := resumeMonitorFn
+	resumeMonitorFn = fn
+	return func() { resumeMonitorFn = orig }
+}
+
+func SetAddMonitorTagTestHook(fn func(url, user, pass string, monitorID, tagID int) error) func() {
+	orig := addMonitorTagFn
+	addMonitorTagFn = fn
+	return func() { addMonitorTagFn = orig }
+}
+
+func SetDeleteMonitorTagTestHook(fn func(url, user, pass string, monitorID, tagID int) error) func() {
+	orig := deleteMonitorTagFn
+	deleteMonitorTagFn = fn
+	return func() { deleteMonitorTagFn = orig }
 }
 
 // SetTestHooks installs per-client test overrides for Socket.IO methods.
@@ -208,6 +240,58 @@ func (c *Client) EditMonitorViaSocketIO(monitorID int, payload map[string]any) e
 		return c.testHooks.EditMonitor(monitorID, payload)
 	}
 	err := editMonitorFn(c.url, c.username, c.password, monitorID, payload)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return err
+}
+
+func (c *Client) PauseMonitorViaSocketIO(monitorID int) error {
+	if c.testHooks != nil && c.testHooks.PauseMonitor != nil {
+		return c.testHooks.PauseMonitor(monitorID)
+	}
+	err := pauseMonitorFn(c.url, c.username, c.password, monitorID)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return err
+}
+
+func (c *Client) ResumeMonitorViaSocketIO(monitorID int) error {
+	if c.testHooks != nil && c.testHooks.ResumeMonitor != nil {
+		return c.testHooks.ResumeMonitor(monitorID)
+	}
+	err := resumeMonitorFn(c.url, c.username, c.password, monitorID)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return err
+}
+
+func (c *Client) AddMonitorTagViaSocketIO(monitorID, tagID int) error {
+	if c.testHooks != nil && c.testHooks.AddMonitorTag != nil {
+		return c.testHooks.AddMonitorTag(monitorID, tagID)
+	}
+	err := addMonitorTagFn(c.url, c.username, c.password, monitorID, tagID)
+	if err == nil {
+		c.mu.Lock()
+		c.monCache = nil
+		c.mu.Unlock()
+	}
+	return err
+}
+
+func (c *Client) DeleteMonitorTagViaSocketIO(monitorID, tagID int) error {
+	if c.testHooks != nil && c.testHooks.DeleteMonitorTag != nil {
+		return c.testHooks.DeleteMonitorTag(monitorID, tagID)
+	}
+	err := deleteMonitorTagFn(c.url, c.username, c.password, monitorID, tagID)
 	if err == nil {
 		c.mu.Lock()
 		c.monCache = nil

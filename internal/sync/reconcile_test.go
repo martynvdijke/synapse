@@ -279,7 +279,7 @@ func TestRunReconcileUpdatesDrift(t *testing.T) {
 
 	// Live Kuma monitor exists but interval drifted (60 vs desired 30).
 	monitors := []kuma.KumaMonitor{{
-		ID: 5, Name: "nginx-web", Type: "http", URL: "http://nginx-web:80/health", Interval: 60,
+		ID: 5, Name: "nginx-web", Type: "http", URL: "http://nginx-web:80/health", Interval: 60, Active: true,
 	}}
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
 
@@ -328,7 +328,7 @@ func TestRunReconcileNoDrift(t *testing.T) {
 		ForwardHost: "nginx-web", ForwardPort: 8080, ForwardScheme: "http", Enabled: true,
 	}}
 	monitors := []kuma.KumaMonitor{{
-		ID: 5, Name: "nginx-web", Type: "http", URL: "http://nginx-web:80/health", Interval: 30,
+		ID: 5, Name: "nginx-web", Type: "http", URL: "http://nginx-web:80/health", Interval: 30, Active: true,
 	}}
 	npmIC, npmRec := mockNpmReconcile(t, 1, hosts)
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
@@ -646,5 +646,46 @@ func TestMonitorDrift(t *testing.T) {
 	// Non-positive desired interval = no opinion.
 	if d := monitorDrift(live, "http", "http://web:80/h", "", 0); len(d) != 0 {
 		t.Errorf("expected no interval drift, got %v", d)
+	}
+}
+
+func TestRunReconcileSkipsPausedMonitor(t *testing.T) {
+	d := setupTestDB(t)
+	if _, err := d.CreateServiceLink(&db.ServiceLink{ServiceName: "web", NPMInstanceID: 1, KumaInstanceID: 1}); err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+	npmIC, npmRec := mockNpmReconcile(t, 1, []npm.ProxyHost{{
+		ID: 10, DomainNames: []string{"app.example.com", "www.app.example.com"},
+		ForwardHost: "nginx-web", ForwardPort: 8080, ForwardScheme: "http", Enabled: true,
+	}})
+	monitors := []kuma.KumaMonitor{{
+		ID: 5, Name: "nginx-web", Type: "http", URL: "http://nginx-web:80/health", Interval: 60, Active: false,
+	}}
+	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
+
+	result := RunReconcile(writeReconcileCompose(t),
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		ReconcileOptions{DryRun: false}, func(p Progress) {})
+
+	if result.Run.Skipped != 1 {
+		t.Errorf("expected 1 skipped for paused monitor, got %d", result.Run.Skipped)
+	}
+	if kumaRec.edits != 0 {
+		t.Errorf("paused monitor should not be edited, got %d edits", kumaRec.edits)
+	}
+	if npmRec.puts != 0 || npmRec.posts != 0 {
+		t.Errorf("npm should not be drifted, got puts=%d posts=%d", npmRec.puts, npmRec.posts)
+	}
+	found := false
+	for _, c := range result.Changes {
+		if c.Target == "kuma" && c.Action == "skipped" && c.Detail == "paused" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected kuma skipped with detail paused, got %+v", result.Changes)
+	}
+	if result.Run.Updated != 0 || result.Run.Added != 0 {
+		t.Errorf("expected no added/updated for paused, got added=%d updated=%d", result.Run.Added, result.Run.Updated)
 	}
 }

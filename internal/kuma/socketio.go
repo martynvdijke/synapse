@@ -587,22 +587,31 @@ type MonitorStats struct {
 	CertInfo  string  `json:"cert_info,omitempty"`
 }
 
+type MonitorTag struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Color string `json:"color,omitempty"`
+}
+
 type KumaMonitor struct {
-	ID              int     `json:"id"`
-	Name            string  `json:"name"`
-	URL             string  `json:"url,omitempty"`
-	Type            string  `json:"type"`
-	DockerContainer string  `json:"docker_container,omitempty"`
-	DockerHost      int     `json:"docker_host,omitempty"`
-	Status          int     `json:"status"`
-	Uptime24h       float64 `json:"uptime_24h"`
-	Uptime7d        float64 `json:"uptime_7d"`
-	Uptime1y        float64 `json:"uptime_1y"`
-	Ping            float64 `json:"ping"`
-	LastMsg         string  `json:"last_msg,omitempty"`
-	Interval        int     `json:"interval,omitempty"`
-	RetryInterval   int     `json:"retryInterval,omitempty"`
-	MaxRetries      int     `json:"maxretries,omitempty"`
+	ID              int         `json:"id"`
+	Name            string      `json:"name"`
+	URL             string      `json:"url,omitempty"`
+	Type            string      `json:"type"`
+	DockerContainer string      `json:"docker_container,omitempty"`
+	DockerHost      int         `json:"docker_host,omitempty"`
+	Status          int         `json:"status"`
+	Uptime24h       float64     `json:"uptime_24h"`
+	Uptime7d        float64     `json:"uptime_7d"`
+	Uptime1y        float64     `json:"uptime_1y"`
+	Ping            float64     `json:"ping"`
+	LastMsg         string      `json:"last_msg,omitempty"`
+	Interval        int         `json:"interval,omitempty"`
+	RetryInterval   int         `json:"retryInterval,omitempty"`
+	MaxRetries      int         `json:"maxretries,omitempty"`
+	Active          bool        `json:"active"`
+	Tags            []MonitorTag `json:"tags,omitempty"`
 }
 
 // dataCollectionWindow bounds how long a Socket.IO query collects events
@@ -736,6 +745,10 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 	type named struct {
 		name, url, mtype, dockerContainer string
 		dockerHost                        int
+		interval, retryInterval, maxRetries int
+		active                            bool
+		activeSet                         bool
+		tags                              []MonitorTag
 	}
 
 	var (
@@ -808,25 +821,39 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 				// It arrives ~130ms after login with the authoritative
 				// names/urls/types — far earlier than certInfo events.
 				var list map[string]struct {
-					ID              int    `json:"id"`
-					Name            string `json:"name"`
-					URL             string `json:"url"`
-					Type            string `json:"type"`
-					DockerContainer string `json:"docker_container"`
-					DockerHost      int    `json:"docker_host"`
-					Interval        int    `json:"interval"`
-					RetryInterval   int    `json:"retryInterval"`
-					MaxRetries      int    `json:"maxretries"`
+					ID              int          `json:"id"`
+					Name            string       `json:"name"`
+					URL             string       `json:"url"`
+					Type            string       `json:"type"`
+					DockerContainer string       `json:"docker_container"`
+					DockerHost      int          `json:"docker_host"`
+					Interval        int          `json:"interval"`
+					RetryInterval   int          `json:"retryInterval"`
+					MaxRetries      int          `json:"maxretries"`
+					Active          *bool        `json:"active"`
+					Tags            []MonitorTag `json:"tags"`
 				}
 				if json.Unmarshal(ev.Args[0], &list) == nil {
 					for _, m := range list {
 						seen[m.ID] = true
+						active := true
+						activeSet := false
+						if m.Active != nil {
+							active = *m.Active
+							activeSet = true
+						}
 						names[m.ID] = named{
 							name:            m.Name,
 							url:             m.URL,
 							mtype:           m.Type,
 							dockerContainer: m.DockerContainer,
 							dockerHost:      m.DockerHost,
+							interval:        m.Interval,
+							retryInterval:   m.RetryInterval,
+							maxRetries:      m.MaxRetries,
+							active:          active,
+							activeSet:       activeSet,
+							tags:            m.Tags,
 						}
 					}
 				} else {
@@ -1018,9 +1045,19 @@ collectLoop:
 			m.Type = n.mtype
 			m.DockerContainer = n.dockerContainer
 			m.DockerHost = n.dockerHost
+			m.Interval = n.interval
+			m.RetryInterval = n.retryInterval
+			m.MaxRetries = n.maxRetries
+			if n.activeSet {
+				m.Active = n.active
+			} else {
+				m.Active = true
+			}
+			m.Tags = n.tags
 		} else {
 			m.Name = fmt.Sprintf("Monitor %d", id)
 			m.Type = "?"
+			m.Active = true
 		}
 		out = append(out, m)
 	}
@@ -1412,5 +1449,104 @@ func EditMonitorViaSocketIO(kumaURL, username, password string, monitorID int, p
 		return nil
 	case <-time.After(10 * time.Second):
 		return fmt.Errorf("edit monitor response timeout")
+	}
+}
+
+// PauseMonitorViaSocketIO pauses a monitor via Socket.IO "pauseMonitor".
+func PauseMonitorViaSocketIO(kumaURL, username, password string, monitorID int) error {
+	cli, _, err := sioCommandSession(kumaURL, username, password)
+	if err != nil {
+		return err
+	}
+	defer cli.close()
+	ackCh := cli.emitWithAck("pauseMonitor", monitorID)
+	select {
+	case resp := <-ackCh:
+		ok, msg := parseOKAck(resp)
+		if !ok {
+			if msg == "" {
+				msg = "unexpected response format"
+			}
+			return fmt.Errorf("pause monitor rejected: %s", msg)
+		}
+		logging.LogInfo("kuma", "Monitor paused via Socket.IO", slog.Int("monitor_id", monitorID))
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("pause monitor response timeout")
+	}
+}
+
+// ResumeMonitorViaSocketIO resumes a paused monitor via Socket.IO "resumeMonitor".
+func ResumeMonitorViaSocketIO(kumaURL, username, password string, monitorID int) error {
+	cli, _, err := sioCommandSession(kumaURL, username, password)
+	if err != nil {
+		return err
+	}
+	defer cli.close()
+	ackCh := cli.emitWithAck("resumeMonitor", monitorID)
+	select {
+	case resp := <-ackCh:
+		ok, msg := parseOKAck(resp)
+		if !ok {
+			if msg == "" {
+				msg = "unexpected response format"
+			}
+			return fmt.Errorf("resume monitor rejected: %s", msg)
+		}
+		logging.LogInfo("kuma", "Monitor resumed via Socket.IO", slog.Int("monitor_id", monitorID))
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("resume monitor response timeout")
+	}
+}
+
+// AddMonitorTagViaSocketIO applies a tag to a monitor via Socket.IO "addMonitorTag".
+func AddMonitorTagViaSocketIO(kumaURL, username, password string, monitorID, tagID int) error {
+	cli, _, err := sioCommandSession(kumaURL, username, password)
+	if err != nil {
+		return err
+	}
+	defer cli.close()
+	// Kuma expects {monitorID, tagID} — try object form first.
+	payload := map[string]any{"monitorID": monitorID, "tagID": tagID}
+	ackCh := cli.emitWithAck("addMonitorTag", payload)
+	select {
+	case resp := <-ackCh:
+		ok, msg := parseOKAck(resp)
+		if !ok {
+			if msg == "" {
+				msg = "unexpected response format"
+			}
+			return fmt.Errorf("add monitor tag rejected: %s", msg)
+		}
+		logging.LogInfo("kuma", "Monitor tag added via Socket.IO", slog.Int("monitor_id", monitorID), slog.Int("tag_id", tagID))
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("add monitor tag response timeout")
+	}
+}
+
+// DeleteMonitorTagViaSocketIO removes a tag from a monitor via Socket.IO "deleteMonitorTag".
+func DeleteMonitorTagViaSocketIO(kumaURL, username, password string, monitorID, tagID int) error {
+	cli, _, err := sioCommandSession(kumaURL, username, password)
+	if err != nil {
+		return err
+	}
+	defer cli.close()
+	payload := map[string]any{"monitorID": monitorID, "tagID": tagID}
+	ackCh := cli.emitWithAck("deleteMonitorTag", payload)
+	select {
+	case resp := <-ackCh:
+		ok, msg := parseOKAck(resp)
+		if !ok {
+			if msg == "" {
+				msg = "unexpected response format"
+			}
+			return fmt.Errorf("delete monitor tag rejected: %s", msg)
+		}
+		logging.LogInfo("kuma", "Monitor tag deleted via Socket.IO", slog.Int("monitor_id", monitorID), slog.Int("tag_id", tagID))
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("delete monitor tag response timeout")
 	}
 }

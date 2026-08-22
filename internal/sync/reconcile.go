@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -228,6 +229,11 @@ func RunReconcile(composePath string, npmClients []npm.InstanceClient, kumaClien
 				display = link.ServiceName
 			}
 			live := findKumaMonitor(kumaLive[link.KumaInstanceID], link, display)
+			if live != nil && !live.Active {
+				skipped++
+				addChange(link.ServiceName, "kuma", "skipped", "paused")
+				continue
+			}
 			switch {
 			case live == nil:
 				addChange(link.ServiceName, "kuma", "created", display)
@@ -237,12 +243,23 @@ func RunReconcile(composePath string, npmClients []npm.InstanceClient, kumaClien
 						failed++
 						changes[len(changes)-1].Action = "error"
 						changes[len(changes)-1].Detail = "kuma instance not configured"
-					} else if _, err := c.AddMonitorViaSocketIO(monitorType, display, url, container, 0); err != nil {
+					} else if newID, err := c.AddMonitorViaSocketIO(monitorType, display, url, container, 0); err != nil {
 						failed++
 						changes[len(changes)-1].Action = "error"
 						changes[len(changes)-1].Detail = err.Error()
 					} else {
 						added++
+						if tagIDs := parseKumaDefaultTags(database.GetSettings(db.Settings{}).KumaDefaultTags); len(tagIDs) > 0 && newID > 0 {
+							for _, tagID := range tagIDs {
+								if err := c.AddMonitorTagViaSocketIO(newID, tagID); err != nil {
+									logging.LogWarn("sync", "Failed to add default tag to monitor",
+										slog.Int("monitor_id", newID),
+										slog.Int("tag_id", tagID),
+										slog.String("error", err.Error()),
+									)
+								}
+							}
+						}
 					}
 				} else {
 					added++
@@ -483,6 +500,42 @@ func findProxyHost(hosts []npm.ProxyHost, link db.ServiceLink, cfg npm.ProxyHost
 		}
 	}
 	return nil
+}
+
+// parseKumaDefaultTags parses kuma_default_tags setting into tag IDs.
+func parseKumaDefaultTags(raw string) []int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var arr []int
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			return arr
+		}
+		var sarr []string
+		if err := json.Unmarshal([]byte(raw), &sarr); err == nil {
+			var out []int
+			for _, s := range sarr {
+				if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+					out = append(out, n)
+				}
+			}
+			return out
+		}
+		return nil
+	}
+	var out []int
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(p); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // findKumaMonitor locates the live Kuma monitor matching a link. Pinned
