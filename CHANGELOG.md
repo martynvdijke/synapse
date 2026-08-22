@@ -1,3 +1,10 @@
+# [1.23.0](https://github.com/martynvdijke/synapse/compare/v1.22.0...v1.23.0) (2026-08-22)
+
+
+### Features
+
+* **alerts:** rule CRUD and incident lifecycle API with tests ([37caf18](https://github.com/martynvdijke/synapse/commit/37caf18a1ad53c6722a565fab612526baff7c502))
+
 # [1.22.0](https://github.com/martynvdijke/synapse/compare/v1.21.0...v1.22.0) (2026-08-22)
 
 
