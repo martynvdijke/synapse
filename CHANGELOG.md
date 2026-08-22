@@ -1,3 +1,10 @@
+# [1.22.0](https://github.com/martynvdijke/synapse/compare/v1.21.0...v1.22.0) (2026-08-22)
+
+
+### Features
+
+* **alerts:** wire alert settings through env config, settings API, and notifier toggles ([6820d55](https://github.com/martynvdijke/synapse/commit/6820d55d17e977f951650fb232094effb1f4d034))
+
 # [1.21.0](https://github.com/martynvdijke/synapse/compare/v1.20.0...v1.21.0) (2026-08-22)
 
 
