@@ -25,6 +25,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"log/slog"
+	"synapse/internal/alerts"
 	"synapse/internal/authelia"
 	"synapse/internal/db"
 	"synapse/internal/docker"
@@ -498,6 +499,10 @@ func main() {
 		go app.startReconcileScheduler(ctx)
 	}
 
+	// Start alert rule evaluation scheduler. The loop idles when the master
+	// switch is off, so enabling alerts at runtime needs no restart.
+	go app.startAlertScheduler(ctx)
+
 	// Session cleanup goroutine
 	go func() {
 		for {
@@ -623,8 +628,8 @@ func (app *App) CreateToken(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Name           string `json:"name"`
-		ExpiresInDays  int    `json:"expires_in_days"`
+		Name          string `json:"name"`
+		ExpiresInDays int    `json:"expires_in_days"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -1624,14 +1629,14 @@ func (app *App) Status(c *gin.Context) {
 	// parallelism it is the MAX. The npm/kuma clients cache results for 15s,
 	// so the burst of dashboard requests shares a single upstream fetch.
 	var (
-		wg               sync.WaitGroup
-		mu               sync.Mutex
-		npmCount         int
-		npmErr           string
-		kumaErr          string
-		monitorCount     int
-		npmHealthList    []gin.H
-		kumaHealthList   []gin.H
+		wg             sync.WaitGroup
+		mu             sync.Mutex
+		npmCount       int
+		npmErr         string
+		kumaErr        string
+		monitorCount   int
+		npmHealthList  []gin.H
+		kumaHealthList []gin.H
 	)
 
 	// NPM proxy hosts + Kuma "in kuma" status. Partial results are still
@@ -2685,6 +2690,117 @@ func (app *App) runDockerEventPurge(ctx context.Context) {
 			return
 		case <-ticker.C:
 			purge()
+		}
+	}
+}
+
+// appAlertState adapts App's integrations to the alerts.StateSource interface.
+type appAlertState struct {
+	app *App
+}
+
+// MonitorStatuses merges monitor name -> status across all enabled Kuma
+// instances (later instances win on name conflicts).
+func (a appAlertState) MonitorStatuses(ctx context.Context) (map[string]int, error) {
+	out := map[string]int{}
+	instances, err := a.app.database.GetEnabledKumaInstances()
+	if err != nil {
+		return nil, err
+	}
+	for _, inst := range instances {
+		monitors, qerr := kuma.QueryMonitorsViaSocketIO(inst.URL, inst.Username, inst.Password)
+		if qerr != nil {
+			logging.LogWarn("alerts", "Skipping unreachable Kuma instance",
+				slog.String("instance", inst.Name),
+				slog.String("error", qerr.Error()),
+			)
+			continue
+		}
+		for _, m := range monitors {
+			out[m.Name] = m.Status
+		}
+	}
+	return out, nil
+}
+
+// ContainerStates maps container name -> running for all containers.
+func (a appAlertState) ContainerStates(ctx context.Context) (map[string]bool, error) {
+	out := map[string]bool{}
+	if a.app.dockerClient == nil {
+		return out, nil
+	}
+	containers, err := a.app.dockerClient.ListContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range containers {
+		name := strings.TrimPrefix(c.Names[0], "/")
+		out[name] = c.State == "running"
+	}
+	return out, nil
+}
+
+// LastSyncSuccess reports the last completed run for a sync source.
+func (a appAlertState) LastSyncSuccess(source string) (time.Time, bool) {
+	run, err := a.app.database.GetLastCompletedSyncRun(source)
+	if err != nil || run == nil || run.FinishedAt == nil {
+		return time.Time{}, false
+	}
+	return *run.FinishedAt, true
+}
+
+// LastReconcileIssue reports whether the most recent reconcile run reported
+// drift or errors (status error/completed_with_errors, applied changes, or
+// failures).
+func (a appAlertState) LastReconcileIssue() (time.Time, bool) {
+	run, err := a.app.database.GetLatestSyncRun("reconcile")
+	if err != nil || run == nil {
+		return time.Time{}, false
+	}
+	drifted := run.Status == "error" || run.Status == "completed_with_errors" || run.Updated > 0 || run.Failed > 0
+	if !drifted || run.FinishedAt == nil {
+		return time.Time{}, false
+	}
+	return *run.FinishedAt, true
+}
+
+// startAlertScheduler evaluates alert rules on an interval. Settings are
+// re-read every tick so interval/enable changes apply without a restart; when
+// alerts are disabled the goroutine idles instead of exiting.
+func (app *App) startAlertScheduler(ctx context.Context) {
+	logging.LogInfo("alerts", "Alert scheduler started")
+	defer logging.LogInfo("alerts", "Alert scheduler stopped")
+
+	for {
+		s := app.settings()
+		interval := s.AlertEvalIntervalSeconds
+		if interval < 10 {
+			interval = 10
+		}
+
+		timer := time.NewTimer(time.Duration(interval) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			if !s.AlertsEnabled {
+				continue // idle — re-check settings next tick
+			}
+			engine := alerts.NewEngine(
+				app.database.ListAlertRules,
+				app.database,
+				appAlertState{app: app},
+				func(title, message string) {
+					app.eventNotifierFor(app.settings()).Notify(ctx, notify.CatAlerts, title, message)
+				},
+				time.Duration(s.AlertReminderMinutes)*time.Minute,
+			)
+			if err := engine.Evaluate(ctx); err != nil {
+				logging.LogError("alerts", "Alert evaluation failed",
+					slog.String("error", err.Error()),
+				)
+			}
 		}
 	}
 }

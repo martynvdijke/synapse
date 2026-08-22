@@ -9,15 +9,15 @@ import (
 	"time"
 
 	"synapse/ent"
-	"synapse/ent/migrate"
+	"synapse/ent/autheliainstance"
+	"synapse/ent/dockerevent"
 	"synapse/ent/kumainstance"
+	"synapse/ent/migrate"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
-	"synapse/ent/autheliainstance"
+	"synapse/ent/servicelink"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
-	"synapse/ent/servicelink"
-	"synapse/ent/dockerevent"
 
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/mattn/go-sqlite3"
@@ -71,17 +71,17 @@ type ServiceLink struct {
 // DockerEvent is a persisted event observed from the Docker Engine events
 // stream. image_old/image_new are set for synthesized "image updated" events.
 type DockerEvent struct {
-	ID         int64     `json:"id"`
-	EventType  string    `json:"event_type"`
-	Action     string    `json:"action"`
-	ActorID    string    `json:"actor_id,omitempty"`
-	ActorName  string    `json:"actor_name,omitempty"`
-	Image      string    `json:"image,omitempty"`
-	Status     string    `json:"status,omitempty"`
-	ImageOld   string    `json:"image_old,omitempty"`
-	ImageNew   string    `json:"image_new,omitempty"`
-	Payload    string    `json:"payload,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        int64     `json:"id"`
+	EventType string    `json:"event_type"`
+	Action    string    `json:"action"`
+	ActorID   string    `json:"actor_id,omitempty"`
+	ActorName string    `json:"actor_name,omitempty"`
+	Image     string    `json:"image,omitempty"`
+	Status    string    `json:"status,omitempty"`
+	ImageOld  string    `json:"image_old,omitempty"`
+	ImageNew  string    `json:"image_new,omitempty"`
+	Payload   string    `json:"payload,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // DockerEventFilter restricts a docker event listing query.
@@ -153,23 +153,23 @@ type AutheliaInstance struct {
 }
 
 type AutheliaAlert struct {
-	ID                int64     `json:"id"`
-	CNAME             string    `json:"cname"`
-	Message           string    `json:"message"`
-	Severity          string    `json:"severity"`
-	Status            string    `json:"status"`
-	AutheliaInstanceID int64    `json:"authelia_instance_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                 int64     `json:"id"`
+	CNAME              string    `json:"cname"`
+	Message            string    `json:"message"`
+	Severity           string    `json:"severity"`
+	Status             string    `json:"status"`
+	AutheliaInstanceID int64     `json:"authelia_instance_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type TempAccess struct {
-	ID                int64     `json:"id"`
-	IP                string    `json:"ip"`
-	Reason            string    `json:"reason"`
-	AutheliaInstanceID int64    `json:"authelia_instance_id,omitempty"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	CreatedAt         time.Time `json:"created_at"`
-	Status            string    `json:"status"`
+	ID                 int64     `json:"id"`
+	IP                 string    `json:"ip"`
+	Reason             string    `json:"reason"`
+	AutheliaInstanceID int64     `json:"authelia_instance_id,omitempty"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	CreatedAt          time.Time `json:"created_at"`
+	Status             string    `json:"status"`
 }
 
 type Settings struct {
@@ -196,22 +196,22 @@ type Settings struct {
 	GotifyPriority        int    `json:"gotify_priority"`
 	// NotifyChannels is the JSON document of notification channel entries
 	// (see internal/notify/channels.Config). Empty = legacy gotify_* keys.
-	NotifyChannels        string `json:"notify_channels"`
-	DockerSocket          string `json:"docker_socket"`
-	DockerEventsEnabled   bool   `json:"docker_events_enabled"`
-	DockerEventsRetentionDays int `json:"docker_events_retention_days"`
-	ReconcileEnabled      bool   `json:"reconcile_enabled"`
-	ReconcileIntervalMinutes int `json:"reconcile_interval_minutes"`
-	ReconcileDryRunDefault bool  `json:"reconcile_dry_run_default"`
-	NotifyDockerDie       bool   `json:"notify_docker_die"`
-	NotifyDockerHealth    bool   `json:"notify_docker_health"`
-	NotifyDockerImage     bool   `json:"notify_docker_image"`
-	NotifyReconcile       bool   `json:"notify_reconcile"`
-	NotifyAlerts          bool   `json:"notify_alerts"`
-	NotifyCooldownMinutes int    `json:"notify_cooldown_minutes"`
-	AlertsEnabled         bool   `json:"alerts_enabled"`
-	AlertEvalIntervalSeconds int `json:"alert_eval_interval_seconds"`
-	AlertReminderMinutes  int    `json:"alert_reminder_minutes"`
+	NotifyChannels            string `json:"notify_channels"`
+	DockerSocket              string `json:"docker_socket"`
+	DockerEventsEnabled       bool   `json:"docker_events_enabled"`
+	DockerEventsRetentionDays int    `json:"docker_events_retention_days"`
+	ReconcileEnabled          bool   `json:"reconcile_enabled"`
+	ReconcileIntervalMinutes  int    `json:"reconcile_interval_minutes"`
+	ReconcileDryRunDefault    bool   `json:"reconcile_dry_run_default"`
+	NotifyDockerDie           bool   `json:"notify_docker_die"`
+	NotifyDockerHealth        bool   `json:"notify_docker_health"`
+	NotifyDockerImage         bool   `json:"notify_docker_image"`
+	NotifyReconcile           bool   `json:"notify_reconcile"`
+	NotifyAlerts              bool   `json:"notify_alerts"`
+	NotifyCooldownMinutes     int    `json:"notify_cooldown_minutes"`
+	AlertsEnabled             bool   `json:"alerts_enabled"`
+	AlertEvalIntervalSeconds  int    `json:"alert_eval_interval_seconds"`
+	AlertReminderMinutes      int    `json:"alert_reminder_minutes"`
 }
 
 type DB struct {
@@ -664,6 +664,23 @@ func (db *DB) GetLatestSyncRun(source string) (*SyncRun, error) {
 		q = q.Where(syncrun.Source(source))
 	}
 	e, err := q.Only(context.Background())
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r := toSyncRun(e)
+	return &r, nil
+}
+
+// GetLastCompletedSyncRun returns the most recent successful run for a
+// source ("docker", "npm", "reconcile"), or nil when none exists.
+func (db *DB) GetLastCompletedSyncRun(source string) (*SyncRun, error) {
+	e, err := db.client.SyncRun.Query().
+		Where(syncrun.Source(source), syncrun.Status("completed")).
+		Order(syncrun.ByID(entsql.OrderDesc())).
+		First(context.Background())
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, nil
@@ -1272,13 +1289,13 @@ func (db *DB) MigrateAutheliaInstances(legacy Settings) error {
 	}
 
 	inst, err := db.CreateAutheliaInstance(&AutheliaInstance{
-		Name:          "default",
-		ConfigPath:    legacy.AutheliaConfigPath,
-		DBPath:        legacy.AutheliaDBPath,
-		DefaultPolicy: legacy.AutheliaDefaultPolicy,
-		Overrides:     legacy.AutheliaSyncOverrides,
-		AutoSync:      legacy.AutheliaSyncEnabled,
-		Enabled:       true,
+		Name:           "default",
+		ConfigPath:     legacy.AutheliaConfigPath,
+		DBPath:         legacy.AutheliaDBPath,
+		DefaultPolicy:  legacy.AutheliaDefaultPolicy,
+		Overrides:      legacy.AutheliaSyncOverrides,
+		AutoSync:       legacy.AutheliaSyncEnabled,
+		Enabled:        true,
 		NPMInstanceIDs: "",
 	})
 	if err != nil {
@@ -1422,43 +1439,43 @@ func (db *DB) SaveSettingsMap(pairs map[string]string) error {
 // SaveSettings saves all known settings keys. Used by tests; prefer SaveSettingsMap for partial updates.
 func (db *DB) SaveSettings(s Settings) error {
 	return db.SaveSettingsMap(map[string]string{
-		"compose_path":            s.ComposePath,
-		"npm_host":                s.NPMHost,
-		"npm_user":                s.NPMUser,
-		"npm_pass":                s.NPMPass,
-		"kuma_url":                s.KumaURL,
-		"kuma_user":               s.KumaUser,
-		"kuma_pass":               s.KumaPass,
-		"authelia_config_path":    s.AutheliaConfigPath,
-		"authelia_db_path":        s.AutheliaDBPath,
-		"authelia_sync_enabled":   strconv.FormatBool(s.AutheliaSyncEnabled),
-		"authelia_default_policy": s.AutheliaDefaultPolicy,
-		"authelia_sync_overrides": s.AutheliaSyncOverrides,
-		"otel_endpoint":           s.OTelEndpoint,
-		"otel_enabled":            strconv.FormatBool(s.OTelEnabled),
-		"eink_enabled":            strconv.FormatBool(s.EinkEnabled),
-		"trmnl_api_token":         s.TrmnlApiToken,
-		"notify_enabled":          strconv.FormatBool(s.NotifyEnabled),
-		"notify_interval_minutes": strconv.Itoa(s.NotifyIntervalMinutes),
-		"gotify_url":              s.GotifyURL,
-		"gotify_token":            s.GotifyToken,
-		"gotify_priority":         strconv.Itoa(s.GotifyPriority),
-		"notify_channels":         s.NotifyChannels,
-		"docker_socket":           s.DockerSocket,
-		"docker_events_enabled":   strconv.FormatBool(s.DockerEventsEnabled),
+		"compose_path":                 s.ComposePath,
+		"npm_host":                     s.NPMHost,
+		"npm_user":                     s.NPMUser,
+		"npm_pass":                     s.NPMPass,
+		"kuma_url":                     s.KumaURL,
+		"kuma_user":                    s.KumaUser,
+		"kuma_pass":                    s.KumaPass,
+		"authelia_config_path":         s.AutheliaConfigPath,
+		"authelia_db_path":             s.AutheliaDBPath,
+		"authelia_sync_enabled":        strconv.FormatBool(s.AutheliaSyncEnabled),
+		"authelia_default_policy":      s.AutheliaDefaultPolicy,
+		"authelia_sync_overrides":      s.AutheliaSyncOverrides,
+		"otel_endpoint":                s.OTelEndpoint,
+		"otel_enabled":                 strconv.FormatBool(s.OTelEnabled),
+		"eink_enabled":                 strconv.FormatBool(s.EinkEnabled),
+		"trmnl_api_token":              s.TrmnlApiToken,
+		"notify_enabled":               strconv.FormatBool(s.NotifyEnabled),
+		"notify_interval_minutes":      strconv.Itoa(s.NotifyIntervalMinutes),
+		"gotify_url":                   s.GotifyURL,
+		"gotify_token":                 s.GotifyToken,
+		"gotify_priority":              strconv.Itoa(s.GotifyPriority),
+		"notify_channels":              s.NotifyChannels,
+		"docker_socket":                s.DockerSocket,
+		"docker_events_enabled":        strconv.FormatBool(s.DockerEventsEnabled),
 		"docker_events_retention_days": strconv.Itoa(s.DockerEventsRetentionDays),
-		"reconcile_enabled":       strconv.FormatBool(s.ReconcileEnabled),
-		"reconcile_interval_minutes": strconv.Itoa(s.ReconcileIntervalMinutes),
-		"reconcile_dry_run_default": strconv.FormatBool(s.ReconcileDryRunDefault),
-		"notify_docker_die":       strconv.FormatBool(s.NotifyDockerDie),
-		"notify_docker_health":    strconv.FormatBool(s.NotifyDockerHealth),
-		"notify_docker_image":     strconv.FormatBool(s.NotifyDockerImage),
-		"notify_reconcile":        strconv.FormatBool(s.NotifyReconcile),
-		"notify_cooldown_minutes": strconv.Itoa(s.NotifyCooldownMinutes),
-		"notify_alerts":           strconv.FormatBool(s.NotifyAlerts),
-		"alerts_enabled":          strconv.FormatBool(s.AlertsEnabled),
-		"alert_eval_interval_seconds": strconv.Itoa(s.AlertEvalIntervalSeconds),
-		"alert_reminder_minutes":  strconv.Itoa(s.AlertReminderMinutes),
+		"reconcile_enabled":            strconv.FormatBool(s.ReconcileEnabled),
+		"reconcile_interval_minutes":   strconv.Itoa(s.ReconcileIntervalMinutes),
+		"reconcile_dry_run_default":    strconv.FormatBool(s.ReconcileDryRunDefault),
+		"notify_docker_die":            strconv.FormatBool(s.NotifyDockerDie),
+		"notify_docker_health":         strconv.FormatBool(s.NotifyDockerHealth),
+		"notify_docker_image":          strconv.FormatBool(s.NotifyDockerImage),
+		"notify_reconcile":             strconv.FormatBool(s.NotifyReconcile),
+		"notify_cooldown_minutes":      strconv.Itoa(s.NotifyCooldownMinutes),
+		"notify_alerts":                strconv.FormatBool(s.NotifyAlerts),
+		"alerts_enabled":               strconv.FormatBool(s.AlertsEnabled),
+		"alert_eval_interval_seconds":  strconv.Itoa(s.AlertEvalIntervalSeconds),
+		"alert_reminder_minutes":       strconv.Itoa(s.AlertReminderMinutes),
 	})
 }
 

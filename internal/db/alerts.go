@@ -12,14 +12,14 @@ import (
 // name, sync source, empty for global rules); Threshold is the duration the
 // condition must hold before an incident opens.
 type AlertRule struct {
-	ID         int64     `json:"id"`
-	Name       string    `json:"name"`
-	Type       string    `json:"type"`
-	Subject    string    `json:"subject"`
-	Threshold  int       `json:"threshold_seconds"` // seconds
-	Enabled    bool      `json:"enabled"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Subject   string    `json:"subject"`
+	Threshold int       `json:"threshold_seconds"` // seconds
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // AlertIncident is a persisted occurrence of a rule condition. Status is
@@ -237,6 +237,27 @@ func (db *DB) UnresolvedIncident(ruleID int64, subject string) (*AlertIncident, 
 		return nil, nil
 	}
 	return i, err
+}
+
+// UnresolvedIncidentsByRule lists every open/acknowledged incident of a rule.
+func (db *DB) UnresolvedIncidentsByRule(ruleID int64) ([]AlertIncident, error) {
+	rows, err := db.rawDB.Query(
+		"SELECT "+incidentCols+" FROM alert_incidents i WHERE i.rule_id = ? AND i.status IN ('open','acknowledged') ORDER BY i.id",
+		ruleID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AlertIncident{}
+	for rows.Next() {
+		i, err := scanIncident(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *i)
+	}
+	return out, rows.Err()
 }
 
 // GetIncident fetches one incident by id.
