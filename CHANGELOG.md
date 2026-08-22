@@ -1,3 +1,10 @@
+# [1.26.0](https://github.com/martynvdijke/synapse/compare/v1.25.0...v1.26.0) (2026-08-22)
+
+
+### Features
+
+* **kuma:** monitor lifecycle with pause/resume, tags, and reconcile skip ([a372d4f](https://github.com/martynvdijke/synapse/commit/a372d4f0df02cbbed557c4f9d40085d53ce8b82d))
+
 # [1.25.0](https://github.com/martynvdijke/synapse/compare/v1.24.0...v1.25.0) (2026-08-22)
 
 
