@@ -3,8 +3,11 @@ package notify
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+
+	"synapse/internal/logging"
 )
 
 // Category identifies a notification category; toggles and cooldowns are
@@ -20,11 +23,14 @@ const (
 	CatDockerImage Category = "docker_image"
 	// CatReconcile notifies about reconciliation drift/actions.
 	CatReconcile Category = "reconcile"
+	// CatAlerts notifies about alert-rule incident transitions (open,
+	// resolve, reminder).
+	CatAlerts Category = "alerts"
 )
 
 // AllCategories lists every known category (for settings UI / toggles).
 func AllCategories() []Category {
-	return []Category{CatDockerDie, CatDockerHealth, CatDockerImage, CatReconcile}
+	return []Category{CatDockerDie, CatDockerHealth, CatDockerImage, CatReconcile, CatAlerts}
 }
 
 // defaultCooldown bounds how often a given category may notify.
@@ -40,12 +46,13 @@ type EventNotifierOptions struct {
 	Toggles map[Category]bool
 }
 
-// EventNotifier sends docker/reconcile notifications through a Gotify client
-// with per-category toggles and cooldown-based dedup. While a category is in
-// cooldown, further notifications are aggregated into a suppressed count and
-// reported on the next message that gets through.
+// EventNotifier sends docker/reconcile notifications to every configured
+// notification channel with per-category toggles and cooldown-based dedup.
+// While a category is in cooldown, further notifications are aggregated into a
+// suppressed count and reported on the next message that gets through. A
+// failing channel is logged and skipped without affecting other channels.
 type EventNotifier struct {
-	client   *Client
+	channels []Notifier
 	enabled  bool
 	cooldown time.Duration
 	toggles  map[Category]bool
@@ -56,15 +63,16 @@ type EventNotifier struct {
 	nowFn      func() time.Time
 }
 
-// NewEventNotifier builds an EventNotifier. client may be nil (no-op sends
-// return false). A non-positive cooldown falls back to the 5-minute default.
-func NewEventNotifier(client *Client, opts EventNotifierOptions) *EventNotifier {
+// NewEventNotifier builds an EventNotifier that fans out to the given
+// channels. An empty slice (or nil channels) makes sends no-op (return false).
+// A non-positive cooldown falls back to the 5-minute default.
+func NewEventNotifier(channels []Notifier, opts EventNotifierOptions) *EventNotifier {
 	cd := opts.Cooldown
 	if cd <= 0 {
 		cd = defaultCooldown
 	}
 	return &EventNotifier{
-		client:     client,
+		channels:   channels,
 		enabled:    opts.Enabled,
 		cooldown:   cd,
 		toggles:    opts.Toggles,
@@ -87,11 +95,12 @@ func (n *EventNotifier) Toggle(cat Category) bool {
 	return !known || on
 }
 
-// Notify sends a message for a category subject to its toggle and cooldown.
-// It returns true when a message was actually dispatched. When the category
-// is in cooldown, the notification is counted as suppressed instead.
+// Notify fans a message out to every configured channel for a category
+// subject to its toggle and cooldown. It returns true when at least one
+// channel accepted the message. When the category is in cooldown, the
+// notification is counted as suppressed instead and no channel is called.
 func (n *EventNotifier) Notify(ctx context.Context, cat Category, title, message string) bool {
-	if !n.Toggle(cat) || n.client == nil {
+	if !n.Toggle(cat) || len(n.channels) == 0 {
 		return false
 	}
 
@@ -111,7 +120,23 @@ func (n *EventNotifier) Notify(ctx context.Context, cat Category, title, message
 	if extra > 0 {
 		message = fmt.Sprintf("%s\n(%d similar notification(s) suppressed)", message, extra)
 	}
-	return n.client.SendMessage(ctx, title, message) == nil
+
+	delivered := false
+	for _, ch := range n.channels {
+		if ch == nil || !ch.Enabled() {
+			continue
+		}
+		if err := ch.Send(ctx, cat, title, message); err != nil {
+			logging.LogError("notify", "Notification channel failed",
+				slog.String("channel", ch.Name()),
+				slog.String("category", string(cat)),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		delivered = true
+	}
+	return delivered
 }
 
 // Suppressed returns the number of suppressed notifications for a category

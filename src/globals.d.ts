@@ -63,6 +63,8 @@ declare function revokeToken(id: number): void;
 declare function rotateToken(id: number): void;
 declare function testConnection(service: string): void;
 declare function notifyTest(): void;
+declare function addNotifyChannel(): void;
+declare function removeNotifyChannel(i: number): void;
 declare function loadNotifyMissing(): void;
 declare function loadKumaInstances(): void;
 declare function showKumaInstanceForm(editId: number | null): void;

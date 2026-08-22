@@ -194,6 +194,9 @@ type Settings struct {
 	GotifyURL             string `json:"gotify_url"`
 	GotifyToken           string `json:"gotify_token"`
 	GotifyPriority        int    `json:"gotify_priority"`
+	// NotifyChannels is the JSON document of notification channel entries
+	// (see internal/notify/channels.Config). Empty = legacy gotify_* keys.
+	NotifyChannels        string `json:"notify_channels"`
 	DockerSocket          string `json:"docker_socket"`
 	DockerEventsEnabled   bool   `json:"docker_events_enabled"`
 	DockerEventsRetentionDays int `json:"docker_events_retention_days"`
@@ -204,7 +207,11 @@ type Settings struct {
 	NotifyDockerHealth    bool   `json:"notify_docker_health"`
 	NotifyDockerImage     bool   `json:"notify_docker_image"`
 	NotifyReconcile       bool   `json:"notify_reconcile"`
+	NotifyAlerts          bool   `json:"notify_alerts"`
 	NotifyCooldownMinutes int    `json:"notify_cooldown_minutes"`
+	AlertsEnabled         bool   `json:"alerts_enabled"`
+	AlertEvalIntervalSeconds int `json:"alert_eval_interval_seconds"`
+	AlertReminderMinutes  int    `json:"alert_reminder_minutes"`
 }
 
 type DB struct {
@@ -230,6 +237,9 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	if err := db.createAutheliaTables(); err != nil {
+		return nil, err
+	}
+	if err := db.createAlertTables(); err != nil {
 		return nil, err
 	}
 	if err := db.createAPITokensTable(); err != nil {
@@ -1338,6 +1348,8 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			if v, err := strconv.Atoi(row.Value); err == nil {
 				s.GotifyPriority = v
 			}
+		case "notify_channels":
+			s.NotifyChannels = row.Value
 		case "docker_socket":
 			s.DockerSocket = row.Value
 		case "docker_events_enabled":
@@ -1365,6 +1377,18 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 		case "notify_cooldown_minutes":
 			if v, err := strconv.Atoi(row.Value); err == nil {
 				s.NotifyCooldownMinutes = v
+			}
+		case "notify_alerts":
+			s.NotifyAlerts = row.Value == "true"
+		case "alerts_enabled":
+			s.AlertsEnabled = row.Value == "true"
+		case "alert_eval_interval_seconds":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.AlertEvalIntervalSeconds = v
+			}
+		case "alert_reminder_minutes":
+			if v, err := strconv.Atoi(row.Value); err == nil {
+				s.AlertReminderMinutes = v
 			}
 		}
 	}
@@ -1419,6 +1443,7 @@ func (db *DB) SaveSettings(s Settings) error {
 		"gotify_url":              s.GotifyURL,
 		"gotify_token":            s.GotifyToken,
 		"gotify_priority":         strconv.Itoa(s.GotifyPriority),
+		"notify_channels":         s.NotifyChannels,
 		"docker_socket":           s.DockerSocket,
 		"docker_events_enabled":   strconv.FormatBool(s.DockerEventsEnabled),
 		"docker_events_retention_days": strconv.Itoa(s.DockerEventsRetentionDays),
@@ -1430,6 +1455,10 @@ func (db *DB) SaveSettings(s Settings) error {
 		"notify_docker_image":     strconv.FormatBool(s.NotifyDockerImage),
 		"notify_reconcile":        strconv.FormatBool(s.NotifyReconcile),
 		"notify_cooldown_minutes": strconv.Itoa(s.NotifyCooldownMinutes),
+		"notify_alerts":           strconv.FormatBool(s.NotifyAlerts),
+		"alerts_enabled":          strconv.FormatBool(s.AlertsEnabled),
+		"alert_eval_interval_seconds": strconv.Itoa(s.AlertEvalIntervalSeconds),
+		"alert_reminder_minutes":  strconv.Itoa(s.AlertReminderMinutes),
 	})
 }
 

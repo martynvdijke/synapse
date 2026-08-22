@@ -31,6 +31,7 @@ import (
 	"synapse/internal/kuma"
 	"synapse/internal/logging"
 	"synapse/internal/notify"
+	"synapse/internal/notify/channels"
 	"synapse/internal/npm"
 	synclib "synapse/internal/sync"
 	"synapse/internal/telemetry"
@@ -216,6 +217,30 @@ func mask(s string) string {
 		return ""
 	}
 	return "****"
+}
+
+// maskChannelsDoc masks per-channel tokens in a notify_channels JSON document
+// before it is returned to the settings page. Invalid documents pass through
+// unchanged (the save path rejects them anyway).
+func maskChannelsDoc(doc string) string {
+	doc = strings.TrimSpace(doc)
+	if doc == "" {
+		return ""
+	}
+	cfgs, err := channels.ParseChannels(doc)
+	if err != nil {
+		return doc
+	}
+	for i := range cfgs {
+		if cfgs[i].Token != "" {
+			cfgs[i].Token = "****"
+		}
+	}
+	out, err := json.Marshal(cfgs)
+	if err != nil {
+		return doc
+	}
+	return string(out)
 }
 
 func main() {
@@ -734,6 +759,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"gotify_url":                   s.GotifyURL,
 		"gotify_token":                 mask(s.GotifyToken),
 		"gotify_priority":              s.GotifyPriority,
+		"notify_channels":              maskChannelsDoc(s.NotifyChannels),
 		"docker_socket":                s.DockerSocket,
 		"docker_events_enabled":        s.DockerEventsEnabled,
 		"docker_events_retention_days": s.DockerEventsRetentionDays,
@@ -835,6 +861,37 @@ func (app *App) SaveSettings(c *gin.Context) {
 		// value is preserved. An explicit empty string clears the token.
 		if val != "****" {
 			pairs["gotify_token"] = val
+		}
+	}
+	if v, ok := raw["notify_channels"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err == nil && strings.TrimSpace(val) != "" {
+			cfgs, perr := channels.ParseChannels(val)
+			if perr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": perr.Error()})
+				return
+			}
+			// Masked per-channel tokens mean "keep current": merge tokens
+			// from the stored document back in before persisting.
+			if cur, cerr := channels.ParseChannels(app.settings().NotifyChannels); cerr == nil {
+				for i := range cfgs {
+					if cfgs[i].Token == "****" {
+						cfgs[i].Token = ""
+						for _, c := range cur {
+							if c.Type == cfgs[i].Type && c.URL == cfgs[i].URL {
+								cfgs[i].Token = c.Token
+								break
+							}
+						}
+					}
+				}
+			}
+			if out, merr := json.Marshal(cfgs); merr == nil {
+				val = string(out)
+			}
+			pairs["notify_channels"] = val
+		} else if err == nil {
+			pairs["notify_channels"] = ""
 		}
 	}
 	if v, ok := raw["gotify_priority"]; ok {
@@ -2393,15 +2450,44 @@ func buildMissingItems(services []synclib.ServiceInfo, proxies []synclib.ProxyIn
 	return docker, npm
 }
 
-// eventNotifierFor builds an EventNotifier from the current settings. A nil or
-// disabled notifier is returned when Gotify is unconfigured so callers can call
-// Notify unconditionally (it no-ops).
-func (app *App) eventNotifierFor(s db.Settings) *notify.EventNotifier {
+// channelsFor builds the enabled notification channels from settings. When
+// the notify_channels document is set it is the single source of truth;
+// otherwise a virtual Gotify channel is derived from the legacy gotify_*
+// keys so pre-multi-channel configurations keep working unchanged.
+func (app *App) channelsFor(s db.Settings) []notify.Notifier {
+	if strings.TrimSpace(s.NotifyChannels) != "" {
+		cfgs, err := channels.ParseChannels(s.NotifyChannels)
+		if err != nil {
+			logging.LogError("notify", "Ignoring invalid notify_channels document",
+				slog.String("error", err.Error()),
+			)
+		} else {
+			built, buildErrs := channels.BuildAll(cfgs)
+			for _, berr := range buildErrs {
+				logging.LogError("notify", "Skipping invalid notification channel",
+					slog.String("error", berr.Error()),
+				)
+			}
+			return built
+		}
+	}
+	// Legacy fallback: single Gotify channel from flat keys.
 	if s.GotifyURL == "" || s.GotifyToken == "" {
+		return nil
+	}
+	return []notify.Notifier{notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority)}
+}
+
+// eventNotifierFor builds an EventNotifier from the current settings. A nil or
+// disabled notifier is returned when no channel is configured so callers can
+// call Notify unconditionally (it no-ops).
+func (app *App) eventNotifierFor(s db.Settings) *notify.EventNotifier {
+	chs := app.channelsFor(s)
+	if len(chs) == 0 {
 		return notify.NewEventNotifier(nil, notify.EventNotifierOptions{Enabled: false})
 	}
 	return notify.NewEventNotifier(
-		notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority),
+		chs,
 		notify.EventNotifierOptions{
 			Enabled:  s.NotifyEnabled,
 			Cooldown: time.Duration(s.NotifyCooldownMinutes) * time.Minute,
@@ -2615,19 +2701,82 @@ func (app *App) runScheduledReconcile(ctx context.Context) {
 	app.eventNotifierFor(s).Notify(ctx, notify.CatReconcile, title, strings.TrimSpace(b.String()))
 }
 
-// NotifyTest sends a fixed test message to verify Gotify configuration.
+// NotifyTest sends a fixed test message to verify notification channel
+// configuration. An optional {channel: "<name>"} body targets one channel;
+// without it every enabled channel is tested and reported individually.
 func (app *App) NotifyTest(c *gin.Context) {
 	s := app.settings()
-	if s.GotifyURL == "" || s.GotifyToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "Gotify is not configured — set the URL and app token in Settings"})
+
+	var body struct {
+		Channel string `json:"channel"`
+	}
+	_ = c.ShouldBindJSON(&body) // empty/absent body = test all
+
+	type result struct {
+		Channel string `json:"channel"`
+		OK      bool   `json:"ok"`
+		Error   string `json:"error,omitempty"`
+	}
+
+	build := func() []notify.Notifier {
+		if strings.TrimSpace(s.NotifyChannels) != "" {
+			cfgs, err := channels.ParseChannels(s.NotifyChannels)
+			if err == nil {
+				built, _ := channels.BuildAll(cfgs)
+				return built
+			}
+			logging.LogError("notify", "Invalid notify_channels document",
+				slog.String("error", err.Error()),
+			)
+		}
+		return app.channelsFor(s)
+	}
+
+	all := build()
+	if len(all) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "No notification channels configured — add one in Settings"})
 		return
 	}
-	client := notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority)
-	if err := client.SendMessage(c.Request.Context(), "Synapse test notification", "Synapse test notification — your configuration is working"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+
+	results := make([]result, 0, len(all))
+	tested := 0
+	for _, ch := range all {
+		if !ch.Enabled() {
+			continue
+		}
+		if body.Channel != "" && ch.Name() != body.Channel {
+			continue
+		}
+		tested++
+		err := ch.Send(c.Request.Context(), notify.CatReconcile,
+			"Synapse test notification", "Synapse test notification — your configuration is working")
+		r := result{Channel: ch.Name(), OK: err == nil}
+		if err != nil {
+			r.Error = err.Error()
+		}
+		results = append(results, r)
+	}
+
+	if tested == 0 {
+		msg := "No enabled notification channels matched"
+		if body.Channel != "" {
+			msg = fmt.Sprintf("Channel %q not found or disabled", body.Channel)
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": msg})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Test notification sent"})
+
+	ok := true
+	for _, r := range results {
+		if !r.OK {
+			ok = false
+		}
+	}
+	status := http.StatusOK
+	if !ok {
+		status = http.StatusInternalServerError
+	}
+	c.JSON(status, gin.H{"ok": ok, "results": results})
 }
 
 // NotifyMissing returns the current items missing from Uptime Kuma.

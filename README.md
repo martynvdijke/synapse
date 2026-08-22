@@ -56,7 +56,7 @@ A single-binary web application that synchronizes Docker Compose containers and 
 ### Monitoring & Events
 - **Docker Event Tracking** — Streams container events (restarts, stops, image updates) over the Docker socket and persists them for inspection
 - **Unified Events Feed** — Combined view of Docker events and reconcile runs
-- **Gotify Notifications** — Event-driven alerts for unexpected container stops, unhealthy containers, image updates, and reconcile drift (per-category toggles + cooldown dedup)
+- **Multi-Channel Notifications** — Event-driven alerts for unexpected container stops, unhealthy containers, image updates, and reconcile drift (per-category toggles + cooldown dedup), fanned out to every enabled channel: ntfy, Telegram, Discord, generic webhooks, and Gotify. Configure channels in Settings → Notifications; when none are configured the legacy Gotify URL/token fields act as a single fallback channel. `POST /api/notify/test` verifies one (`{"channel":"ntfy"}`) or all channels and reports per-channel results.
 
 ### Administration
 - **First-Time Setup** — Create admin account on first run

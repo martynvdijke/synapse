@@ -22,6 +22,7 @@ export function loadSettings(): void {
         if (gotifyToken) gotifyToken.value = (s.gotify_token as string) || '';
         var gotifyPriority = document.getElementById('s-gotify-priority') as HTMLInputElement | null;
         if (gotifyPriority) gotifyPriority.value = String(s.gotify_priority ?? 5);
+        renderNotifyChannels(s.notify_channels || '');
         // Docker events & reconcile
         var dockerSocket = document.getElementById('s-docker-socket') as HTMLInputElement | null;
         if (dockerSocket) dockerSocket.value = (s.docker_socket as string) || '';
@@ -145,6 +146,101 @@ export function copyTrmnlUrl(btn: HTMLElement): void {
     });
 }
 
+// ─── Notification Channels (multi-channel fan-out) ─────────────
+
+interface NotifyChannel {
+    type: string;
+    enabled: boolean;
+    url: string;
+    token?: string;
+    priority?: number;
+}
+
+var notifyChannelsCache: NotifyChannel[] = [];
+
+const NOTIFY_CHANNEL_TYPES = ['ntfy', 'telegram', 'discord', 'webhook', 'gotify'];
+
+function renderNotifyChannels(doc: string): void {
+    notifyChannelsCache = [];
+    try {
+        var parsed = doc ? JSON.parse(doc) : [];
+        if (Array.isArray(parsed)) notifyChannelsCache = parsed as NotifyChannel[];
+    } catch { /* invalid doc — start empty */ }
+    drawNotifyChannels();
+}
+
+function drawNotifyChannels(): void {
+    var list = document.getElementById('notify-channels-list');
+    if (!list) return;
+    if (!notifyChannelsCache.length) {
+        list.innerHTML = '<div class="small text-muted">No extra channels configured. The Gotify settings below act as the single notification channel.</div>';
+        return;
+    }
+    var html = '';
+    notifyChannelsCache.forEach(function(ch, i) {
+        var typeOpts = NOTIFY_CHANNEL_TYPES.map(function(t) {
+            return '<option value="' + t + '"' + (ch.type === t ? ' selected' : '') + '>' + t + '</option>';
+        }).join('');
+        html += '<div class="border rounded p-2 mb-2 bg-white" data-nc-index="' + i + '">'
+            + '<div class="d-flex align-items-center gap-2 mb-1">'
+            + '<select class="form-select form-select-sm" style="max-width:140px" id="nc-type-' + i + '">' + typeOpts + '</select>'
+            + '<div class="form-check form-check-inline mb-0">'
+            + '<input class="form-check-input" type="checkbox" id="nc-enabled-' + i + '"' + (ch.enabled !== false ? ' checked' : '') + '>'
+            + '<label class="form-check-label small" for="nc-enabled-' + i + '">Enabled</label>'
+            + '</div>'
+            + '<button type="button" class="btn btn-outline-danger btn-sm ms-auto" onclick="removeNotifyChannel(' + i + ')">Remove</button>'
+            + '</div>'
+            + '<input class="form-control form-control-sm mb-1" id="nc-url-' + i + '" placeholder="' + channelUrlPlaceholder(ch.type) + '" value="' + esc(ch.url || '') + '" autocomplete="off">'
+            + '<div class="d-flex gap-2">'
+            + '<input class="form-control form-control-sm" type="password" style="max-width:240px" id="nc-token-' + i + '" placeholder="Token (blank = keep current)" value="' + esc(ch.token || '') + '" autocomplete="new-password">'
+            + '<input class="form-control form-control-sm" type="number" style="max-width:120px" id="nc-priority-' + i + '" placeholder="Priority" min="0" max="10" value="' + (ch.priority ?? '') + '">'
+            + '</div>'
+            + '</div>';
+    });
+    list.innerHTML = html;
+}
+
+function channelUrlPlaceholder(type: string): string {
+    switch (type) {
+        case 'ntfy': return 'https://ntfy.example.com/your-topic';
+        case 'telegram': return 'https://api.telegram.org/bot<TOKEN>/<CHAT_ID>';
+        case 'discord': return 'https://discord.com/api/webhooks/...';
+        case 'webhook': return 'https://hooks.example.com/synapse';
+        case 'gotify': return 'http://gotify:8080';
+        default: return 'URL';
+    }
+}
+
+export function addNotifyChannel(): void {
+    notifyChannelsCache.push({ type: 'ntfy', enabled: true, url: '', token: '', priority: undefined });
+    drawNotifyChannels();
+}
+
+export function removeNotifyChannel(i: number): void {
+    notifyChannelsCache.splice(i, 1);
+    drawNotifyChannels();
+}
+
+// collectNotifyChannels reads the editor DOM back into the cache and returns
+// the JSON document for the notify_channels setting. Masked tokens ("****")
+// are sent back verbatim — the backend keeps the stored value.
+function collectNotifyChannels(): string {
+    notifyChannelsCache.forEach(function(ch, i) {
+        var typeEl = document.getElementById('nc-type-' + i) as HTMLSelectElement | null;
+        var enabledEl = document.getElementById('nc-enabled-' + i) as HTMLInputElement | null;
+        var urlEl = document.getElementById('nc-url-' + i) as HTMLInputElement | null;
+        var tokenEl = document.getElementById('nc-token-' + i) as HTMLInputElement | null;
+        var prioEl = document.getElementById('nc-priority-' + i) as HTMLInputElement | null;
+        if (typeEl) ch.type = typeEl.value;
+        if (enabledEl) ch.enabled = enabledEl.checked;
+        if (urlEl) ch.url = urlEl.value.trim();
+        if (tokenEl) ch.token = tokenEl.value;
+        if (prioEl) ch.priority = prioEl.value === '' ? undefined : parseInt(prioEl.value, 10);
+    });
+    if (!notifyChannelsCache.length) return '';
+    return JSON.stringify(notifyChannelsCache);
+}
+
 export function saveSettings(e: Event): void {
     e.preventDefault();
     var btn = document.querySelector('#settings-form button[type="submit"]') as HTMLButtonElement;
@@ -179,6 +275,9 @@ export function saveSettings(e: Event): void {
     // Only send the Gotify token when it has a value ("Leave blank to keep current").
     var gotifyToken = (document.getElementById('s-gotify-token') as HTMLInputElement)?.value || '';
     if (gotifyToken) payload.gotify_token = gotifyToken;
+    // Channels document: always sent so removals persist; empty string clears
+    // the doc and re-activates the legacy Gotify fallback.
+    payload.notify_channels = collectNotifyChannels();
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
         .then(function() { toast('Settings saved', 'success'); })
@@ -600,11 +699,19 @@ export function testAutheliaInstance(id: number): void {
 export function notifyTest(): void {
     var btn = document.getElementById('btn-notify-test') as HTMLButtonElement;
     btn.disabled = true;
-    apiFetch('/api/notify/test', { method: 'POST' })
-        .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string; error?: string}>; })
+    apiFetch('/api/notify/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function(r) { return r.json() as Promise<{ok: boolean; error?: string; results?: {channel: string; ok: boolean; error?: string}[]}>; })
         .then(function(d) {
-            if (d.ok) toast('Test notification sent', 'success');
-            else toast('Test failed: ' + (d.error || 'unknown error'), 'error');
+            if (d.results && d.results.length) {
+                d.results.forEach(function(r) {
+                    if (r.ok) toast(r.channel + ': test sent', 'success');
+                    else toast(r.channel + ': failed — ' + (r.error || 'unknown error'), 'error');
+                });
+            } else if (d.ok) {
+                toast('Test notification sent', 'success');
+            } else {
+                toast('Test failed: ' + (d.error || 'unknown error'), 'error');
+            }
         })
         .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Test notification failed', 'error'); })
         .finally(function() { btn.disabled = false; });
@@ -637,6 +744,8 @@ export function loadNotifyMissing(): void {
 window.loadSettings = loadSettings;
 window.saveSettings = saveSettings;
 window.notifyTest = notifyTest;
+window.addNotifyChannel = addNotifyChannel;
+window.removeNotifyChannel = removeNotifyChannel;
 window.loadNotifyMissing = loadNotifyMissing;
 window.copyTrmnlUrl = copyTrmnlUrl;
 window.loadTokens = loadTokens;

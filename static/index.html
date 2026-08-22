@@ -726,6 +726,14 @@
                                     <label class="form-check-label" for="s-notify-enabled">Recurrent Gotify notifications when items are missing from Uptime Kuma</label>
                                 </div>
                             </div>
+                            <div class="mb-3 border rounded p-2 bg-light" id="notify-channels-section">
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <label class="form-label mb-0 fw-semibold">Notification Channels</label>
+                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="addNotifyChannel()">Add channel</button>
+                                </div>
+                                <div class="form-text mb-2">Every event is fanned out to all enabled channels (ntfy, Telegram, Discord, generic webhook, Gotify). When no channels are configured, the Gotify settings below are used as a single fallback channel.</div>
+                                <div id="notify-channels-list"></div>
+                            </div>
                             <div class="row g-2 mb-2">
                                 <div class="col-md-3">
                                     <label class="form-label">Check Interval (minutes)</label>

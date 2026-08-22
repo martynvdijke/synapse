@@ -254,6 +254,7 @@ export interface SettingsResponse {
   gotify_url?: string;
   gotify_token?: string;
   gotify_priority?: number;
+  notify_channels?: string;
   docker_socket?: string;
   docker_events_enabled?: boolean;
   docker_events_retention_days?: number;
