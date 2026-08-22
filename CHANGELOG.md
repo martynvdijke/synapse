@@ -1,3 +1,10 @@
+# [1.21.0](https://github.com/martynvdijke/synapse/compare/v1.20.0...v1.21.0) (2026-08-22)
+
+
+### Features
+
+* **notify:** fan out alerts to multi-channel notifiers (ntfy, Telegram, Discord, webhooks) ([16401fe](https://github.com/martynvdijke/synapse/commit/16401fe2697d216bda617a88095685b16dee4b3a))
+
 # [1.20.0](https://github.com/martynvdijke/synapse/compare/v1.19.2...v1.20.0) (2026-08-20)
 
 
