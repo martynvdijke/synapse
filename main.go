@@ -2881,10 +2881,18 @@ type appAlertState struct {
 	app *App
 }
 
-// MonitorStatuses merges monitor name -> status across all enabled Kuma
-// instances (later instances win on name conflicts).
-func (a appAlertState) MonitorStatuses(ctx context.Context) (map[string]int, error) {
-	out := map[string]int{}
+// Snapshot gathers one evaluation tick's view of live state: Kuma monitor
+// status across all enabled instances (later instances win on name
+// conflicts), Docker container states, last completed sync runs, and the
+// most recent reconcile outcome.
+func (a appAlertState) Snapshot() (*alerts.Snapshot, error) {
+	ctx := context.Background()
+	snap := &alerts.Snapshot{
+		MonitorDown:      map[string]bool{},
+		ContainerRunning: map[string]bool{},
+		LastSyncSuccess:  map[string]time.Time{},
+	}
+
 	instances, err := a.app.database.GetEnabledKumaInstances()
 	if err != nil {
 		return nil, err
@@ -2899,51 +2907,55 @@ func (a appAlertState) MonitorStatuses(ctx context.Context) (map[string]int, err
 			continue
 		}
 		for _, m := range monitors {
-			out[m.Name] = m.Status
+			snap.MonitorDown[m.Name] = m.Status == 0 // 0 = down in Kuma
 		}
 	}
-	return out, nil
+
+	if a.app.dockerClient != nil {
+		containers, err := a.app.dockerClient.ListContainers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range containers {
+			name := strings.TrimPrefix(c.Names[0], "/")
+			snap.ContainerRunning[name] = c.State == "running"
+		}
+	}
+
+	for _, source := range []string{"docker", "npm"} {
+		run, err := a.app.database.GetLastCompletedSyncRun(source)
+		if err != nil || run == nil || run.FinishedAt == nil {
+			continue
+		}
+		snap.LastSyncSuccess[source] = *run.FinishedAt
+	}
+
+	// ReconcileDrift reports whether the most recent reconcile run reported
+	// drift or errors (status error/completed_with_errors, applied changes,
+	// or failures); nil = no reconcile run yet.
+	if run, err := a.app.database.GetLatestSyncRun("reconcile"); err == nil && run != nil {
+		drifted := run.Status == "error" || run.Status == "completed_with_errors" || run.Updated > 0 || run.Failed > 0
+		snap.ReconcileDrift = &drifted
+	}
+
+	return snap, nil
 }
 
-// ContainerStates maps container name -> running for all containers.
-func (a appAlertState) ContainerStates(ctx context.Context) (map[string]bool, error) {
-	out := map[string]bool{}
-	if a.app.dockerClient == nil {
-		return out, nil
-	}
-	containers, err := a.app.dockerClient.ListContainers(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range containers {
-		name := strings.TrimPrefix(c.Names[0], "/")
-		out[name] = c.State == "running"
-	}
-	return out, nil
+// appAlertNotifier adapts App's EventNotifier to the alerts.Notifier interface
+// so cooldowns/toggles/fan-out apply unchanged.
+type appAlertNotifier struct {
+	app *App
+	ctx context.Context
 }
 
-// LastSyncSuccess reports the last completed run for a sync source.
-func (a appAlertState) LastSyncSuccess(source string) (time.Time, bool) {
-	run, err := a.app.database.GetLastCompletedSyncRun(source)
-	if err != nil || run == nil || run.FinishedAt == nil {
-		return time.Time{}, false
+// NotifyAlert forwards incident transition messages (event is one of
+// "opened", "reminder", "resolved") to the configured notification channels.
+func (n appAlertNotifier) NotifyAlert(event, ruleName, subject, message string) {
+	title := fmt.Sprintf("Alert %s: %s", event, ruleName)
+	if subject != "" {
+		message = fmt.Sprintf("%s (%s)", message, subject)
 	}
-	return *run.FinishedAt, true
-}
-
-// LastReconcileIssue reports whether the most recent reconcile run reported
-// drift or errors (status error/completed_with_errors, applied changes, or
-// failures).
-func (a appAlertState) LastReconcileIssue() (time.Time, bool) {
-	run, err := a.app.database.GetLatestSyncRun("reconcile")
-	if err != nil || run == nil {
-		return time.Time{}, false
-	}
-	drifted := run.Status == "error" || run.Status == "completed_with_errors" || run.Updated > 0 || run.Failed > 0
-	if !drifted || run.FinishedAt == nil {
-		return time.Time{}, false
-	}
-	return *run.FinishedAt, true
+	n.app.eventNotifierFor(n.app.settings()).Notify(n.ctx, notify.CatAlerts, title, message)
 }
 
 // startAlertScheduler evaluates alert rules on an interval. Settings are
@@ -2969,16 +2981,9 @@ func (app *App) startAlertScheduler(ctx context.Context) {
 			if !s.AlertsEnabled {
 				continue // idle — re-check settings next tick
 			}
-			engine := alerts.NewEngine(
-				app.database.ListAlertRules,
-				app.database,
-				appAlertState{app: app},
-				func(title, message string) {
-					app.eventNotifierFor(app.settings()).Notify(ctx, notify.CatAlerts, title, message)
-				},
-				time.Duration(s.AlertReminderMinutes)*time.Minute,
-			)
-			if err := engine.Evaluate(ctx); err != nil {
+			engine := alerts.NewEngine(app.database, appAlertState{app: app}, appAlertNotifier{app: app, ctx: ctx})
+			engine.ReminderInterval = time.Duration(s.AlertReminderMinutes) * time.Minute
+			if err := engine.Evaluate(); err != nil {
 				logging.LogError("alerts", "Alert evaluation failed",
 					slog.String("error", err.Error()),
 				)

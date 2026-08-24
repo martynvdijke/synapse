@@ -1,11 +1,16 @@
 package alerts
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"synapse/internal/db"
+)
+
+// Kuma monitor statuses (subset used by tests).
+const (
+	KumaStatusDown = 0
+	KumaStatusUp   = 1
 )
 
 // fakeSource is a configurable StateSource for tests.
@@ -17,21 +22,29 @@ type fakeSource struct {
 	reconcileOK bool
 }
 
-func (f *fakeSource) MonitorStatuses(ctx context.Context) (map[string]int, error) {
-	return f.monitors, nil
+func (f *fakeSource) Snapshot() (*Snapshot, error) {
+	down := make(map[string]bool, len(f.monitors))
+	for name, status := range f.monitors {
+		down[name] = status == KumaStatusDown
+	}
+	snap := &Snapshot{
+		MonitorDown:      down,
+		ContainerRunning: f.containers,
+		LastSyncSuccess:  f.syncSuccess,
+	}
+	if !f.reconcileAt.IsZero() {
+		snap.ReconcileDrift = &f.reconcileOK
+	}
+	return snap, nil
 }
 
-func (f *fakeSource) ContainerStates(ctx context.Context) (map[string]bool, error) {
-	return f.containers, nil
+// testNotifier records incident transition notifications.
+type testNotifier struct {
+	notes *[]string
 }
 
-func (f *fakeSource) LastSyncSuccess(source string) (time.Time, bool) {
-	t, ok := f.syncSuccess[source]
-	return t, ok
-}
-
-func (f *fakeSource) LastReconcileIssue() (time.Time, bool) {
-	return f.reconcileAt, f.reconcileOK
+func (n testNotifier) NotifyAlert(event, ruleName, subject, message string) {
+	*n.notes = append(*n.notes, event+" | "+ruleName+" | "+message)
 }
 
 // testHarness wires an engine against a temp DB with a controllable clock.
@@ -62,9 +75,8 @@ func newHarness(t *testing.T, reminder time.Duration) *testHarness {
 		now:    time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 		notes:  notes,
 	}
-	h.engine = NewEngine(database.ListAlertRules, database, src, func(title, message string) {
-		*notes = append(*notes, title+" | "+message)
-	}, reminder)
+	h.engine = NewEngine(database, src, testNotifier{notes: notes})
+	h.engine.ReminderInterval = reminder
 	h.engine.nowFn = func() time.Time { return h.now }
 	return h
 }
@@ -81,7 +93,7 @@ func (h *testHarness) addRule(t *testing.T, typ, subject string, thresholdSecond
 
 func (h *testHarness) evaluate(t *testing.T) {
 	t.Helper()
-	if err := h.engine.Evaluate(context.Background()); err != nil {
+	if err := h.engine.Evaluate(); err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
 }

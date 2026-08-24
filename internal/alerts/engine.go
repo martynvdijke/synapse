@@ -1,283 +1,328 @@
-// Package alerts implements the alert rule evaluation engine: it compares
-// live state (Kuma monitor statuses, Docker container states, sync/reconcile
-// history) against enabled alert rules on a periodic schedule and drives the
-// incident lifecycle (open, auto-resolve, reminder) with transition
-// notifications. Evaluation is read-only with respect to external systems.
+// Package alerts implements the stateful alert-rule evaluation engine: rules
+// are compared against a live state snapshot on each tick; incidents open,
+// remind, and auto-resolve as conditions persist and clear. Evaluation is
+// strictly read-only with respect to external systems.
 package alerts
 
 import (
-	"context"
 	"fmt"
-	"path"
+	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"synapse/internal/db"
+	"synapse/internal/logging"
 )
 
-// Kuma monitor status values (see Kuma's heartbeat model).
-const (
-	KumaStatusDown        = 0
-	KumaStatusUp          = 1
-	KumaStatusPending     = 2
-	KumaStatusMaintenance = 3
-)
+// Snapshot is one tick's view of live state, gathered by a StateSource
+// implementation in main.go from Kuma / Docker / sync history.
+type Snapshot struct {
+	// MonitorDown maps monitor name → currently reported down by Kuma
+	// (status 0). Monitors absent from the map are considered up/unknown.
+	MonitorDown map[string]bool
+	// ContainerRunning maps container name → running right now. Containers
+	// absent from the map are not running.
+	ContainerRunning map[string]bool
+	// LastSyncSuccess maps sync source ("docker", "npm") → completion time of
+	// the last successful run. Sources without an entry have never succeeded.
+	LastSyncSuccess map[string]time.Time
+	// ReconcileDrift reports whether the most recent reconcile run finished
+	// with drift or errors (nil = no reconcile run yet).
+	ReconcileDrift *bool
+}
 
-// StateSource provides the live state the engine evaluates against. Tests
-// supply fakes; production wires Kuma/Docker/sync-history readers.
+// StateSource gathers a Snapshot for one evaluation tick.
 type StateSource interface {
-	// MonitorStatuses returns Kuma monitor name -> status for all enabled
-	// instances. Called at most once per evaluation tick.
-	MonitorStatuses(ctx context.Context) (map[string]int, error)
-	// ContainerStates returns container name -> running for all containers
-	// (including stopped ones). Called at most once per tick.
-	ContainerStates(ctx context.Context) (map[string]bool, error)
-	// LastSyncSuccess reports when the named source ("docker"/"npm") last
-	// completed successfully; ok=false when it never completed.
-	LastSyncSuccess(source string) (time.Time, bool)
-	// LastReconcileIssue reports when the most recent reconcile run reported
-	// drift or errors; ok=false when the latest run was clean or none ran.
-	LastReconcileIssue() (time.Time, bool)
+	Snapshot() (*Snapshot, error)
 }
 
-// NotifyFunc receives transition notifications (category "alerts").
-type NotifyFunc func(title, message string)
+// Store persists incidents and supplies enabled rules.
+type Store interface {
+	ListAlertRules() ([]db.AlertRule, error)
+	UnresolvedIncident(ruleID int64, subject string) (*db.AlertIncident, error)
+	OpenIncident(ruleID int64, subject, message string, now time.Time) (*db.AlertIncident, bool, error)
+	AutoResolveIncident(id int64, now time.Time) error
+	MarkIncidentNotified(id int64, now time.Time) error
+}
 
-// Engine evaluates rules and manages incident transitions.
+// Notifier receives incident transition messages. The main.go adapter wraps
+// EventNotifier so cooldown/toggles/fan-out apply unchanged.
+type Notifier interface {
+	NotifyAlert(event, ruleName, subject, message string)
+}
+
+// Engine evaluates rules against snapshots and drives incident transitions.
 type Engine struct {
-	rules    func() ([]db.AlertRule, error)
-	store    *db.DB
+	store    Store
 	src      StateSource
-	notify   NotifyFunc // nil disables notifications
-	reminder time.Duration
+	notifier Notifier
 
-	nowFn func() time.Time
+	// ReminderInterval > 0 re-notifies open (unacknowledged) incidents when
+	// the interval has elapsed since the last notification.
+	ReminderInterval time.Duration
 
-	mu        sync.Mutex
-	downSince map[string]time.Time // ruleID:subject -> first seen down
+	firstSeen map[string]time.Time // "ruleID|subject" → first observed down
+	nowFn     func() time.Time
 }
 
-// NewEngine builds an engine. reminder <= 0 disables reminders.
-func NewEngine(rules func() ([]db.AlertRule, error), store *db.DB, src StateSource, notify NotifyFunc, reminder time.Duration) *Engine {
+// NewEngine builds an Engine. notifier may be nil (transitions recorded but
+// silent).
+func NewEngine(store Store, src StateSource, notifier Notifier) *Engine {
 	return &Engine{
-		rules:     rules,
 		store:     store,
 		src:       src,
-		notify:    notify,
-		reminder:  reminder,
+		notifier:  notifier,
+		firstSeen: make(map[string]time.Time),
 		nowFn:     time.Now,
-		downSince: make(map[string]time.Time),
 	}
 }
 
-// downKey namespaces tracking entries per rule and subject.
-func downKey(ruleID int64, subject string) string {
-	return fmt.Sprintf("%d:%s", ruleID, subject)
-}
-
-// trueHits collects this tick's fired conditions: ruleID -> subject -> detail.
-type trueHits map[int64]map[string]string
-
-func (t trueHits) add(ruleID int64, subject, detail string) {
-	if t[ruleID] == nil {
-		t[ruleID] = make(map[string]string)
+// Evaluate runs one tick: gather snapshot, evaluate every enabled rule,
+// open/remind/auto-resolve incidents accordingly. Disabled rules are skipped
+// entirely (their existing incidents are left untouched per spec).
+func (e *Engine) Evaluate() error {
+	snap, err := e.src.Snapshot()
+	if err != nil {
+		return fmt.Errorf("gather alert state: %w", err)
 	}
-	t[ruleID][subject] = detail
-}
-
-// Evaluate runs one evaluation pass over all enabled rules. Disabled rules
-// are skipped entirely — their existing incidents are left untouched.
-func (e *Engine) Evaluate(ctx context.Context) error {
-	rules, err := e.rules()
+	rules, err := e.store.ListAlertRules()
 	if err != nil {
 		return fmt.Errorf("list alert rules: %w", err)
 	}
-
-	var (
-		monitors                     map[string]int
-		containers                   map[string]bool
-		needMonitors, needContainers bool
-	)
-	for _, r := range rules {
-		if !r.Enabled {
-			continue
-		}
-		switch r.Type {
-		case db.AlertTypeMonitorDownFor:
-			needMonitors = true
-		case db.AlertTypeContainerDown:
-			needContainers = true
-		}
-	}
-	if needMonitors {
-		if monitors, err = e.src.MonitorStatuses(ctx); err != nil {
-			return fmt.Errorf("query monitors: %w", err)
-		}
-	}
-	if needContainers {
-		if containers, err = e.src.ContainerStates(ctx); err != nil {
-			return fmt.Errorf("list containers: %w", err)
-		}
-	}
-
 	now := e.nowFn()
-	hits := trueHits{}
-	liveSubjects := map[int64]map[string]bool{} // ruleID -> subjects currently tracked/true
-
-	e.mu.Lock()
-	for _, r := range rules {
-		if !r.Enabled {
+	for _, rule := range rules {
+		if !rule.Enabled {
 			continue
 		}
-		threshold := time.Duration(r.Threshold) * time.Second
-		switch r.Type {
-		case db.AlertTypeMonitorDownFor:
-			status, ok := monitors[r.Subject]
-			down := ok && status == KumaStatusDown
-			key := downKey(r.ID, r.Subject)
-			if !down {
-				delete(e.downSince, key)
-				break
-			}
-			first := now
-			if seen, tracked := e.downSince[key]; tracked {
-				first = seen
-			} else {
-				e.downSince[key] = now
-			}
-			if now.Sub(first) >= threshold {
-				hits.add(r.ID, r.Subject, fmt.Sprintf("down continuously for %s", now.Sub(first).Round(time.Second)))
-				liveSubjects[r.ID] = map[string]bool{r.Subject: true}
-			}
-
-		case db.AlertTypeContainerDown:
-			for name, running := range containers {
-				matched, _ := path.Match(r.Subject, name)
-				if !matched {
-					continue
-				}
-				key := downKey(r.ID, name)
-				if running {
-					delete(e.downSince, key)
-					continue
-				}
-				first := now
-				if seen, tracked := e.downSince[key]; tracked {
-					first = seen
-				} else {
-					e.downSince[key] = now
-				}
-				if now.Sub(first) >= threshold {
-					hits.add(r.ID, name, fmt.Sprintf("not running for %s", now.Sub(first).Round(time.Second)))
-					if liveSubjects[r.ID] == nil {
-						liveSubjects[r.ID] = map[string]bool{}
-					}
-					liveSubjects[r.ID][name] = true
-				}
-			}
-
-		case db.AlertTypeSyncStale:
-			sources := []string{"docker", "npm"}
-			if s := strings.TrimSpace(r.Subject); s != "" {
-				sources = []string{s}
-			}
-			for _, src := range sources {
-				last, ok := e.src.LastSyncSuccess(src)
-				stale := !ok || now.Sub(last) >= threshold
-				key := downKey(r.ID, src)
-				if !stale {
-					delete(e.downSince, key)
-					continue
-				}
-				// Staleness is computed from history, not observed across
-				// ticks; fire as soon as the threshold is exceeded.
-				since := last
-				if !ok {
-					since = now.Add(-threshold)
-				}
-				hits.add(r.ID, src, fmt.Sprintf("no successful %s sync since %s", src, since.Format(time.RFC3339)))
-				if liveSubjects[r.ID] == nil {
-					liveSubjects[r.ID] = map[string]bool{}
-				}
-				liveSubjects[r.ID][src] = true
-			}
-
-		case db.AlertTypeReconcileDrift:
-			issueAt, ok := e.src.LastReconcileIssue()
-			fired := ok && (threshold <= 0 || now.Sub(issueAt) >= threshold)
-			key := downKey(r.ID, "")
-			if !fired {
-				delete(e.downSince, key)
-				break
-			}
-			detail := "most recent reconcile run reported drift or errors"
-			if threshold > 0 {
-				detail = fmt.Sprintf("%s for %s", detail, now.Sub(issueAt).Round(time.Second))
-			}
-			hits.add(r.ID, "", detail)
-			liveSubjects[r.ID] = map[string]bool{"": true}
-		}
+		e.evaluateRule(rule, snap, now)
 	}
-	e.mu.Unlock()
-
-	// Transition pass: open new incidents, remind stale ones, auto-resolve
-	// conditions that cleared.
-	for _, r := range rules {
-		if !r.Enabled {
-			continue
-		}
-		trueSet := hits[r.ID]
-		for subject, detail := range trueSet {
-			msg := fmt.Sprintf("%s (%s)", r.Name, detail)
-			inc, created, err := e.store.OpenIncident(r.ID, subject, msg, now)
-			if err != nil {
-				return fmt.Errorf("open incident for rule %d/%s: %w", r.ID, subject, err)
-			}
-			if created {
-				e.emit(fmt.Sprintf("[Alert] %s", r.Name), fmt.Sprintf("%s: %s", subjectLabel(subject), msg))
-				_ = e.store.MarkIncidentNotified(inc.ID, now)
-				continue
-			}
-			// Reminder clock: base is last notification, falling back to open time.
-			base := inc.OpenedAt
-			if inc.LastNotifiedAt != nil {
-				base = *inc.LastNotifiedAt
-			}
-			if e.reminder > 0 && now.Sub(base) >= e.reminder {
-				e.emit(fmt.Sprintf("[Alert] %s (reminder)", r.Name),
-					fmt.Sprintf("%s: still firing — %s", subjectLabel(subject), msg))
-				_ = e.store.MarkIncidentNotified(inc.ID, now)
-			}
-		}
-		// Auto-resolve unresolved incidents whose condition cleared.
-		unresolved, err := e.store.UnresolvedIncidentsByRule(r.ID)
-		if err != nil {
-			return fmt.Errorf("list unresolved incidents for rule %d: %w", r.ID, err)
-		}
-		for _, inc := range unresolved {
-			if trueSet[inc.Subject] != "" {
-				continue
-			}
-			if err := e.store.AutoResolveIncident(inc.ID, now); err != nil {
-				return fmt.Errorf("auto-resolve incident %d: %w", inc.ID, err)
-			}
-			e.emit(fmt.Sprintf("[Resolved] %s", r.Name),
-				fmt.Sprintf("%s: condition cleared after %s", subjectLabel(inc.Subject), now.Sub(inc.OpenedAt).Round(time.Second)))
-		}
-	}
+	e.forgetStaleKeys()
 	return nil
 }
 
-func subjectLabel(subject string) string {
-	if subject == "" {
-		return "global"
+// evaluateRule handles one rule: compute condition subjects that are firing,
+// then reconcile incidents against them.
+func (e *Engine) evaluateRule(rule db.AlertRule, snap *Snapshot, now time.Time) {
+	firing := e.firingSubjects(rule, snap, now)
+
+	// Open new incidents for firing subjects.
+	for _, subject := range firing {
+		key := incidentKey(rule.ID, subject)
+		// Sync staleness is known from the last success timestamp, so the
+		// threshold clock starts there rather than at first observation;
+		// otherwise an already-stale source would wait another full
+		// threshold window before opening an incident.
+		firstObserved := now
+		if rule.Type == db.AlertTypeSyncStale {
+			if ts, ok := snap.LastSyncSuccess[rule.Subject]; ok && !ts.IsZero() && ts.Before(now) {
+				firstObserved = ts
+			}
+		}
+		e.firstSeen[key] = firstOf(e.firstSeen, key, firstObserved)
+		downFor := now.Sub(e.firstSeen[key])
+		if downFor < time.Duration(rule.Threshold)*time.Second {
+			continue // threshold not yet reached — no incident
+		}
+		msg := fmt.Sprintf("%s for %s", humanCondition(rule), humanDuration(downFor))
+		inc, created, err := e.store.OpenIncident(rule.ID, subject, msg, now)
+		if err != nil {
+			logging.LogError("alerts", "Failed to open incident",
+				slog.String("rule", rule.Name), slog.String("error", err.Error()))
+			continue
+		}
+		if created {
+			e.notify("opened", rule.Name, subject, msg, inc.ID, now)
+		} else if inc.Status == "open" && e.ReminderInterval > 0 {
+			last := now.Add(-e.ReminderInterval - time.Minute)
+			if inc.LastNotifiedAt != nil {
+				last = *inc.LastNotifiedAt
+			}
+			if now.Sub(last) >= e.ReminderInterval {
+				e.notify("reminder", rule.Name, subject, msg, inc.ID, now)
+			}
+		}
 	}
-	return subject
+
+	// Auto-resolve incidents whose condition cleared this tick.
+	e.resolveCleared(rule, firing, now)
 }
 
-func (e *Engine) emit(title, message string) {
-	if e.notify != nil {
-		e.notify(title, message)
+// firingSubjects returns the subjects currently satisfying the rule's
+// condition (empty slice = healthy).
+func (e *Engine) firingSubjects(rule db.AlertRule, snap *Snapshot, now time.Time) []string {
+	switch rule.Type {
+	case db.AlertTypeMonitorDownFor:
+		var out []string
+		for name, down := range snap.MonitorDown {
+			if !down {
+				continue
+			}
+			if rule.Subject == "" || matchSubject(rule.Subject, name) {
+				out = append(out, name)
+			}
+		}
+		return out
+	case db.AlertTypeContainerDown:
+		var out []string
+		for name, running := range snap.ContainerRunning {
+			if running {
+				continue
+			}
+			if rule.Subject == "" || matchSubject(rule.Subject, name) {
+				out = append(out, name)
+			}
+		}
+		return out
+	case db.AlertTypeSyncStale:
+		ts, ok := snap.LastSyncSuccess[rule.Subject]
+		if !ok && len(snap.LastSyncSuccess) == 0 && rule.Subject == "" {
+			return nil
+		}
+		if ts.IsZero() {
+			// Never synced successfully — stale since forever; use now so the
+			// threshold clock starts at observation rather than epoch.
+			ts = now
+		}
+		if now.Sub(ts) >= time.Duration(rule.Threshold)*time.Second {
+			return []string{rule.Subject}
+		}
+		return nil
+	case db.AlertTypeReconcileDrift:
+		if snap.ReconcileDrift != nil && *snap.ReconcileDrift {
+			return []string{""}
+		}
+		return nil
+	default:
+		return nil
 	}
+}
+
+// resolveCleared auto-resolves unresolved incidents of the rule whose subject
+// is no longer firing.
+func (e *Engine) resolveCleared(rule db.AlertRule, firing []string, now time.Time) {
+	// Collect unresolved incidents via UnresolvedIncident per known key; we
+	// track keys we opened this session plus probe the empty/global subject.
+	seen := map[string]bool{}
+	for _, s := range firing {
+		seen[s] = true
+	}
+	for key := range e.firstSeen {
+		id, subject, ok := splitKey(key)
+		if !ok || id != rule.ID || seen[subject] {
+			continue
+		}
+		inc, err := e.store.UnresolvedIncident(rule.ID, subject)
+		if err != nil {
+			logging.LogError("alerts", "Failed to query incident",
+				slog.String("rule", rule.Name), slog.String("error", err.Error()))
+			continue
+		}
+		if inc != nil {
+			if err := e.store.AutoResolveIncident(inc.ID, now); err != nil {
+				logging.LogError("alerts", "Failed to auto-resolve incident",
+					slog.Int64("incident", inc.ID), slog.String("error", err.Error()))
+				continue
+			}
+			e.notify("resolved", rule.Name, subject, "condition cleared", inc.ID, now)
+		}
+		delete(e.firstSeen, key)
+	}
+}
+
+func (e *Engine) notify(event, ruleName, subject, message string, incidentID int64, now time.Time) {
+	if e.notifier == nil {
+		return
+	}
+	e.notifier.NotifyAlert(event, ruleName, subject, message)
+	// Best-effort reminder-clock reset; open events set it too so reminders
+	// measure from the last actual notification.
+	if event == "opened" || event == "reminder" {
+		_ = e.markNotified(incidentID, now)
+	}
+}
+
+func (e *Engine) markNotified(incidentID int64, now time.Time) bool {
+	m, ok := e.store.(interface {
+		MarkIncidentNotified(id int64, now time.Time) error
+	})
+	if !ok {
+		return false
+	}
+	return m.MarkIncidentNotified(incidentID, now) == nil
+}
+
+// forgetStaleKeys drops tracking entries older than 24h so restarts and
+// deleted rules cannot leak memory.
+func (e *Engine) forgetStaleKeys() {
+	now := e.nowFn()
+	for k, t := range e.firstSeen {
+		if now.Sub(t) > 24*time.Hour {
+			delete(e.firstSeen, k)
+		}
+	}
+}
+
+func incidentKey(ruleID int64, subject string) string {
+	return fmt.Sprintf("%d|%s", ruleID, subject)
+}
+
+func splitKey(key string) (int64, string, bool) {
+	i := strings.Index(key, "|")
+	if i < 0 {
+		return 0, "", false
+	}
+	var id int64
+	if _, err := fmt.Sscanf(key[:i], "%d", &id); err != nil {
+		return 0, "", false
+	}
+	return id, key[i+1:], true
+}
+
+func firstOf(m map[string]time.Time, key string, now time.Time) time.Time {
+	if t, ok := m[key]; ok {
+		return t
+	}
+	return now
+}
+
+// matchSubject does exact match or prefix* glob matching.
+func matchSubject(pattern, name string) bool {
+	if p, ok := strings.CutSuffix(pattern, "*"); ok {
+		return strings.HasPrefix(name, p)
+	}
+	return pattern == name
+}
+
+func humanCondition(rule db.AlertRule) string {
+	switch rule.Type {
+	case db.AlertTypeMonitorDownFor:
+		return fmt.Sprintf("Monitor %q down", displaySubject(rule.Subject))
+	case db.AlertTypeContainerDown:
+		return fmt.Sprintf("Container %q not running", displaySubject(rule.Subject))
+	case db.AlertTypeSyncStale:
+		return fmt.Sprintf("Sync source %q stale", displaySubject(rule.Subject))
+	case db.AlertTypeReconcileDrift:
+		return "Reconcile drift detected"
+	default:
+		return rule.Type
+	}
+}
+
+func displaySubject(s string) string {
+	if s == "" {
+		return "(any)"
+	}
+	return s
+}
+
+func humanDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return d.String()
+	}
+	mins := int(d.Minutes())
+	if mins < 60 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	return fmt.Sprintf("%dh%02dm", mins/60, mins%60)
 }
