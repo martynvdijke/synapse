@@ -736,6 +736,127 @@ func parseOKAck(resp []json.RawMessage) (bool, string) {
 	return false, ""
 }
 
+// QueryDockerHostsViaSocketIO fetches the docker host list from Kuma via
+// Socket.IO. Kuma pushes a "dockerHostList" event shortly after login (from
+// afterLogin in server.js), so we scan the event stream for it. The list is
+// used to resolve a valid monitor.docker_host FK id (id must exist in the
+// docker_host table, otherwise SQLite rejects the insert with
+// "FOREIGN KEY constraint failed").
+func QueryDockerHostsViaSocketIO(kumaURL, username, password string) ([]DockerHost, error) {
+	logging.LogInfo("kuma", "Querying docker hosts via Socket.IO",
+		slog.String("kuma_url", kumaURL),
+	)
+
+	type hostEntry struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+
+	// Kuma emits "dockerHostList" inside afterLogin, i.e. BEFORE the login
+	// ack callback is delivered. We must therefore process ALL events while
+	// waiting for login (not just loginRequired), otherwise the list is
+	// dropped before we ever see it.
+	events := make(chan rawEvent, 256)
+	cli, err := dialSIO(kumaURL)
+	if err != nil {
+		return nil, fmt.Errorf("socket.io dial: %w", err)
+	}
+	defer cli.close()
+
+	cli.setOnEvent(func(ev rawEvent) {
+		events <- ev
+	})
+
+	loginSent := false
+	loginErr := make(chan error, 1)
+
+	collectHosts := func(ev rawEvent) ([]DockerHost, bool) {
+		if ev.Name != "dockerHostList" || len(ev.Args) < 1 {
+			return nil, false
+		}
+		var entries []hostEntry
+		if json.Unmarshal(ev.Args[0], &entries) != nil {
+			logging.LogWarn("kuma", "Socket.IO dockerHostList parse error",
+				slog.String("parse_error", "failed to parse host list"),
+			)
+			return nil, false
+		}
+		hosts := make([]DockerHost, 0, len(entries))
+		for _, e := range entries {
+			hosts = append(hosts, DockerHost{ID: e.ID, Name: e.Name})
+		}
+		return hosts, true
+	}
+
+	// Phase 1: wait for login while capturing dockerHostList (arrives pre-ack).
+	loginTimer := time.After(15 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if hosts, ok := collectHosts(ev); ok {
+				logging.LogInfo("kuma", "Socket.IO docker host list received",
+					slog.Int("host_count", len(hosts)),
+				)
+				return hosts, nil
+			}
+			if ev.Name == "loginRequired" && !loginSent {
+				loginSent = true
+				ackCh := cli.emitWithAck("login", map[string]string{
+					"username": username,
+					"password": password,
+				})
+				go func() {
+					select {
+					case resp := <-ackCh:
+						if len(resp) > 0 {
+							var r struct {
+								Ok bool `json:"ok"`
+							}
+							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
+								loginErr <- nil
+								return
+							}
+						}
+						loginErr <- fmt.Errorf("login rejected")
+					case <-time.After(15 * time.Second):
+						loginErr <- fmt.Errorf("login timeout")
+					}
+				}()
+			}
+		case err := <-loginErr:
+			if err != nil {
+				logging.LogError("kuma", "Socket.IO login failed",
+					slog.String("error", err.Error()),
+				)
+				return nil, fmt.Errorf("login: %w", err)
+			}
+			goto collect
+		case <-loginTimer:
+			logging.LogWarn("kuma", "Socket.IO docker host login timeout")
+			return []DockerHost{}, nil
+		}
+	}
+
+	// Phase 2: post-login fallback collection window in case the list did not
+	// arrive during login (ordering variance on the wire).
+collect:
+	dataTimer := time.After(dataCollectionWindow)
+	for {
+		select {
+		case ev := <-events:
+			if hosts, ok := collectHosts(ev); ok {
+				logging.LogInfo("kuma", "Socket.IO docker host list received",
+					slog.Int("host_count", len(hosts)),
+				)
+				return hosts, nil
+			}
+		case <-dataTimer:
+			logging.LogWarn("kuma", "Socket.IO docker host list timeout")
+			return []DockerHost{}, nil
+		}
+	}
+}
+
 func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
 	queryStart := time.Now()
 	logging.LogInfo("kuma", "Querying monitors via Socket.IO",
@@ -1365,7 +1486,12 @@ loop:
 		payload["accepted_statuscodes"] = []string{"200", "201", "204", "301", "302"}
 	case "docker":
 		payload["docker_container"] = dockerContainer
-		payload["docker_host"] = dockerHostID
+		// Only include docker_host when it is a valid (>0) FK id. Kuma's
+		// monitor.docker_host references docker_host(id); sending 0 trips a
+		// SQLite "FOREIGN KEY constraint failed" because id 0 never exists.
+		if dockerHostID > 0 {
+			payload["docker_host"] = dockerHostID
+		}
 	}
 
 	ackCh := cli.emitWithAck("add", payload)

@@ -17,7 +17,8 @@ var ErrRESTNotSupported = errors.New("REST API not supported by Uptime Kuma; use
 // When a hook is set on a Client, it takes priority over the global
 // function variable defaults.
 type ClientTestHooks struct {
-	QueryMonitors   func() ([]KumaMonitor, error)
+	QueryMonitors    func() ([]KumaMonitor, error)
+	QueryDockerHosts func() ([]DockerHost, error)
 	AddMonitor      func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error)
 	DeleteMonitor   func(monitorID int) error
 	EditMonitor     func(monitorID int, payload map[string]any) error
@@ -95,6 +96,7 @@ func (c *Client) AddMonitor(monitorType, name, url, dockerContainer string, dock
 // Function variables used by wrapper methods below. Overridden in tests to
 // avoid needing a live Socket.IO server.
 var queryMonitorsFn = QueryMonitorsViaSocketIO
+var queryDockerHostsFn = QueryDockerHostsViaSocketIO
 var addMonitorFn = AddMonitorViaSocketIO
 
 // Test hooks — exported for use by tests in external packages.
@@ -103,6 +105,12 @@ func SetQueryMonitorsTestHook(fn func(url, user, pass string) ([]KumaMonitor, er
 	orig := queryMonitorsFn
 	queryMonitorsFn = fn
 	return func() { queryMonitorsFn = orig }
+}
+
+func SetQueryDockerHostsTestHook(fn func(url, user, pass string) ([]DockerHost, error)) func() {
+	orig := queryDockerHostsFn
+	queryDockerHostsFn = fn
+	return func() { queryDockerHostsFn = orig }
 }
 
 func SetAddMonitorTestHook(fn func(url, user, pass string, monitorType, name, monURL, dockerContainer string, dockerHostID int) (int, error)) func() {
@@ -200,6 +208,15 @@ func (c *Client) QueryMonitorsViaSocketIO() ([]KumaMonitor, error) {
 	c.monCacheAt = time.Now()
 	c.mu.Unlock()
 	return monitors, nil
+}
+
+// QueryDockerHosts fetches the docker host list from Kuma via Socket.IO using
+// the Client's stored credentials. Used to resolve a valid docker_host FK id.
+func (c *Client) QueryDockerHosts() ([]DockerHost, error) {
+	if c.testHooks != nil && c.testHooks.QueryDockerHosts != nil {
+		return c.testHooks.QueryDockerHosts()
+	}
+	return queryDockerHostsFn(c.url, c.username, c.password)
 }
 
 // AddMonitorViaSocketIO creates a monitor in Kuma via Socket.IO using the

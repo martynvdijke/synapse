@@ -685,6 +685,16 @@ func RunDockerSync(composePath string, clients []kuma.InstanceClient, database *
 		for _, m := range existingMonitors {
 			states[i].existing[m.Name] = true
 		}
+
+		// Resolve a valid docker_host FK id. Kuma's monitor.docker_host
+		// references docker_host(id); 0 would trip a SQLite FK violation, so
+		// pick the first configured host if any. Docker monitors created by
+		// sync must reference a real host id to succeed.
+		if hosts, derr := ic.Client.QueryDockerHosts(); derr == nil && len(hosts) > 0 {
+			states[i].dockerHostID = hosts[0].ID
+		} else {
+			states[i].dockerHostID = 0
+		}
 	}
 
 	added := 0

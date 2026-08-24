@@ -836,7 +836,17 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := client.AddMonitorViaSocketIO(monitorType, input.Name, url, container, input.DockerHost)
+
+	// A docker monitor must reference a valid docker_host id (Kuma's
+	// monitor.docker_host is a FK to docker_host(id); sending 0 trips a
+	// SQLite "FOREIGN KEY constraint failed"). If the caller didn't provide
+	// one, resolve it from the instance's docker host list.
+	dockerHostID := input.DockerHost
+	if monitorType == "docker" && dockerHostID <= 0 {
+		dockerHostID = resolveDockerHost(client)
+	}
+
+	id, err := client.AddMonitorViaSocketIO(monitorType, input.Name, url, container, dockerHostID)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -863,6 +873,19 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 		InstanceID:      input.InstanceID,
 		InstanceName:    instName,
 	})
+}
+
+// resolveDockerHost returns a valid docker_host FK id for a docker monitor.
+// Kuma's monitor.docker_host references docker_host(id) and rejects 0 with a
+// SQLite "FOREIGN KEY constraint failed", so if no docker host can be found
+// we return 0, which the caller maps to omitting the field entirely (Kuma
+// treats a missing docker_host as NULL, which is FK-valid).
+func resolveDockerHost(client *kuma.Client) int {
+	hosts, err := client.QueryDockerHosts()
+	if err != nil || len(hosts) == 0 {
+		return 0
+	}
+	return hosts[0].ID
 }
 
 // UpdateKumaMonitor edits a monitor in a Kuma instance: rename, type change
@@ -924,7 +947,9 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 		payload["url"] = cur.URL
 	} else {
 		payload["docker_container"] = cur.DockerContainer
-		payload["docker_host"] = cur.DockerHost
+		if cur.DockerHost > 0 {
+			payload["docker_host"] = cur.DockerHost
+		}
 	}
 
 	newType := cur.Type
@@ -950,7 +975,11 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 			}
 			payload["type"] = "docker"
 			payload["docker_container"] = input.DockerContainer
-			payload["docker_host"] = input.DockerHost
+			if input.DockerHost > 0 {
+				payload["docker_host"] = input.DockerHost
+			} else if dh := resolveDockerHost(client); dh > 0 {
+				payload["docker_host"] = dh
+			}
 			delete(payload, "url")
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be \"http\" or \"docker\""})
@@ -960,7 +989,11 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 		payload["url"] = input.URL
 	} else if cur.Type == "docker" && input.DockerContainer != "" {
 		payload["docker_container"] = input.DockerContainer
-		payload["docker_host"] = input.DockerHost
+		if input.DockerHost > 0 {
+			payload["docker_host"] = input.DockerHost
+		} else if dh := resolveDockerHost(client); dh > 0 {
+			payload["docker_host"] = dh
+		}
 	}
 	if input.Interval > 0 {
 		payload["interval"] = input.Interval
