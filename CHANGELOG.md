@@ -1,3 +1,10 @@
+# [1.27.0](https://github.com/martynvdijke/synapse/compare/v1.26.2...v1.27.0) (2026-08-24)
+
+
+### Features
+
+* **trmnl:** alerts and events screens with per-screen lint/push ([f63af41](https://github.com/martynvdijke/synapse/commit/f63af41546b6dd53b471146417f3e063d84d12c4))
+
 ## [1.26.2](https://github.com/martynvdijke/synapse/compare/v1.26.1...v1.26.2) (2026-08-24)
 
 
