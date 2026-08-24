@@ -1,0 +1,51 @@
+<div class="layout layout--col layout--stretch gap">
+  <div class="item">
+    <div class="meta">Drift</div>
+    <div class="content">
+      <span class="value value--medium">{{ drift_count }}</span>
+      {% if drift_count > 0 %}
+        <span class="label label--warning">drift</span>
+      {% else %}
+        <span class="label">no drift</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="hr"></div>
+  {% if items.size == 0 %}
+    <div class="item">
+      <div class="content">
+        <span class="label">No recent events</span>
+      </div>
+    </div>
+  {% else %}
+    <div class="col col--start gap">
+      {% for item in items limit: 10 %}
+        <div class="item">
+          <div class="meta">
+            {% if item.kind == "docker" %}
+              <span class="label label--success">{{ item.kind }}</span>
+            {% elsif item.kind == "reconcile" %}
+              <span class="label label--warning">{{ item.kind }}</span>
+            {% else %}
+              <span class="label">{{ item.kind }}</span>
+            {% endif %}
+            <span class="label">{{ item.age }}</span>
+          </div>
+          <div class="content">
+            <span class="value value--small">{{ item.subject }}</span>
+            <span class="label"> {{ item.action }}</span>
+          </div>
+          {% if item.summary != "" %}
+            <div class="content">
+              <span class="label">{{ item.summary }}</span>
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="title_bar">
+  <span class="title">Synapse Events</span>
+</div>

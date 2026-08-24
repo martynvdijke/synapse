@@ -1,0 +1,39 @@
+<div class="layout layout--col layout--stretch gap">
+  <div class="item">
+    <div class="meta">Alerts</div>
+    <div class="content">
+      <span class="value value--large">{{ total }}</span>
+    </div>
+  </div>
+  {% if total == 0 %}
+    <div class="item">
+      <div class="content">
+        <span class="label label--success">All clear &#10003;</span>
+      </div>
+    </div>
+  {% else %}
+    {% for item in items limit: 1 %}
+      <div class="item">
+        <div class="meta">
+          <span class="label">{{ item.kind }}</span>
+          <span class="label">{{ item.age }}</span>
+        </div>
+        <div class="content">
+          <span class="label">{{ item.subject }}</span>
+        </div>
+      </div>
+    {% endfor %}
+    {% assign overflow = total | minus: 1 %}
+    {% if overflow > 0 %}
+      <div class="item">
+        <div class="content">
+          <span class="label">+{{ overflow }} more</span>
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+
+<div class="title_bar">
+  <span class="title">Synapse Alerts</span>
+</div>

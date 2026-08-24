@@ -1,0 +1,29 @@
+<div class="layout layout--col layout--stretch gap">
+  <div class="item">
+    <div class="meta">Events · drift {{ drift_count }}</div>
+    <div class="content">
+      {% if items.size == 0 %}
+        <span class="label">No recent events</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if items.size > 0 %}
+    <div class="col col--start gap">
+      {% for item in items limit: 3 %}
+        <div class="item">
+          <div class="meta">
+            <span class="label">{{ item.kind }}</span>
+            <span class="label">{{ item.age }}</span>
+          </div>
+          <div class="content">
+            <span class="label">{{ item.subject }} {{ item.action }}</span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="title_bar">
+  <span class="title">Synapse Events</span>
+</div>

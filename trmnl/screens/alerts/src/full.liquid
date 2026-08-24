@@ -1,0 +1,54 @@
+<div class="layout layout--col layout--stretch gap">
+  <div class="item">
+    <div class="meta">Open alerts</div>
+    <div class="content">
+      <span class="value value--large">{{ total }}</span>
+      {% if total == 0 %}
+        <span class="label label--success">All clear &#10003;</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="hr"></div>
+  {% if total == 0 %}
+    <div class="item">
+      <div class="content">
+        <span class="label">No open alerts</span>
+      </div>
+    </div>
+  {% else %}
+    <div class="col col--start gap">
+      {% for item in items limit: 10 %}
+        <div class="item">
+          <div class="meta">
+            {% if item.kind == "authelia" %}
+              <span class="label label--warning">{{ item.kind }}</span>
+            {% elsif item.kind == "incident" %}
+              <span class="label label--danger">{{ item.kind }}</span>
+            {% else %}
+              <span class="label">{{ item.kind }}</span>
+            {% endif %}
+            <span class="label">{{ item.age }}</span>
+          </div>
+          <div class="content">
+            <span class="value value--small">{{ item.subject }}</span>
+          </div>
+          <div class="content">
+            <span class="label">{{ item.message }}</span>
+          </div>
+        </div>
+      {% endfor %}
+      {% assign overflow = total | minus: 10 %}
+      {% if overflow > 0 %}
+        <div class="item">
+          <div class="content">
+            <span class="label">+{{ overflow }} more</span>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="title_bar">
+  <span class="title">Synapse Alerts</span>
+</div>

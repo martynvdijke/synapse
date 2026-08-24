@@ -14,7 +14,11 @@ jobs:
         with:
           ruby-version: "4.0.6"
       - run: gem install trmnl_preview
-      - run: trmnlp lint --dir trmnl
+      - run: |
+          for dir in trmnl/src trmnl/screens/*/src; do
+            echo "Lint $dir"
+            trmnlp lint --dir "$dir"
+          done
 
   push:
     name: TRMNL push
@@ -35,6 +39,10 @@ jobs:
             exit 1
           fi
           echo "TRMNL plugin ID: $plugin_id"
-      - run: trmnlp push --force --dir trmnl
+      - run: |
+          for dir in trmnl/src trmnl/screens/*/src; do
+            echo "Push $dir"
+            trmnlp push --force --dir "$dir"
+          done
         env:
           TRMNL_API_KEY: ${{ secrets.TRML_TOKEN }}
