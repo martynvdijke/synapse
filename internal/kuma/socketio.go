@@ -1274,8 +1274,9 @@ func AddMonitorViaSocketIO(kumaURL, username, password string, monitorType, name
 	)
 
 	type addResponse struct {
-		Ok  bool   `json:"ok"`
-		Msg string `json:"msg"`
+		Ok        bool   `json:"ok"`
+		Msg       string `json:"msg"`
+		MonitorID int    `json:"monitorID"`
 	}
 	var (
 		loginErr  = make(chan error, 1)
@@ -1344,20 +1345,24 @@ loop:
 		}
 	}
 
-	// Phase 2: emit "add" event and wait for ack
+	// Phase 2: emit "add" event and wait for ack.
+	// accepted_statuscodes must always be present as an array of strings:
+	// Kuma's add handler unconditionally calls
+	// monitor.accepted_statuscodes.every(...) and rejects non-strings.
 	payload := map[string]any{
-		"name":          name,
-		"type":          monitorType,
-		"interval":      60,
-		"retryInterval": 60,
-		"maxretries":    3,
-		"conditions":    []any{},
+		"name":                 name,
+		"type":                 monitorType,
+		"interval":             60,
+		"retryInterval":        60,
+		"maxretries":           3,
+		"conditions":           []any{},
+		"accepted_statuscodes": []string{"200-299"},
 	}
 	switch monitorType {
 	case "http":
 		payload["url"] = url
 		payload["method"] = "GET"
-		payload["accepted_statuscodes"] = []int{200, 201, 204, 301, 302}
+		payload["accepted_statuscodes"] = []string{"200", "201", "204", "301", "302"}
 	case "docker":
 		payload["docker_container"] = dockerContainer
 		payload["docker_host"] = dockerHostID
@@ -1369,22 +1374,26 @@ loop:
 		if len(resp) > 0 {
 			var r addResponse
 			if json.Unmarshal(resp[0], &r) == nil {
-				if r.Ok {
-					// Parse monitor ID from msg
-					var monitorID int
-					if _, err := fmt.Sscanf(r.Msg, "%d", &monitorID); err == nil {
-						logging.LogInfo("kuma", "Monitor added via Socket.IO",
-							slog.String("name", name),
-							slog.Int("monitor_id", monitorID),
-						)
-						return monitorID, nil
-					}
-					logging.LogWarn("kuma", "Could not parse monitor ID from add response",
-						slog.String("msg", r.Msg),
-					)
-					// Return 0 as ID success — caller can still proceed
-					return 0, nil
+			if r.Ok {
+				// Modern Kuma returns the ID in the monitorID field;
+				// older versions embedded it at the start of msg.
+				monitorID := r.MonitorID
+				if monitorID == 0 {
+					fmt.Sscanf(r.Msg, "%d", &monitorID)
 				}
+				if monitorID > 0 {
+					logging.LogInfo("kuma", "Monitor added via Socket.IO",
+						slog.String("name", name),
+						slog.Int("monitor_id", monitorID),
+					)
+					return monitorID, nil
+				}
+				logging.LogWarn("kuma", "Could not parse monitor ID from add response",
+					slog.String("msg", r.Msg),
+				)
+				// Return 0 as ID success — caller can still proceed
+				return 0, nil
+			}
 				return 0, fmt.Errorf("add monitor rejected: %s", r.Msg)
 			}
 		}

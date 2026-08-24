@@ -55,6 +55,94 @@ func TestAddMonitorViaSocketIO_ShortURL(t *testing.T) {
 	}
 }
 
+// TestAddMonitorViaSocketIO_PayloadAndMonitorID reproduces the production
+// failure "add monitor rejected: Cannot read properties of undefined
+// (reading 'every')": Kuma's add handler unconditionally calls
+// monitor.accepted_statuscodes.every(...), so the payload must always carry
+// an array of strings, for every monitor type. It also verifies that the
+// created monitor ID is taken from the ack's monitorID field (modern Kuma
+// returns msg="successAdded" and the ID as a separate field).
+func TestAddMonitorViaSocketIO_PayloadAndMonitorID(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	addPacket := make(chan string, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+
+		// Engine.IO OPEN
+		c.WriteMessage(websocket.TextMessage, []byte(`0{"sid":"mock","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}`))
+		if _, _, err := c.ReadMessage(); err != nil { // SIO CONNECT "40"
+			return
+		}
+		c.WriteMessage(websocket.TextMessage, []byte(`40{"sid":"mock"}`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["loginRequired"]`))
+
+		// Login event with ack; respond ok.
+		if _, _, err := c.ReadMessage(); err != nil {
+			return
+		}
+		c.WriteMessage(websocket.TextMessage, []byte(`431[{"ok":true}]`))
+
+		// Add event: mimic Kuma's server-side validation.
+		_, msg, err := c.ReadMessage()
+		if err != nil {
+			return
+		}
+		raw := string(msg)
+		idx := strings.Index(raw, "[")
+		if idx < 0 || !strings.HasPrefix(raw, "42") {
+			t.Errorf("expected v5 event packet, got %q", raw)
+			return
+		}
+		var args []json.RawMessage
+		if err := json.Unmarshal([]byte(raw[idx:]), &args); err != nil || len(args) < 2 {
+			t.Errorf("malformed add packet %q: %v", raw, err)
+			return
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(args[1], &payload); err != nil {
+			t.Errorf("unmarshal add payload: %v", err)
+			return
+		}
+		codes, ok := payload["accepted_statuscodes"].([]any)
+		if !ok {
+			t.Errorf("payload missing accepted_statuscodes array (Kuma would crash on .every): %s", args[1])
+			c.WriteMessage(websocket.TextMessage, []byte(`432[{"ok":false,"msg":"Cannot read properties of undefined (reading 'every')"}]`))
+			return
+		}
+		for _, code := range codes {
+			if _, isStr := code.(string); !isStr {
+				t.Errorf("accepted_statuscodes must all be strings (Kuma rejects ints): %s", args[1])
+			}
+		}
+		addPacket <- raw
+		c.WriteMessage(websocket.TextMessage, []byte(`432[{"ok":true,"msg":"successAdded","monitorID":42}]`))
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	id, err := AddMonitorViaSocketIO(srv.URL, "admin", "secret", "docker", "svc-a", "", "container-x", 3)
+	if err != nil {
+		t.Fatalf("AddMonitorViaSocketIO failed: %v", err)
+	}
+	if id != 42 {
+		t.Errorf("expected monitorID 42 from ack field, got %d", id)
+	}
+
+	select {
+	case raw := <-addPacket:
+		if !strings.Contains(raw, `"docker_container":"container-x"`) {
+			t.Errorf("add packet missing docker_container: %q", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for add packet")
+	}
+}
+
 func TestQueryMonitorsViaSocketIO_DialFailure(t *testing.T) {
 	_, err := QueryMonitorsViaSocketIO("http://127.0.0.1:1", "admin", "secret")
 	if err == nil {
