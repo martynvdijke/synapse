@@ -1,3 +1,10 @@
+## [1.26.2](https://github.com/martynvdijke/synapse/compare/v1.26.1...v1.26.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* **kuma:** auto-resolve valid docker_host id to prevent FK constraint failure ([a18759e](https://github.com/martynvdijke/synapse/commit/a18759e8ca99b4bd5f5ec499eb9fab2e368dfe52))
+
 ## [1.26.1](https://github.com/martynvdijke/synapse/compare/v1.26.0...v1.26.1) (2026-08-24)
 
 
