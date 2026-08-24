@@ -1,3 +1,10 @@
+## [1.26.1](https://github.com/martynvdijke/synapse/compare/v1.26.0...v1.26.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **kuma:** always send string-array accepted_statuscodes and read monitorID ack field ([b0f0117](https://github.com/martynvdijke/synapse/commit/b0f011725d5688a320291d77a6f289d6d1b5726d))
+
 # [1.26.0](https://github.com/martynvdijke/synapse/compare/v1.25.0...v1.26.0) (2026-08-22)
 
 
