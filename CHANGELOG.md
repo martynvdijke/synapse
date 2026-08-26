@@ -1,3 +1,10 @@
+# [1.28.0](https://github.com/martynvdijke/synapse/compare/v1.27.0...v1.28.0) (2026-08-26)
+
+
+### Features
+
+* **settings:** make persistent notification optional ([4ec3779](https://github.com/martynvdijke/synapse/commit/4ec37795d663558cb49081393cdf4ad6c5cd12f9))
+
 # [1.27.0](https://github.com/martynvdijke/synapse/compare/v1.26.2...v1.27.0) (2026-08-24)
 
 
