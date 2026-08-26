@@ -277,6 +277,7 @@ export interface SettingsResponse {
   notify_docker_image?: boolean;
   notify_reconcile?: boolean;
   notify_cooldown_minutes?: number;
+  notify_persistent?: boolean;
   [key: string]: unknown;
 }
 

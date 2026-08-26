@@ -18,16 +18,25 @@ import (
 // the Gotify client. Kept minimal to avoid importing otel in this package.
 // Client sends application messages to a Gotify server.
 type Client struct {
-	url      string
-	token    string
-	priority int
-	http     *http.Client
+	url        string
+	token      string
+	priority   int
+	persistent bool
+	http       *http.Client
 }
 
 // NewClient creates a Gotify client. url is the Gotify server base URL
 // (e.g. https://gotify.example.com), token the application token, and
 // priority the message priority (0–10).
 func NewClient(url, token string, priority int) *Client {
+	return NewClientWithPersistent(url, token, priority, false)
+}
+
+// NewClientWithPersistent creates a Gotify client with optional persistent
+// (sticky) notifications. When persistent is true the message is sent with
+// extras that ask compatible Gotify clients to keep the notification until
+// dismissed.
+func NewClientWithPersistent(url, token string, priority int, persistent bool) *Client {
 	if priority < 0 {
 		priority = 0
 	}
@@ -35,17 +44,19 @@ func NewClient(url, token string, priority int) *Client {
 		priority = 10
 	}
 	return &Client{
-		url:      strings.TrimRight(url, "/"),
-		token:    token,
-		priority: priority,
-		http:     &http.Client{Timeout: 15 * time.Second},
+		url:        strings.TrimRight(url, "/"),
+		token:      token,
+		priority:   priority,
+		persistent: persistent,
+		http:       &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
 type gotifyMessage struct {
-	Title    string `json:"title"`
-	Message  string `json:"message"`
-	Priority int    `json:"priority"`
+	Title    string         `json:"title"`
+	Message  string         `json:"message"`
+	Priority int            `json:"priority"`
+	Extras   map[string]any `json:"extras,omitempty"`
 }
 
 // SendMessage posts an application message to the Gotify server.
@@ -56,7 +67,13 @@ func (c *Client) SendMessage(ctx context.Context, title, message string) error {
 		return fmt.Errorf("gotify not configured (url or token empty)")
 	}
 
-	body, err := json.Marshal(gotifyMessage{Title: title, Message: message, Priority: c.priority})
+	msg := gotifyMessage{Title: title, Message: message, Priority: c.priority}
+	if c.persistent {
+		msg.Extras = map[string]any{
+			"client::notification": map[string]any{"sticky": true},
+		}
+	}
+	body, err := json.Marshal(msg)
 	if err != nil {
 		logging.LogError("notify", "Failed to encode Gotify message",
 			slog.String("error", err.Error()),

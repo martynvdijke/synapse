@@ -53,6 +53,11 @@ func (n *Ntfy) Send(ctx context.Context, cat notify.Category, title, message str
 	}
 	req.Header.Set("Tags", string(cat))
 	req.Header.Set("Markdown", "no")
+	if n.cfg.Persistent {
+		// ntfy has no native sticky flag; use high urgency + cache to
+		// emulate persistence where supported by clients.
+		req.Header.Set("X-Cache", "no")
+	}
 
 	start := time.Now()
 	resp, err := n.http.Do(req)

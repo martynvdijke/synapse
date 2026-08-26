@@ -48,6 +48,8 @@ export function loadSettings(): void {
         if (kumaDefaultTags) kumaDefaultTags.value = (s.kuma_default_tags as string) || '';
         var notifyCooldown = document.getElementById('s-notify-cooldown') as HTMLInputElement | null;
         if (notifyCooldown) notifyCooldown.value = String(s.notify_cooldown_minutes || 5);
+        var notifyPersistent = document.getElementById('s-notify-persistent') as HTMLInputElement | null;
+        if (notifyPersistent) notifyPersistent.checked = !!(s.notify_persistent);
         loadNotifyMissing();
     });
 }
@@ -273,7 +275,8 @@ export function saveSettings(e: Event): void {
         notify_docker_health: (document.getElementById('s-notify-docker-health') as HTMLInputElement)?.checked || false,
         notify_docker_image: (document.getElementById('s-notify-docker-image') as HTMLInputElement)?.checked || false,
         notify_reconcile: (document.getElementById('s-notify-reconcile') as HTMLInputElement)?.checked || false,
-        notify_cooldown_minutes: parseInt((document.getElementById('s-notify-cooldown') as HTMLInputElement)?.value || '5', 10) || 5
+        notify_cooldown_minutes: parseInt((document.getElementById('s-notify-cooldown') as HTMLInputElement)?.value || '5', 10) || 5,
+        notify_persistent: (document.getElementById('s-notify-persistent') as HTMLInputElement)?.checked || false
     };
     // Only send the Gotify token when it has a value ("Leave blank to keep current").
     var gotifyToken = (document.getElementById('s-gotify-token') as HTMLInputElement)?.value || '';

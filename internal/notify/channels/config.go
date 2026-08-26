@@ -24,11 +24,12 @@ const (
 
 // Config is one entry of the notify_channels settings document.
 type Config struct {
-	Type     string `json:"type"`
-	Enabled  bool   `json:"enabled"`
-	URL      string `json:"url"`
-	Token    string `json:"token,omitempty"`
-	Priority int    `json:"priority,omitempty"`
+	Type       string `json:"type"`
+	Enabled    bool   `json:"enabled"`
+	URL        string `json:"url"`
+	Token      string `json:"token,omitempty"`
+	Priority   int    `json:"priority,omitempty"`
+	Persistent bool   `json:"persistent,omitempty"`
 }
 
 // sendTimeout bounds every adapter's HTTP call.
@@ -64,7 +65,7 @@ func ParseChannels(doc string) ([]Config, error) {
 func Build(cfg Config) (notify.Notifier, error) {
 	switch cfg.Type {
 	case TypeGotify:
-		return notify.NewClient(cfg.URL, cfg.Token, cfg.Priority), nil
+		return notify.NewClientWithPersistent(cfg.URL, cfg.Token, cfg.Priority, cfg.Persistent), nil
 	case TypeNtfy:
 		return NewNtfy(cfg), nil
 	case TypeTelegram:

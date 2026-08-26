@@ -195,6 +195,7 @@ func (app *App) settings() db.Settings {
 		NotifyReconcile:           getEnv("NOTIFY_RECONCILE", "") == "true",
 		NotifyAlerts:              getEnv("NOTIFY_ALERTS", "") == "true",
 		NotifyCooldownMinutes:     getEnvInt("NOTIFY_COOLDOWN_MINUTES", 5),
+		NotifyPersistent:          getEnv("NOTIFY_PERSISTENT", "") == "true",
 		AlertsEnabled:             getEnv("ALERTS_ENABLED", "") == "true",
 		AlertEvalIntervalSeconds:  getEnvInt("ALERT_EVAL_INTERVAL_SECONDS", 60),
 		AlertReminderMinutes:      getEnvInt("ALERT_REMINDER_MINUTES", 0),
@@ -792,6 +793,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"notify_reconcile":             s.NotifyReconcile,
 		"notify_alerts":                s.NotifyAlerts,
 		"notify_cooldown_minutes":      s.NotifyCooldownMinutes,
+		"notify_persistent":            s.NotifyPersistent,
 		"alerts_enabled":               s.AlertsEnabled,
 		"alert_eval_interval_seconds":  s.AlertEvalIntervalSeconds,
 		"alert_reminder_minutes":       s.AlertReminderMinutes,
@@ -1033,6 +1035,11 @@ func (app *App) SaveSettings(c *gin.Context) {
 			val = 1440
 		}
 		pairs["notify_cooldown_minutes"] = strconv.Itoa(val)
+	}
+	if v, ok := raw["notify_persistent"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["notify_persistent"] = strconv.FormatBool(val)
 	}
 	if v, ok := raw["kuma_default_tags"]; ok {
 		var val string
@@ -2696,6 +2703,13 @@ func (app *App) channelsFor(s db.Settings) []notify.Notifier {
 				slog.String("error", err.Error()),
 			)
 		} else {
+			// Global persistent toggle overlays per-channel setting so the
+			// setting stays optional and single-checkbox in the UI.
+			if s.NotifyPersistent {
+				for i := range cfgs {
+					cfgs[i].Persistent = true
+				}
+			}
 			built, buildErrs := channels.BuildAll(cfgs)
 			for _, berr := range buildErrs {
 				logging.LogError("notify", "Skipping invalid notification channel",
@@ -2709,7 +2723,7 @@ func (app *App) channelsFor(s db.Settings) []notify.Notifier {
 	if s.GotifyURL == "" || s.GotifyToken == "" {
 		return nil
 	}
-	return []notify.Notifier{notify.NewClient(s.GotifyURL, s.GotifyToken, s.GotifyPriority)}
+	return []notify.Notifier{notify.NewClientWithPersistent(s.GotifyURL, s.GotifyToken, s.GotifyPriority, s.NotifyPersistent)}
 }
 
 // eventNotifierFor builds an EventNotifier from the current settings. A nil or

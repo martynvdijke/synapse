@@ -209,6 +209,7 @@ type Settings struct {
 	NotifyReconcile           bool   `json:"notify_reconcile"`
 	NotifyAlerts              bool   `json:"notify_alerts"`
 	NotifyCooldownMinutes     int    `json:"notify_cooldown_minutes"`
+	NotifyPersistent          bool   `json:"notify_persistent"`
 	AlertsEnabled             bool   `json:"alerts_enabled"`
 	AlertEvalIntervalSeconds  int    `json:"alert_eval_interval_seconds"`
 	AlertReminderMinutes      int    `json:"alert_reminder_minutes"`
@@ -1410,6 +1411,8 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			}
 		case "kuma_default_tags":
 			s.KumaDefaultTags = row.Value
+		case "notify_persistent":
+			s.NotifyPersistent = row.Value == "true"
 		}
 	}
 	return s
@@ -1475,6 +1478,7 @@ func (db *DB) SaveSettings(s Settings) error {
 		"notify_docker_image":          strconv.FormatBool(s.NotifyDockerImage),
 		"notify_reconcile":             strconv.FormatBool(s.NotifyReconcile),
 		"notify_cooldown_minutes":      strconv.Itoa(s.NotifyCooldownMinutes),
+		"notify_persistent":            strconv.FormatBool(s.NotifyPersistent),
 		"notify_alerts":                strconv.FormatBool(s.NotifyAlerts),
 		"alerts_enabled":               strconv.FormatBool(s.AlertsEnabled),
 		"alert_eval_interval_seconds":  strconv.Itoa(s.AlertEvalIntervalSeconds),
