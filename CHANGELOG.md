@@ -1,3 +1,13 @@
+## [1.28.1](https://github.com/martynvdijke/synapse/compare/v1.28.0...v1.28.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **ci:** correct actionlint pin ([d4b1a69](https://github.com/martynvdijke/synapse/commit/d4b1a699cb07e37e8773ded481d44719ef70d2f4))
+* **ci:** make pinact check non-blocking ([e3b98e7](https://github.com/martynvdijke/synapse/commit/e3b98e768f7a03919a06caaee995d1dacda8b789))
+* **ci:** remove unsupported --diff flag from pinact ([5aa1a8b](https://github.com/martynvdijke/synapse/commit/5aa1a8b0b8ddc80fa94a21383ac3cb10da39ebc5))
+* **ci:** update actionlint to v1.7.12 (v1 tag removed upstream) ([8f90d29](https://github.com/martynvdijke/synapse/commit/8f90d298e95e6ba97cdffd7b44ea95ae70cac9dc))
+
 # [1.28.0](https://github.com/martynvdijke/synapse/compare/v1.27.0...v1.28.0) (2026-08-26)
 
 
