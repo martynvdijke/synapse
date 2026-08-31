@@ -1,3 +1,10 @@
+# [1.29.0](https://github.com/martynvdijke/synapse/compare/v1.28.2...v1.29.0) (2026-08-31)
+
+
+### Features
+
+* **board:** add public Homer-like overview page ([f8682d5](https://github.com/martynvdijke/synapse/commit/f8682d58b0a71f01afa3873d516418dfa726c976))
+
 ## [1.28.2](https://github.com/martynvdijke/synapse/compare/v1.28.1...v1.28.2) (2026-08-30)
 
 ## [1.28.1](https://github.com/martynvdijke/synapse/compare/v1.28.0...v1.28.1) (2026-08-28)
