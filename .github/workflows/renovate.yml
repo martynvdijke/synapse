@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Self-hosted Renovate
-        uses: renovatebot/github-action@5402b206248e5a8c8427a15102702eb9c1793efc # v46.2.4
+        uses: renovatebot/github-action@39b914146caeff8cd512e61c8992f1d5913af85c # v46.2.5
         with:
           configurationFile: renovate.json
           token: ${{ secrets.RENOVATE_TOKEN }}
@@ -30,7 +30,7 @@ jobs:
     needs: [renovate]
     steps:
       - name: Export workflow
-        uses: corentinmusard/otel-cicd-action@895874bfae14f840e3032f1a14c3f2b45c93f4af # v4
+        uses: corentinmusard/otel-cicd-action@895874bfae14f840e3032f1a14c3f2b45c93f4af # v4.1.1
         with:
           otlpEndpoint: ${{ secrets.OTLP_ENDPOINT }}
           otlpHeaders: ${{ secrets.OTLP_HEADERS }}
