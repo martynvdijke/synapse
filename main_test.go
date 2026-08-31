@@ -889,6 +889,9 @@ func setupRouter(app *App) *gin.Engine {
 	r.GET("/", app.Dashboard)
 	r.GET("/login", func(c *gin.Context) { c.HTML(http.StatusOK, "login.html", nil) })
 	r.GET("/setup", func(c *gin.Context) { c.HTML(http.StatusOK, "setup.html", nil) })
+	r.GET("/overview", app.OverviewPage)
+	r.GET("/board", app.OverviewPage)
+	r.GET("/api/public/overview", app.PublicOverview)
 	r.GET("/api/check-setup", app.HandleCheckSetup)
 	r.POST("/api/login", app.HandleLogin)
 

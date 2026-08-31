@@ -12,10 +12,11 @@
 <a href="#main-content" class="skip-link">Skip to content</a>
 
 <nav class="navbar navbar-dark bg-dark px-4" aria-label="Main navigation">
-    <span class="navbar-brand mb-0 h1">Synapse</span>
+    <a href="/overview" class="navbar-brand mb-0 h1 text-decoration-none">Synapse</a>
     <span class="text-light opacity-75 small">v{{ .Version }}</span>
-    <div>
-        <button class="btn btn-outline-light btn-sm me-2" id="btn-eink" title="Toggle e-ink mode">E-ink: Off</button>
+    <div class="ms-auto d-flex align-items-center gap-2">
+        <a href="/overview" class="btn btn-outline-warning btn-sm">Board</a>
+        <button class="btn btn-outline-light btn-sm" id="btn-eink" title="Toggle e-ink mode">E-ink: Off</button>
         <button class="btn btn-outline-light btn-sm" id="btn-logout">Logout</button>
     </div>
 </nav>

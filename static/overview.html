@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synapse — Board</title>
+<meta name="description" content="Synapse public service board — Homer-inspired overview of Docker services, proxies and monitors.">
+<meta name="color-scheme" content="light">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,ital,soft,wght@9..144,0..1,0,700;9..144,1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fdf8f0;
+  --bg-2:#fefcf8;
+  --card:#ffffff;
+  --ink:#1a1c1f;
+  --ink-2:#4b5563;
+  --ink-3:#9aa0aa;
+  --line:#f1e8dc;
+  --line-2:#ece3d6;
+  --radius:16px;
+  --radius-lg:20px;
+  --shadow:0 6px 24px rgba(31,27,22,.07), 0 1px 3px rgba(31,27,22,.06);
+  --shadow-hover:0 14px 36px rgba(31,27,22,.12), 0 4px 12px rgba(31,27,22,.08);
+  --g-amber:#f59e0b; --g-amber-bg:#fff7e6;
+  --g-teal:#0ea5a5; --g-teal-bg:#e6f7f5;
+  --g-coral:#ea5a3c; --g-coral-bg:#fef0ec;
+  --g-violet:#7c6bf0; --g-violet-bg:#f0eefe;
+  --g-sage:#6d9a6b; --g-sage-bg:#eef3ee;
+  --g-sky:#2a9bd6; --g-sky-bg:#eaf4fb;
+  --g-rose:#e8456b; --g-rose-bg:#fdeaf0;
+  --g-slate:#64748b; --g-slate-bg:#f1f5f9;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:"Plus Jakarta Sans",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  line-height:1.5;
+}
+a{color:inherit}
+
+/* header */
+.site-header{
+  position:sticky; top:0; z-index:40;
+  background:rgba(253,248,240,.88);
+  backdrop-filter:saturate(1.2) blur(14px);
+  -webkit-backdrop-filter:saturate(1.2) blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.header-inner{
+  max-width:1440px; margin:0 auto;
+  padding:14px 20px 12px;
+  display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+}
+.brand{
+  display:flex; align-items:center; gap:12px; min-width:0;
+}
+.brand-mark{
+  width:42px; height:42px; border-radius:12px;
+  background:#111;
+  color:#fff;
+  display:grid; place-items:center;
+  font-family:"Fraunces",serif; font-weight:700; font-size:20px; letter-spacing:-.02em;
+  box-shadow:0 4px 14px rgba(0,0,0,.18);
+  flex-shrink:0;
+}
+.brand-text h1{
+  font-family:"Fraunces",serif; font-weight:700; font-size:22px; letter-spacing:-.02em; line-height:1; margin:0;
+}
+.brand-text p{
+  margin:1px 0 0; font-size:11px; letter-spacing:.14em; text-transform:uppercase; font-weight:600; color:var(--ink-3);
+}
+.version-badge{
+  font-family:"JetBrains Mono",monospace; font-size:11px; font-weight:600;
+  background:#111; color:#fff; padding:4px 8px; border-radius:999px; letter-spacing:.02em;
+}
+.header-stats{
+  display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+}
+.stat-pill{
+  display:inline-flex; align-items:center; gap:7px;
+  background:#fff; border:1px solid var(--line-2); border-radius:999px;
+  padding:6px 12px; font-size:13px; font-weight:600; color:var(--ink-2);
+  box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+.stat-pill b{color:var(--ink)}
+.stat-pill i{font-size:14px; opacity:.9}
+.stat-pill--services i{color:var(--g-violet)}
+.stat-pill--proxies i{color:var(--g-teal)}
+.stat-pill--monitors i{color:var(--g-coral)}
+
+.header-actions{margin-left:auto; display:flex; align-items:center; gap:10px}
+.btn-admin{
+  font-size:13px; font-weight:700; letter-spacing:.02em;
+  background:#fff; border:1px solid var(--line-2); border-radius:999px; padding:8px 14px;
+  display:inline-flex; align-items:center; gap:6px; text-decoration:none;
+  transition:.15s;
+}
+.btn-admin:hover{background:#111; color:#fff; border-color:#111}
+.search-wrap{position:relative; flex:1 1 280px; max-width:520px; min-width:220px}
+.search-wrap i{position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--ink-3); font-size:15px; pointer-events:none}
+.search-input{
+  width:100%; padding:10px 14px 10px 36px;
+  background:#fff; border:1px solid var(--line-2); border-radius:999px;
+  font-size:14px; font-weight:500; outline:none;
+  transition:.15s; box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+.search-input:focus{border-color:#111; box-shadow:0 0 0 3px rgba(17,17,17,.08)}
+.search-input::placeholder{color:var(--ink-3)}
+.kbd-hint{
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  font-family:"JetBrains Mono",monospace; font-size:10px; font-weight:600;
+  background:var(--bg); border:1px solid var(--line-2); color:var(--ink-3);
+  padding:3px 6px; border-radius:6px;
+}
+@media(max-width:640px){ .kbd-hint{display:none} .stat-pill{padding:5px 10px; font-size:12px} }
+
+/* controls bar */
+.controls{
+  max-width:1440px; margin:0 auto; padding:14px 20px 0;
+  display:flex; gap:12px; flex-wrap:wrap; align-items:center;
+}
+.group-pills{display:flex; gap:7px; flex-wrap:wrap; align-items:center}
+.pill{
+  appearance:none; border:1px solid var(--line-2); background:#fff; color:var(--ink-2);
+  font-size:13px; font-weight:600; padding:6px 12px; border-radius:999px; cursor:pointer; transition:.15s;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.pill[aria-pressed="true"]{background:#111; color:#fff; border-color:#111}
+.pill:hover{border-color:#111}
+.pill .dot{width:8px; height:8px; border-radius:50%; flex-shrink:0}
+.controls-right{margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.sort-select{
+  border:1px solid var(--line-2); background:#fff; border-radius:999px; padding:7px 12px; font-size:13px; font-weight:600; color:var(--ink-2);
+}
+.result-meta{font-size:13px; color:var(--ink-3); font-weight:500}
+.refresh-indicator{font-size:12px; color:var(--ink-3); display:flex; align-items:center; gap:6px}
+.refresh-indicator .pulse{width:7px; height:7px; border-radius:50%; background:#10b981; box-shadow:0 0 0 3px rgba(16,185,129,.18); animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{transform:scale(1); opacity:1}50%{transform:scale(.85); opacity:.7}}
+
+/* main board */
+.board-wrap{max-width:1440px; margin:0 auto; padding:18px 20px 32px}
+.group-section{margin-bottom:28px; animation:fadeUp .5s ease both}
+.group-header{
+  display:flex; align-items:center; gap:10px; margin-bottom:12px; padding-left:2px;
+}
+.group-icon{
+  width:34px; height:34px; border-radius:10px; display:grid; place-items:center; font-size:16px; font-weight:700; color:#fff; flex-shrink:0;
+}
+.group-title{font-family:"Fraunces",serif; font-size:20px; font-weight:700; letter-spacing:-.02em; margin:0}
+.group-count{font-size:12px; font-weight:700; background:#fff; border:1px solid var(--line-2); padding:4px 8px; border-radius:999px; color:var(--ink-2)}
+.group-collapse{margin-left:auto; border:1px solid var(--line-2); background:#fff; width:30px; height:30px; border-radius:999px; display:grid; place-items:center; cursor:pointer}
+.group-grid{
+  display:grid; gap:14px;
+  grid-template-columns:repeat(1,minmax(0,1fr));
+}
+@media(min-width:640px){ .group-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media(min-width:1024px){ .group-grid{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media(min-width:1320px){ .group-grid{grid-template-columns:repeat(4,minmax(0,1fr))} }
+
+/* card */
+.svc-card{
+  position:relative; background:var(--card); border:1px solid var(--line-2); border-radius:var(--radius-lg);
+  overflow:hidden; display:flex; flex-direction:column; min-height:188px;
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  box-shadow:var(--shadow); text-decoration:none;
+}
+.svc-card:hover{transform:translateY(-4px); box-shadow:var(--shadow-hover); border-color:#e8ddd0}
+.svc-card:focus-visible{outline:2px solid #111; outline-offset:2px}
+.accent{height:4px; width:100%; flex-shrink:0}
+.card-body{padding:16px 16px 12px; display:flex; flex-direction:column; gap:10px; flex:1}
+.card-top{display:flex; gap:12px; align-items:flex-start}
+.icon-box{
+  width:48px; height:48px; border-radius:14px; display:grid; place-items:center; flex-shrink:0;
+  font-size:22px; line-height:1; overflow:hidden; border:1px solid rgba(0,0,0,.06);
+}
+.icon-box img{width:100%; height:100%; object-fit:cover}
+.icon-initials{font-family:"Fraunces",serif; font-weight:700; font-size:16px; letter-spacing:-.02em}
+.card-title-wrap{min-width:0; flex:1}
+.card-name{font-weight:700; font-size:15px; line-height:1.2; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.card-container{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.card-image{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.card-desc{
+  font-size:13px; color:var(--ink-2); line-height:1.4;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:36px;
+}
+.domains{display:flex; flex-wrap:wrap; gap:6px}
+.domain-chip{
+  font-size:11px; font-weight:600; background:#f8f3e9; border:1px solid #ece3d6; color:#6b5a48;
+  padding:4px 8px; border-radius:999px; display:inline-flex; align-items:center; gap:4px; max-width:100%;
+}
+.domain-chip a{color:inherit; text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.domain-chip:hover{background:#fff}
+
+.meta-row{display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:11px}
+.badge-soft{
+  font-size:11px; font-weight:700; letter-spacing:.02em;
+  padding:4px 7px; border-radius:999px; border:1px solid var(--line-2); background:#fff; color:var(--ink-2);
+  display:inline-flex; align-items:center; gap:5px;
+}
+.badge-soft i{font-size:12px}
+.tag{font-size:11px; font-weight:600; background:#fff; border:1px dashed var(--line-2); padding:3px 7px; border-radius:999px; color:var(--ink-2)}
+.forward{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-3); display:flex; align-items:center; gap:4px}
+.card-footer{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:10px 16px; background:#fffefb; border-top:1px solid var(--line);
+  flex-wrap:wrap;
+}
+.status-left{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.dot{
+  width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0;
+  box-shadow:0 0 0 2px rgba(0,0,0,.06) inset;
+}
+.dot--green{background:#10b981; box-shadow:0 0 0 3px rgba(16,185,129,.18)}
+.dot--red{background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.16)}
+.dot--grey{background:#cbd5e1}
+.status-label{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-2)}
+.uptime{
+  font-family:"JetBrains Mono",monospace; font-size:11px; font-weight:700;
+  background:#111; color:#fff; padding:3px 6px; border-radius:6px;
+}
+.npm-dot{width:7px; height:7px; border-radius:50%}
+.external-hint{
+  position:absolute; top:10px; right:10px; width:28px; height:28px; border-radius:999px;
+  background:#fff; border:1px solid var(--line-2); display:grid; place-items:center; font-size:13px; color:var(--ink-3);
+  opacity:0; transform:translateY(4px); transition:.18s;
+}
+.svc-card:hover .external-hint{opacity:1; transform:translateY(0)}
+
+.skeleton-card{
+  background:#fff; border:1px solid var(--line-2); border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow);
+}
+.shimmer{position:relative; overflow:hidden; background:#f3ede3}
+.shimmer::after{
+  content:""; position:absolute; inset:0;
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+  transform:translateX(-100%); animation:shim 1.4s infinite;
+}
+@keyframes shim{100%{transform:translateX(100%)}}
+.skel-line{height:12px; border-radius:999px; background:#ece6da}
+.skel-circle{width:48px; height:48px; border-radius:14px; background:#ece6da}
+
+.empty-state{
+  background:#fff; border:1px dashed var(--line-2); border-radius:var(--radius-lg);
+  padding:48px 24px; text-align:center; box-shadow:var(--shadow);
+}
+.empty-icon{width:64px; height:64px; border-radius:20px; background:var(--bg); border:1px solid var(--line-2); display:grid; place-items:center; font-size:28px; margin:0 auto 14px}
+.footer{
+  max-width:1440px; margin:0 auto; padding:16px 20px 28px;
+  display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  color:var(--ink-3); font-size:12px; border-top:1px solid var(--line); margin-top:8px;
+}
+.footer a{color:var(--ink-2); font-weight:600}
+
+/* reduced motion */
+@media(prefers-reduced-motion:reduce){
+  .svc-card, .group-section{animation:none; transition:none}
+  .shimmer::after, .pulse{animation:none}
+}
+@keyframes fadeUp{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)}}
+.truncate{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+</style>
+</head>
+<body>
+<header class="site-header" role="banner">
+  <div class="header-inner">
+    <div class="brand" aria-label="Synapse">
+      <div class="brand-mark" aria-hidden="true">⬢</div>
+      <div class="brand-text">
+        <h1>Synapse</h1>
+        <p>Board — public overview</p>
+      </div>
+      <span class="version-badge" id="version-badge" title="Synapse version">v{{ .Version }}</span>
+    </div>
+
+    <div class="header-stats" aria-label="Live statistics">
+      <span class="stat-pill stat-pill--services"><i class="bi bi-box-seam"></i> <b id="stat-services">—</b> <span>services</span></span>
+      <span class="stat-pill stat-pill--proxies"><i class="bi bi-hdd-network"></i> <b id="stat-proxies">—</b> <span>proxies</span></span>
+      <span class="stat-pill stat-pill--monitors"><i class="bi bi-activity"></i> <b id="stat-monitors">—</b> <span>monitors</span></span>
+    </div>
+
+    <div class="header-actions">
+      <label class="search-wrap" aria-label="Search services">
+        <i class="bi bi-search" aria-hidden="true"></i>
+        <input id="search" class="search-input" type="search" placeholder="Search name, domain, image, group…" autocomplete="off" spellcheck="false" aria-label="Search services">
+        <span class="kbd-hint">/ to focus</span>
+      </label>
+      <a href="/" class="btn-admin" aria-label="Go to admin dashboard"><i class="bi bi-shield-lock"></i> Admin</a>
+    </div>
+  </div>
+</header>
+
+<div class="controls" role="toolbar" aria-label="Board controls">
+  <div class="group-pills" id="group-pills" role="group" aria-label="Filter by group">
+    <!-- pills injected -->
+  </div>
+  <div class="controls-right">
+    <span class="result-meta" id="result-meta" aria-live="polite"></span>
+    <select id="sort" class="sort-select" aria-label="Sort services">
+      <option value="group">Sort: Group → Name</option>
+      <option value="name">Sort: Name A–Z</option>
+      <option value="status">Sort: Status</option>
+    </select>
+    <span class="refresh-indicator" title="Auto-refreshes every 30 seconds"><span class="pulse" aria-hidden="true"></span> <span id="refresh-label">auto-refresh 30s</span></span>
+  </div>
+</div>
+
+<main class="board-wrap" id="main" role="main" aria-live="polite" aria-busy="true">
+  <div id="board"></div>
+</main>
+
+<footer class="footer" role="contentinfo">
+  <div>
+    <span id="footer-generated">Loading…</span>
+    <span aria-hidden="true"> · </span>
+    <span id="footer-stats"></span>
+  </div>
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+    <span id="footer-version">v{{ .Version }}</span>
+    <a href="/api/public/overview" target="_blank" rel="noopener">JSON API</a>
+    <span aria-hidden="true">·</span>
+    <span>Public board — no auth required</span>
+  </div>
+</footer>
+
+<script>
+const API = '/api/public/overview';
+const LS_KEY = 'synapse_board_prefs_v1';
+const REFRESH_MS = 30000;
+
+const PALETTE = [
+  {color:'#f59e0b', bg:'#fff7e6'},
+  {color:'#0ea5a5', bg:'#e6faf7'},
+  {color:'#ea5a3c', bg:'#fef0ec'},
+  {color:'#7c6bf0', bg:'#f0eefe'},
+  {color:'#6d9a6b', bg:'#eef3ee'},
+  {color:'#2a9bd6', bg:'#eaf4fb'},
+  {color:'#e8456b', bg:'#fdeaf0'},
+  {color:'#64748b', bg:'#f1f5f9'},
+  {color:'#a16207', bg:'#fef9e7'},
+  {color:'#0f766e', bg:'#e6f2f0'},
+];
+
+function hashStr(s){let h=0; for(let i=0;i<s.length;i++) h=(h*31 + s.charCodeAt(i))>>>0; return h}
+function groupStyle(name){
+  const idx = hashStr(name||'General') % PALETTE.length;
+  return PALETTE[idx];
+}
+function escapeHtml(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+function initials(name){
+  const parts = String(name||'?').trim().split(/[\s_.-]+/).filter(Boolean);
+  if(parts.length>=2) return (parts[0][0]+parts[1][0]).toUpperCase();
+  return String(name||'?').slice(0,2).toUpperCase();
+}
+function iconNode(icon, name, grp){
+  const st = groupStyle(grp);
+  if(!icon){
+    return `<div class="icon-box" style="background:${st.bg}; color:${st.color}; border-color:${st.color}22"><span class="icon-initials">${escapeHtml(initials(name))}</span></div>`
+  }
+  const raw = String(icon).trim();
+  // URL ?
+  if(/^https?:\/\//i.test(raw) || raw.startsWith('/') || /\.(png|jpg|jpeg|webp|svg|gif)(\?.*)?$/i.test(raw)){
+    const safe = escapeHtml(raw);
+    return `<div class="icon-box" style="background:#fff"><img src="${safe}" alt="" loading="lazy" onerror="this.style.display='none'; this.parentElement.innerHTML='<span class=\\'icon-initials\\'>${escapeHtml(initials(name))}</span>'; this.parentElement.style.background='${st.bg}'; this.parentElement.style.color='${st.color}'"></div>`
+  }
+  // mdi: / si:
+  if(raw.startsWith('mdi:') || raw.startsWith('si:')){
+    const key = raw.split(':')[1]||'box';
+    // map a few common icons to bootstrap icons, else generic
+    const map = {plex:'collection-play', jellyfin:'film', radarr:'film', sonarr:'tv', tautulli:'graph-up', grafana:'graph-up', prometheus:'activity', portainer:'hdd-stack', homeassistant:'house', pihole:'shield', adguard:'shield-check', n8n:'diagram-3', overseerr:'ticket', prowlarr:'search', bazarr:'subtitles', nextcloud:'cloud'};
+    const bi = map[key.toLowerCase()]||'box-seam';
+    return `<div class="icon-box" style="background:${st.bg}; color:${st.color}"><i class="bi bi-${bi}" aria-hidden="true"></i></div>`
+  }
+  // emoji heuristic: short and contains non-ascii or length <=4 without slash colon
+  if(raw.length<=4 && !raw.includes('/') && !raw.includes(':')){
+    // treat as emoji
+    return `<div class="icon-box" style="background:${st.bg}; font-size:24px">${escapeHtml(raw)}</div>`
+  }
+  // fallback: if single unicode
+  if([...raw].length<=2){
+    return `<div class="icon-box" style="background:${st.bg}; font-size:24px">${escapeHtml(raw)}</div>`
+  }
+  // else treat as text-ish, show initials but keep icon as tooltip
+  return `<div class="icon-box" title="${escapeHtml(raw)}" style="background:${st.bg}; color:${st.color}"><span class="icon-initials">${escapeHtml(initials(name))}</span></div>`
+}
+
+function stateMeta(s){
+  const cs = (s.container_state||'').toLowerCase();
+  const kuma = s.kuma_status;
+  let kumaClass='dot--grey', kumaLabel='no monitor', kumaTitle='Not in Uptime Kuma';
+  if(s.in_kuma){
+    if(kuma===1){kumaClass='dot--green'; kumaLabel='up'; kumaTitle='Kuma: up'}
+    else if(kuma===0){kumaClass='dot--red'; kumaLabel='down'; kumaTitle='Kuma: down'}
+    else {kumaClass='dot--grey'; kumaLabel='unknown'; kumaTitle='Kuma: unknown'}
+  }
+  let contClass='dot--grey', contLabel='unknown';
+  if(cs==='running'){contClass='dot--green'; contLabel='running'}
+  else if(cs==='exited' || cs==='dead' || cs==='created' || cs==='paused'){contClass='dot--red'; contLabel=cs}
+  else if(cs) {contClass='dot--grey'; contLabel=cs}
+  else {contClass='dot--grey'; contLabel='n/a'}
+  return {contClass, contLabel, kumaClass, kumaLabel, kumaTitle}
+}
+
+function sortServices(list, mode){
+  const copy=[...list];
+  if(mode==='name') return copy.sort((a,b)=> a.name.localeCompare(b.name));
+  if(mode==='status'){
+    const rank = (s)=>{
+      if(s.kuma_status===0) return 0;
+      if((s.container_state||'').toLowerCase()!=='running' && s.container_state) return 1;
+      if(s.kuma_status===1) return 2;
+      return 3;
+    };
+    return copy.sort((a,b)=> rank(a)-rank(b) || a.name.localeCompare(b.name));
+  }
+  // group
+  return copy.sort((a,b)=>{
+    if(a.group!==b.group) return a.group.localeCompare(b.group);
+    return a.name.localeCompare(b.name);
+  });
+}
+function filterServices(list, q, group){
+  const query = (q||'').trim().toLowerCase();
+  let out=list;
+  if(group && group!=='All') out=out.filter(s=> s.group===group);
+  if(!query) return out;
+  return out.filter(s=>{
+    const hay=[s.name, s.container_name, s.image, s.group, s.description, s.primary_url, (s.domains||[]).join(' '), (s.tags||[]).join(' '), s.forward_host, String(s.forward_port||'')].join(' ').toLowerCase();
+    return hay.includes(query);
+  });
+}
+
+let rawData=null;
+let currentGroup='All';
+let currentSort='group';
+let currentQuery='';
+
+function loadPrefs(){
+  try{
+    const j=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
+    if(j.group) currentGroup=j.group;
+    if(j.sort) currentSort=j.sort;
+    if(j.q) currentQuery=j.q;
+  }catch{}
+}
+function savePrefs(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify({group:currentGroup, sort:currentSort, q:currentQuery})) }catch{}
+}
+
+function renderSkeleton(){
+  const board=document.getElementById('board');
+  let html='';
+  for(let g=0; g<3; g++){
+    html+=`<section class="group-section"><div style="display:flex; gap:10px; align-items:center; margin-bottom:12px"><div class="skel-line shimmer" style="width:34px; height:34px; border-radius:10px"></div><div class="skel-line shimmer" style="width:120px; height:16px"></div><div class="skel-line shimmer" style="width:46px; height:20px; border-radius:999px"></div></div><div class="group-grid">`;
+    for(let i=0;i<4;i++){
+      html+=`<div class="skeleton-card"><div class="shimmer" style="height:4px"></div><div style="padding:16px; display:flex; gap:12px; align-items:flex-start"><div class="skel-circle shimmer"></div><div style="flex:1; display:grid; gap:8px"><div class="skel-line shimmer" style="width:60%"></div><div class="skel-line shimmer" style="width:45%; height:10px"></div><div class="skel-line shimmer" style="width:90%; height:10px"></div></div></div><div style="padding:0 16px 12px; display:flex; gap:6px"><div class="skel-line shimmer" style="width:80px; height:20px; border-radius:999px"></div><div class="skel-line shimmer" style="width:64px; height:20px; border-radius:999px"></div></div><div class="shimmer" style="height:38px; margin-top:4px"></div></div>`;
+    }
+    html+=`</div></section>`;
+  }
+  board.innerHTML=html;
+}
+
+function renderError(msg){
+  document.getElementById('board').innerHTML=`
+    <div class="empty-state" role="alert">
+      <div class="empty-icon" aria-hidden="true">⚠️</div>
+      <h2 style="font-family:Fraunces,serif; font-weight:700; font-size:20px; margin:0 0 6px">Couldn’t load the board</h2>
+      <p style="color:var(--ink-2); font-size:14px; margin:0 0 14px">${escapeHtml(msg||'Network error. The overview API is unreachable.')}</p>
+      <button class="pill" style="background:#111; color:#fff; border-color:#111" onclick="fetchAndRender(true)"><i class="bi bi-arrow-clockwise"></i> Retry</button>
+      <p style="margin-top:12px; font-size:12px; color:var(--ink-3)">Endpoint: <code style="font-family:JetBrains Mono,monospace">${API}</code></p>
+    </div>`;
+}
+
+function renderBoard(data){
+  const board=document.getElementById('board');
+  const searchEl=document.getElementById('search');
+  const sortEl=document.getElementById('sort');
+  if(!data || !Array.isArray(data.services)){
+    renderError('Invalid response shape');
+    return;
+  }
+  const services=data.services||[];
+  const filtered=filterServices(services, currentQuery, currentGroup);
+  const sorted=sortServices(filtered, currentSort);
+
+  // stats pills
+  document.getElementById('stat-services').textContent = data.stats ? data.stats.total_services : services.length;
+  document.getElementById('stat-proxies').textContent = data.stats ? data.stats.total_proxies : (data.proxies||[]).length;
+  document.getElementById('stat-monitors').textContent = data.stats ? data.stats.total_monitors : (data.monitors||[]).length;
+
+  // group pills
+  const groups = data.groups && data.groups.length ? data.groups : [...new Set(services.map(s=>s.group||'General'))].sort();
+  const pillsEl=document.getElementById('group-pills');
+  const allGroups=['All', ...groups];
+  pillsEl.innerHTML = allGroups.map(g=>{
+    const st = g==='All' ? {color:'#111', bg:'#fff'} : groupStyle(g);
+    const count = g==='All' ? services.length : services.filter(s=> (s.group||'General')===g).length;
+    const active = currentGroup===g;
+    return `<button class="pill" role="button" aria-pressed="${active}" data-group="${escapeHtml(g)}"><span class="dot" style="background:${st.color}"></span> ${escapeHtml(g)} <span style="background:${active?'rgba(255,255,255,.18)':'#f3ede3'}; padding:1px 6px; border-radius:999px; font-size:11px; font-weight:700">${count}</span></button>`
+  }).join('');
+  pillsEl.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      currentGroup=b.dataset.group;
+      savePrefs();
+      // update pressed state quickly
+      pillsEl.querySelectorAll('button').forEach(x=> x.setAttribute('aria-pressed', String(x.dataset.group===currentGroup)));
+      renderBoard(rawData);
+    })
+  });
+
+  // result meta
+  const meta=document.getElementById('result-meta');
+  if(!currentQuery && currentGroup==='All') meta.textContent = `${sorted.length} services`;
+  else meta.textContent = `${sorted.length} of ${services.length} shown`;
+
+  // sync controls
+  searchEl.value=currentQuery;
+  sortEl.value=currentSort;
+
+  // footer
+  const gen = data.generated ? new Date(data.generated) : new Date();
+  document.getElementById('footer-generated').textContent = `Generated ${gen.toLocaleString()} · ${sorted.length} visible`;
+  document.getElementById('footer-stats').textContent = `${services.length} services · ${(data.proxies||[]).length} proxies · ${(data.monitors||[]).length} monitors`;
+
+  if(services.length===0){
+    board.innerHTML=`
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">🏜️</div>
+        <h2 style="font-family:Fraunces,serif; font-weight:700; font-size:22px; margin:0 0 6px">No services yet</h2>
+        <p style="color:var(--ink-2); font-size:14px; max-width:520px; margin:0 auto 10px">Synapse hasn’t discovered any Docker services. Check your <code style="font-family:JetBrains Mono,monospace">compose path</code> in Settings and run a sync.</p>
+        <a href="/" class="pill" style="background:#111; color:#fff; border-color:#111; text-decoration:none">Open admin dashboard</a>
+      </div>`;
+    document.getElementById('main').setAttribute('aria-busy','false');
+    return;
+  }
+
+  if(sorted.length===0){
+    board.innerHTML=`
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">🔍</div>
+        <h2 style="font-family:Fraunces,serif; font-weight:700; font-size:20px; margin:0 0 6px">No matches</h2>
+        <p style="color:var(--ink-2); font-size:14px; margin:0 0 12px">No services match “${escapeHtml(currentQuery)}”${currentGroup!=='All' ? ` in group “${escapeHtml(currentGroup)}”` : ''}.</p>
+        <button class="pill" onclick="clearFilters()"><i class="bi bi-x-circle"></i> Clear filters</button>
+      </div>`;
+    document.getElementById('main').setAttribute('aria-busy','false');
+    return;
+  }
+
+  // group sorted for display: bucket by group preserving sorted order
+  const buckets=new Map();
+  for(const s of sorted){
+    const g=s.group||'General';
+    if(!buckets.has(g)) buckets.set(g, []);
+    buckets.get(g).push(s);
+  }
+  // order buckets by first appearance in sorted
+  let html='';
+  let idx=0;
+  for(const [groupName, items] of buckets){
+    const st=groupStyle(groupName);
+    const gid='group-'+hashStr(groupName);
+    html+=`
+      <section class="group-section" aria-labelledby="${gid}" style="animation-delay:${idx*60}ms">
+        <div class="group-header">
+          <div class="group-icon" style="background:${st.color}" aria-hidden="true">${groupName.slice(0,1).toUpperCase()}</div>
+          <h2 class="group-title" id="${gid}">${escapeHtml(groupName)}</h2>
+          <span class="group-count">${items.length}</span>
+          <button class="group-collapse" aria-label="Toggle ${escapeHtml(groupName)}" data-collapse="${escapeHtml(groupName)}"><i class="bi bi-chevron-up"></i></button>
+        </div>
+        <div class="group-grid" data-grid="${escapeHtml(groupName)}">
+          ${items.map(s=> cardHtml(s, st)).join('')}
+        </div>
+      </section>`;
+    idx++;
+  }
+  board.innerHTML=html;
+
+  // collapse handlers
+  board.querySelectorAll('[data-collapse]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const g=btn.dataset.collapse;
+      const grid=board.querySelector(`[data-grid="${CSS.escape(g)}"]`);
+      if(!grid) return;
+      const hidden=grid.style.display==='none';
+      grid.style.display= hidden ? '' : 'none';
+      btn.innerHTML= hidden ? '<i class="bi bi-chevron-up"></i>' : '<i class="bi bi-chevron-down"></i>';
+      btn.setAttribute('aria-expanded', String(hidden));
+    });
+  });
+
+  // clickable cards via keyboard
+  board.querySelectorAll('.svc-card').forEach(card=>{
+    card.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter' || e.key===' '){
+        e.preventDefault();
+        const href=card.getAttribute('href');
+        if(href && href!=='#') window.open(href, '_blank', 'noopener');
+      }
+    });
+  });
+
+  document.getElementById('main').setAttribute('aria-busy','false');
+}
+
+function cardHtml(s, st){
+  const hasUrl = s.primary_url && s.primary_url.trim();
+  const href = hasUrl ? escapeHtml(s.primary_url) : '#';
+  const target = hasUrl ? ' target="_blank" rel="noopener noreferrer"' : '';
+  const meta = stateMeta(s);
+  const uptime = (s.kuma_uptime_24h!=null) ? `<span class="uptime" title="24h uptime">${Number(s.kuma_uptime_24h).toFixed(2)}% · 24h</span>` : '';
+  const tags = (s.tags||[]).slice(0,3).map(t=> `<span class="tag">#${escapeHtml(t)}</span>`).join('');
+  const moreTags = (s.tags||[]).length>3 ? `<span class="tag">+${(s.tags.length-3)}</span>` : '';
+  const domains = (s.domains||[]).slice(0,3).map(d=> `<span class="domain-chip"><i class="bi bi-link-45deg"></i><a href="https://${escapeHtml(d)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(d)}</a></span>`).join('');
+  const moreDomains = (s.domains||[]).length>3 ? `<span class="domain-chip">+${s.domains.length-3} more</span>` : '';
+  const fwd = (s.forward_host) ? `<span class="forward"><i class="bi bi-hdd-network"></i> ${escapeHtml(s.forward_host)}:${s.forward_port||''}</span>` : '';
+  const npmBadge = s.npm_host_name ? `<span class="badge-soft" title="Proxied via NPM"><span class="npm-dot" style="background:#10b981"></span> NPM</span>` : `<span class="badge-soft" title="No NPM host"><span class="npm-dot" style="background:#cbd5e1; border:1px solid #fff"></span> no proxy</span>`;
+  const kumaBadge = s.in_kuma ? `<span class="badge-soft" title="${meta.kumaTitle}"><span class="dot ${meta.kumaClass}" style="width:7px; height:7px"></span> Kuma</span>` : `<span class="badge-soft" style="opacity:.7"><span class="dot dot--grey" style="width:7px; height:7px"></span> not in Kuma</span>`;
+  const desc = s.description ? escapeHtml(s.description) : `<span style="color:var(--ink-3); font-style:italic">No description</span>`;
+  const cStatusTip = s.container_status ? ` title="${escapeHtml(s.container_status)}"` : '';
+  const external = hasUrl ? `<span class="external-hint" aria-hidden="true"><i class="bi bi-box-arrow-up-right"></i></span>` : '';
+
+  // entire card as link
+  return `
+  <a class="svc-card" href="${href}"${target} role="article" aria-label="${escapeHtml(s.name)} — ${escapeHtml(s.group)} — ${hasUrl?escapeHtml(s.primary_url):'no link'}" tabindex="0">
+    <div class="accent" style="background:${st.color}" aria-hidden="true"></div>
+    ${external}
+    <div class="card-body">
+      <div class="card-top">
+        ${iconNode(s.icon, s.name, s.group)}
+        <div class="card-title-wrap">
+          <h3 class="card-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</h3>
+          <div class="card-container truncate" title="${escapeHtml(s.container_name||s.name)}">${escapeHtml(s.container_name||s.name)}</div>
+          <div class="card-image truncate" title="${escapeHtml(s.image||'')}">${escapeHtml((s.image||'').split('/').pop()||s.image||'')}</div>
+        </div>
+      </div>
+      <div class="card-desc">${desc}</div>
+      ${ (s.domains && s.domains.length) ? `<div class="domains">${domains}${moreDomains}</div>` : `<div class="domains"><span class="domain-chip" style="background:#fff; border-style:dashed; color:var(--ink-3)">No domain</span></div>`}
+      <div class="meta-row">
+        <span class="badge-soft"><i class="bi bi-tag"></i> ${escapeHtml(s.monitor_type||'docker')}</span>
+        ${fwd}
+        ${tags}${moreTags}
+      </div>
+    </div>
+    <div class="card-footer">
+      <div class="status-left">
+        <span style="display:inline-flex; align-items:center; gap:5px"${cStatusTip}><span class="dot ${meta.contClass}" aria-hidden="true"></span><span class="status-label">${escapeHtml(meta.contLabel)}</span></span>
+        <span style="display:inline-flex; align-items:center; gap:5px" title="${meta.kumaTitle}"><span class="dot ${meta.kumaClass}" aria-hidden="true"></span><span class="status-label">${escapeHtml(meta.kumaLabel)}</span></span>
+        ${uptime}
+      </div>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+        ${kumaBadge}
+        ${npmBadge}
+      </div>
+    </div>
+  </a>`;
+}
+
+function clearFilters(){
+  currentQuery=''; currentGroup='All';
+  const se=document.getElementById('search'); if(se) se.value='';
+  savePrefs();
+  if(rawData) renderBoard(rawData);
+}
+window.clearFilters=clearFilters;
+
+async function fetchAndRender(isRetry=false){
+  const label=document.getElementById('refresh-label');
+  if(isRetry) renderSkeleton();
+  try{
+    if(label) label.textContent='refreshing…';
+    const res=await fetch(API, {headers:{'Accept':'application/json'}, cache:'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data=await res.json();
+    rawData=data;
+    // fix version badges from API version if template placeholder not replaced
+    const v = data.version || document.getElementById('version-badge').textContent.replace('v','').replace('{{ .Version }}','').trim() || '—';
+    if(v && v!=='—' && !String(v).includes('{')){
+      document.getElementById('version-badge').textContent='v'+String(v).replace(/^v/,'');
+      document.getElementById('footer-version').textContent='v'+String(v).replace(/^v/,'');
+    }
+    renderBoard(data);
+  }catch(e){
+    renderError(e.message||'Failed to fetch');
+  }finally{
+    if(label) label.textContent='auto-refresh 30s';
+    document.getElementById('main').setAttribute('aria-busy','false');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', ()=>{
+  loadPrefs();
+  const searchEl=document.getElementById('search');
+  const sortEl=document.getElementById('sort');
+  if(currentQuery) searchEl.value=currentQuery;
+  sortEl.value=currentSort;
+  renderSkeleton();
+
+  searchEl.addEventListener('input', (e)=>{
+    currentQuery=e.target.value;
+    savePrefs();
+    if(rawData) renderBoard(rawData);
+  });
+  sortEl.addEventListener('change', (e)=>{
+    currentSort=e.target.value;
+    savePrefs();
+    if(rawData) renderBoard(rawData);
+  });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key==='/' && document.activeElement!==searchEl && !e.metaKey && !e.ctrlKey){
+      e.preventDefault(); searchEl.focus();
+    }
+    if(e.key==='Escape' && document.activeElement===searchEl){
+      searchEl.blur();
+    }
+  });
+
+  fetchAndRender();
+  setInterval(fetchAndRender, REFRESH_MS);
+
+  // handle Go template fallback: if still shows template placeholder, replace with fetch version later
+  const vb=document.getElementById('version-badge');
+  if(vb && vb.textContent.includes('\x7b\x7b')){
+    vb.textContent='v—';
+  }
+});
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

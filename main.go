@@ -382,6 +382,11 @@ func main() {
 		c.File("static/" + c.Param("filepath"))
 	})
 
+	// Public board — Homer-like overview of all running services (no auth)
+	r.GET("/overview", app.OverviewPage)
+	r.GET("/board", app.OverviewPage)
+	r.GET("/api/public/overview", app.PublicOverview)
+
 	r.GET("/api/check-setup", app.HandleCheckSetup)
 	r.POST("/api/login", app.HandleLogin)
 
