@@ -32,7 +32,7 @@ jobs:
           EXEMPT_BRANCHES: 'main renovate/ dependabot/ feat/'
         run: |
           cutoff=$(date -d "-${STALE_DAYS} days" +%s)
-          echo "Cutoff: $(date -d @$cutoff)"
+          echo "Cutoff: $(date -d "@$cutoff")"
           echo "Dry run: $DRY_RUN"
           deleted=0
           skipped=0
@@ -57,14 +57,14 @@ jobs:
             fi
 
             if [ "$ts" -lt "$cutoff" ]; then
-              echo "  STALE: $branch (last commit: $(date -d @$ts))"
+              echo "  STALE: $branch (last commit: $(date -d "@$ts"))"
               if [ "$DRY_RUN" = "false" ]; then
                 git push origin --delete "$branch" 2>/dev/null && \
                   echo "  DELETED: $branch" && \
                   ((deleted++)) || true
               fi
             else
-              echo "  FRESH: $branch (last commit: $(date -d @$ts))"
+              echo "  FRESH: $branch (last commit: $(date -d "@$ts"))"
             fi
           done
 
