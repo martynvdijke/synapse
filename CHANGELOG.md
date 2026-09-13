@@ -1,3 +1,10 @@
+# [1.31.0](https://github.com/martynvdijke/synapse/compare/v1.30.4...v1.31.0) (2026-09-13)
+
+
+### Features
+
+* **telemetry:** add browser OTel tracing and fix backend exporter config ([a85b023](https://github.com/martynvdijke/synapse/commit/a85b0239b03da469bba9e7e46810c53fba8895ee))
+
 ## [1.30.4](https://github.com/martynvdijke/synapse/compare/v1.30.3...v1.30.4) (2026-09-11)
 
 ## [1.30.3](https://github.com/martynvdijke/synapse/compare/v1.30.2...v1.30.3) (2026-09-10)
