@@ -38,4 +38,3 @@ export function connectSSE(): void {
 var refreshAll: () => void;
 export function setRefreshAll(fn: () => void) { refreshAll = fn; }
 
-window.connectSSE = connectSSE;

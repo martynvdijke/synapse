@@ -1,9 +1,11 @@
 // Alerts tab logic — rule CRUD + incident lifecycle
 import type { AlertRuleJSON, AlertIncidentJSON } from './types';
+import { esc, apiFetch, emptyRow } from './api';
+import { toast } from './toast';
 
 var alertRules: AlertRuleJSON[] = [];
 
-function formatThreshold(seconds: number): string {
+export function formatThreshold(seconds: number): string {
     if (!seconds) return '—';
     if (seconds % 86400 === 0) return seconds / 86400 + 'd';
     if (seconds % 3600 === 0) return seconds / 3600 + 'h';
@@ -11,7 +13,7 @@ function formatThreshold(seconds: number): string {
     return seconds + 's';
 }
 
-function typeLabel(t: string): string {
+export function typeLabel(t: string): string {
     switch (t) {
         case 'monitor_down_for': return 'Monitor down for';
         case 'container_down': return 'Container down';
@@ -21,7 +23,7 @@ function typeLabel(t: string): string {
     }
 }
 
-function statusBadge(status: string): string {
+export function statusBadge(status: string): string {
     switch (status) {
         case 'open': return '<span class="badge bg-danger">Open</span>';
         case 'acknowledged': return '<span class="badge bg-warning text-dark">Acknowledged</span>';
@@ -43,8 +45,8 @@ export function loadAlertRules(): void {
                 + '<td data-label="Threshold">' + formatThreshold(rule.threshold_seconds) + '</td>'
                 + '<td data-label="Enabled">' + (rule.enabled ? '<span class="badge bg-success">On</span>' : '<span class="badge bg-secondary">Off</span>') + '</td>'
                 + '<td data-label="Action">'
-                + '<button class="btn btn-outline-primary btn-sm me-1" onclick="editAlertRule(' + rule.id + ')">Edit</button>'
-                + '<button class="btn btn-outline-danger btn-sm" onclick="deleteAlertRule(' + rule.id + ')">Delete</button>'
+                + '<button class="btn btn-outline-primary btn-sm me-1" data-action="edit-alert-rule" data-id="' + rule.id + '">Edit</button>'
+                + '<button class="btn btn-outline-danger btn-sm" data-action="delete-alert-rule" data-id="' + rule.id + '">Delete</button>'
                 + '</td>'
                 + '</tr>';
         }).join('');
@@ -136,10 +138,10 @@ export function loadIncidents(): void {
             tbody.innerHTML = incidents.map(function(inc) {
                 var actions = '';
                 if (inc.status === 'open') {
-                    actions = '<button class="btn btn-outline-secondary btn-sm me-1" onclick="ackIncident(' + inc.id + ')">Ack</button>'
-                        + '<button class="btn btn-outline-success btn-sm" onclick="resolveIncident(' + inc.id + ')">Resolve</button>';
+                    actions = '<button class="btn btn-outline-secondary btn-sm me-1" data-action="ack-incident" data-id="' + inc.id + '">Ack</button>'
+                        + '<button class="btn btn-outline-success btn-sm" data-action="resolve-incident" data-id="' + inc.id + '">Resolve</button>';
                 } else if (inc.status === 'acknowledged') {
-                    actions = '<button class="btn btn-outline-success btn-sm" onclick="resolveIncident(' + inc.id + ')">Resolve</button>';
+                    actions = '<button class="btn btn-outline-success btn-sm" data-action="resolve-incident" data-id="' + inc.id + '">Resolve</button>';
                 } else {
                     actions = '<span class="text-muted">—</span>';
                 }
@@ -181,11 +183,3 @@ export function resolveIncident(id: number): void {
         .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to resolve incident', 'error'); });
 }
 
-window.loadAlertRules = loadAlertRules;
-window.loadIncidents = loadIncidents;
-window.editAlertRule = editAlertRule;
-window.deleteAlertRule = deleteAlertRule;
-window.saveAlertRule = saveAlertRule;
-window.resetAlertRuleForm = resetAlertRuleForm;
-window.ackIncident = ackIncident;
-window.resolveIncident = resolveIncident;

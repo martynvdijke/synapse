@@ -1,14 +1,11 @@
 // Settings tab logic
 import type { KumaInstanceJSON, NPMInstanceJSON, AutheliaInstanceJSON, SettingsResponse, APIToken } from './types';
+import { esc, apiFetch, getJSON } from './api';
+import { toast } from './toast';
 
 export function loadSettings(): void {
-    apiFetch('/api/settings').then(function(r){return r.json() as Promise<SettingsResponse>;}).then(function(s) {
+    getJSON<SettingsResponse>('/api/settings').then(function(s) {
         (document.getElementById('s-compose-path') as HTMLInputElement).value = (s.compose_path as string) || '';
-        (document.getElementById('s-auth-config-path') as HTMLInputElement).value = (s.authelia_config_path as string) || '';
-        (document.getElementById('s-auth-db-path') as HTMLInputElement).value = (s.authelia_db_path as string) || '';
-        (document.getElementById('s-auth-sync-enabled') as HTMLInputElement).checked = !!(s.authelia_sync_enabled);
-        (document.getElementById('s-auth-default-policy') as HTMLSelectElement).value = (s.authelia_default_policy as string) || 'one_factor';
-        (document.getElementById('s-auth-overrides') as HTMLTextAreaElement).value = (s.authelia_sync_overrides as string) || '';
         var eink = document.getElementById('s-eink-enabled') as HTMLInputElement | null;
         if (eink) eink.checked = !!(s.eink_enabled);
         renderTrmnlUrls();
@@ -44,8 +41,6 @@ export function loadSettings(): void {
         if (notifyImage) notifyImage.checked = !!(s.notify_docker_image);
         var notifyReconcile = document.getElementById('s-notify-reconcile') as HTMLInputElement | null;
         if (notifyReconcile) notifyReconcile.checked = !!(s.notify_reconcile);
-        var kumaDefaultTags = document.getElementById('s-kuma-default-tags') as HTMLInputElement | null;
-        if (kumaDefaultTags) kumaDefaultTags.value = (s.kuma_default_tags as string) || '';
         var notifyCooldown = document.getElementById('s-notify-cooldown') as HTMLInputElement | null;
         if (notifyCooldown) notifyCooldown.value = String(s.notify_cooldown_minutes || 5);
         var notifyPersistent = document.getElementById('s-notify-persistent') as HTMLInputElement | null;
@@ -67,7 +62,7 @@ function renderTrmnlUrls(): void {
         html += '<div class="input-group input-group-sm mb-1">'
             + '<span class="input-group-text" style="min-width:120px">' + layout + '</span>'
             + '<input class="form-control" type="text" readonly value="' + url + '">'
-            + '<button type="button" class="btn btn-outline-secondary" onclick="copyTrmnlUrl(this)">Copy</button>'
+            + '<button type="button" class="btn btn-outline-secondary" data-action="copy-trmnl-url">Copy</button>'
             + '</div>';
     });
     list.innerHTML = html;
@@ -89,8 +84,8 @@ export function loadTokens(): void {
             var expires = tok.expires_at ? new Date(tok.expires_at).toLocaleString() : 'never';
             var actions = tok.revoked_at
                 ? ''
-                : '<button type="button" class="btn btn-outline-info btn-sm" onclick="rotateToken(' + tok.id + ')">Rotate</button>'
-                + '<button type="button" class="btn btn-outline-danger btn-sm" onclick="revokeToken(' + tok.id + ')">Revoke</button>';
+                : '<button type="button" class="btn btn-outline-info btn-sm" data-action="rotate-token" data-id="' + tok.id + '">Rotate</button>'
+                + '<button type="button" class="btn btn-outline-danger btn-sm" data-action="revoke-token" data-id="' + tok.id + '">Revoke</button>';
             html += '<div class="d-flex flex-row align-items-center justify-content-between mb-1">'
                 + '<div class="flex-grow-1">'
                 + '<span class="fw-semibold">' + esc(tok.name) + '</span>' + revoked
@@ -192,7 +187,7 @@ function drawNotifyChannels(): void {
             + '<input class="form-check-input" type="checkbox" id="nc-enabled-' + i + '"' + (ch.enabled !== false ? ' checked' : '') + '>'
             + '<label class="form-check-label small" for="nc-enabled-' + i + '">Enabled</label>'
             + '</div>'
-            + '<button type="button" class="btn btn-outline-danger btn-sm ms-auto" onclick="removeNotifyChannel(' + i + ')">Remove</button>'
+            + '<button type="button" class="btn btn-outline-danger btn-sm ms-auto" data-action="remove-notify-channel" data-idx="' + i + '">Remove</button>'
             + '</div>'
             + '<input class="form-control form-control-sm mb-1" id="nc-url-' + i + '" placeholder="' + channelUrlPlaceholder(ch.type) + '" value="' + esc(ch.url || '') + '" autocomplete="off">'
             + '<div class="d-flex gap-2">'
@@ -204,7 +199,7 @@ function drawNotifyChannels(): void {
     list.innerHTML = html;
 }
 
-function channelUrlPlaceholder(type: string): string {
+export function channelUrlPlaceholder(type: string): string {
     switch (type) {
         case 'ntfy': return 'https://ntfy.example.com/your-topic';
         case 'telegram': return 'https://api.telegram.org/bot<TOKEN>/<CHAT_ID>';
@@ -254,11 +249,6 @@ export function saveSettings(e: Event): void {
 
     var payload: Record<string, unknown> = {
         compose_path: (document.getElementById('s-compose-path') as HTMLInputElement)?.value || '',
-        authelia_config_path: (document.getElementById('s-auth-config-path') as HTMLInputElement)?.value || '',
-        authelia_db_path: (document.getElementById('s-auth-db-path') as HTMLInputElement)?.value || '',
-        authelia_sync_enabled: (document.getElementById('s-auth-sync-enabled') as HTMLInputElement)?.checked || false,
-        authelia_default_policy: (document.getElementById('s-auth-default-policy') as HTMLSelectElement)?.value || 'one_factor',
-        authelia_sync_overrides: (document.getElementById('s-auth-overrides') as HTMLTextAreaElement)?.value || '',
         eink_enabled: (document.getElementById('s-eink-enabled') as HTMLInputElement)?.checked || false,
         notify_enabled: (document.getElementById('s-notify-enabled') as HTMLInputElement)?.checked || false,
         notify_interval_minutes: parseInt((document.getElementById('s-notify-interval') as HTMLInputElement)?.value || '60', 10) || 60,
@@ -270,7 +260,6 @@ export function saveSettings(e: Event): void {
         reconcile_enabled: (document.getElementById('s-reconcile-enabled') as HTMLInputElement)?.checked || false,
         reconcile_interval_minutes: parseInt((document.getElementById('s-reconcile-interval') as HTMLInputElement)?.value || '60', 10) || 60,
         reconcile_dry_run_default: (document.getElementById('s-reconcile-dry-run') as HTMLInputElement)?.checked || false,
-        kuma_default_tags: (document.getElementById('s-kuma-default-tags') as HTMLInputElement)?.value || '',
         notify_docker_die: (document.getElementById('s-notify-docker-die') as HTMLInputElement)?.checked || false,
         notify_docker_health: (document.getElementById('s-notify-docker-health') as HTMLInputElement)?.checked || false,
         notify_docker_image: (document.getElementById('s-notify-docker-image') as HTMLInputElement)?.checked || false,
@@ -291,414 +280,258 @@ export function saveSettings(e: Event): void {
         .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
 }
 
-export function testConnection(_service: string): void {
-    // Legacy — NPM testing is now per-instance via testNPMInstance
+// ─── Generic instance CRUD (Kuma / NPM / Authelia) ────────────
+// All three instance families share one list/form/save/delete/test flow.
+// The factory removes ~400 lines of copy-paste; DOM ids are unchanged.
+
+type FieldKind = 'text' | 'pass' | 'check' | 'select';
+
+interface InstanceField {
+    id: string;
+    prop: string;
+    label?: string;      // used in "<label> is required"
+    kind?: FieldKind;    // default 'text'
+    required?: boolean;
+    default?: string | boolean;
 }
 
-// ─── Kuma Instance CRUD ───────────────────────────────────────
-
-var kumaInstancesCache: KumaInstanceJSON[] = [];
-
-export function loadKumaInstances(): void {
-    var listEl = document.getElementById('kuma-instances-list');
-    if (!listEl) return;
-    listEl.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-sm"></span> Loading...</div>';
-    apiFetch('/api/kuma-instances').then(function(r){return r.json() as Promise<KumaInstanceJSON[]>;}).then(function(instances) {
-        kumaInstancesCache = instances || [];
-        renderKumaInstances(kumaInstancesCache);
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        listEl!.innerHTML = '<div class="text-center text-danger py-3">Failed to load instances</div>';
-    });
+interface InstanceCrudConfig<T> {
+    action: string;            // 'kuma' | 'npm' | 'authelia' -> data-action names
+    prefix: string;            // input id prefix, e.g. 'ki'
+    endpoint: string;          // '/api/kuma-instances'
+    listId: string;
+    formId: string;
+    titleId: string;
+    saveBtnId: string;
+    emptyMsg: string;
+    fields: InstanceField[];
+    subtitle: (inst: T) => string;
+    extraBadges?: (inst: T) => string;
+    deleteConfirm: (name: string) => string;
 }
 
-function renderKumaInstances(instances: KumaInstanceJSON[]): void {
-    var listEl = document.getElementById('kuma-instances-list')!;
-    if (!instances.length) {
-        listEl.innerHTML = '<div class="text-center text-muted py-3">No Kuma instances configured. Click "Add Instance" to create one.</div>';
-        return;
+function instanceValue(inst: any, f: InstanceField): any {
+    var v = inst[f.prop];
+    if (f.kind === 'check') return !!v;
+    if (v === undefined || v === null || v === '') return f.default !== undefined ? f.default : '';
+    return v;
+}
+
+function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean }>(cfg: InstanceCrudConfig<T>) {
+    var cache: T[] = [];
+    var editIdId = cfg.prefix + '-edit-id';
+
+    function fieldEl(f: InstanceField): HTMLInputElement | HTMLSelectElement | null {
+        return document.getElementById(f.id) as HTMLInputElement | HTMLSelectElement | null;
     }
-    var html = '';
-    instances.forEach(function(inst) {
-        var enabledBadge = inst.enabled
-            ? '<span class="badge bg-success">Enabled</span>'
-            : '<span class="badge bg-secondary">Disabled</span>';
-        html += '<div class="card card-body bg-light p-2 mb-2 d-flex flex-row align-items-center justify-content-between">'
-            + '<div class="flex-grow-1">'
-            + '<div class="fw-semibold">' + esc(inst.name) + ' ' + enabledBadge + '</div>'
-            + '<div class="small text-muted">' + esc(inst.url) + ' &middot; ' + esc(inst.username) + '</div>'
-            + '</div>'
-            + '<div class="d-flex gap-1">'
-            + '<button type="button" class="btn btn-outline-secondary btn-sm" onclick="editKumaInstance(' + inst.id + ')">Edit</button>'
-            + '<button type="button" class="btn btn-outline-info btn-sm" onclick="testKumaInstance(' + inst.id + ')">Test</button>'
-            + '<button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteKumaInstance(' + inst.id + ',\'' + esc(inst.name).replace(/'/g, "\\'") + '\')">Delete</button>'
-            + '</div>'
-            + '</div>';
-    });
-    listEl.innerHTML = html;
-}
 
-export function showKumaInstanceForm(editId: number | null): void {
-    var form = document.getElementById('kuma-instance-form')!;
-    var title = document.getElementById('kuma-form-title')!;
-
-    if (editId !== null && editId !== undefined) {
-        var inst = kumaInstancesCache.find(function(i) { return i.id === editId; });
-        if (!inst) { toast('Instance not found', 'error'); return; }
-        title.textContent = 'Edit Instance';
-        (document.getElementById('ki-edit-id') as HTMLInputElement).value = '' + editId;
-        (document.getElementById('ki-name') as HTMLInputElement).value = inst.name || '';
-        (document.getElementById('ki-url') as HTMLInputElement).value = inst.url || '';
-        (document.getElementById('ki-user') as HTMLInputElement).value = inst.username || '';
-        (document.getElementById('ki-pass') as HTMLInputElement).value = '';
-        (document.getElementById('ki-pass') as HTMLInputElement).placeholder = 'Leave blank to keep current';
-        (document.getElementById('ki-enabled') as HTMLInputElement).checked = !!inst.enabled;
-    } else {
-        title.textContent = 'Add Instance';
-        (document.getElementById('ki-edit-id') as HTMLInputElement).value = '';
-        (document.getElementById('ki-name') as HTMLInputElement).value = '';
-        (document.getElementById('ki-url') as HTMLInputElement).value = '';
-        (document.getElementById('ki-user') as HTMLInputElement).value = '';
-        (document.getElementById('ki-pass') as HTMLInputElement).value = '';
-        (document.getElementById('ki-pass') as HTMLInputElement).placeholder = 'Password';
-        (document.getElementById('ki-enabled') as HTMLInputElement).checked = true;
-    }
-    form.classList.remove('d-none');
-}
-
-export function hideKumaInstanceForm(): void {
-    var form = document.getElementById('kuma-instance-form')!;
-    form.classList.add('d-none');
-    (document.getElementById('ki-edit-id') as HTMLInputElement).value = '';
-}
-
-export function saveKumaInstance(): void {
-    var editId = (document.getElementById('ki-edit-id') as HTMLInputElement).value;
-    var name = (document.getElementById('ki-name') as HTMLInputElement).value.trim();
-    var url = (document.getElementById('ki-url') as HTMLInputElement).value.trim();
-    var user = (document.getElementById('ki-user') as HTMLInputElement).value.trim();
-    var pass = (document.getElementById('ki-pass') as HTMLInputElement).value;
-    var enabled = (document.getElementById('ki-enabled') as HTMLInputElement).checked;
-
-    if (!name) { toast('Name is required', 'error'); return; }
-    if (!url) { toast('URL is required', 'error'); return; }
-
-    var payload = { name: name, url: url, username: user, password: pass, enabled: enabled };
-    var btn = document.getElementById('btn-kuma-save') as HTMLButtonElement;
-    btn.disabled = true;
-    var orig = btn.innerHTML;
-    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
-
-    var method = editId ? 'PUT' : 'POST';
-    var endpoint = editId ? '/api/kuma-instances/' + editId : '/api/kuma-instances';
-
-    apiFetch(endpoint, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
-        .then(function() {
-            toast(editId ? 'Instance updated' : 'Instance added', 'success');
-            hideKumaInstanceForm();
-            loadKumaInstances();
-        })
-        .catch(function(err: Error) {
+    function load(): void {
+        var listEl = document.getElementById(cfg.listId);
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-sm"></span> Loading...</div>';
+        getJSON<T[]>(cfg.endpoint).then(function(instances) {
+            cache = instances || [];
+            render(cache);
+        }).catch(function(err: Error) {
             if (err.message === 'not authenticated') return;
-            toast('Failed to save instance', 'error');
-        })
-        .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
-}
-
-export function deleteKumaInstance(id: number, name: string): void {
-    if (!confirm('Delete instance "' + name + '"? This will also remove all monitors synced to this instance from the database.')) return;
-    apiFetch('/api/kuma-instances/' + id, { method: 'DELETE' })
-        .then(function(r) { if (!r.ok) throw new Error('Delete failed'); return r.json(); })
-        .then(function() { toast('Instance deleted', 'success'); loadKumaInstances(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
-}
-
-export function testKumaInstance(id: number): void {
-    toast('Testing connection...', 'info');
-    apiFetch('/api/kuma-instances/' + id + '/test', { method: 'POST' })
-        .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string}>; })
-        .then(function(d) {
-            if (d.ok) toast('Connection OK: ' + (d.message || 'success'), 'success');
-            else toast('Connection failed: ' + (d.message || 'unknown error'), 'error');
-        })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
-}
-
-// ─── NPM Instance CRUD ────────────────────────────────────────
-
-var npmInstancesCache: NPMInstanceJSON[] = [];
-
-export function loadNPMInstances(): void {
-    var listEl = document.getElementById('npm-instances-list');
-    if (!listEl) return;
-    listEl.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-sm"></span> Loading...</div>';
-    apiFetch('/api/npm-instances').then(function(r){return r.json() as Promise<NPMInstanceJSON[]>;}).then(function(instances) {
-        npmInstancesCache = instances || [];
-        renderNPMInstances(npmInstancesCache);
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        listEl!.innerHTML = '<div class="text-center text-danger py-3">Failed to load instances</div>';
-    });
-}
-
-function renderNPMInstances(instances: NPMInstanceJSON[]): void {
-    var listEl = document.getElementById('npm-instances-list')!;
-    if (!instances.length) {
-        listEl.innerHTML = '<div class="text-center text-muted py-3">No NPM instances configured. Click "Add Instance" to create one.</div>';
-        return;
+            listEl!.innerHTML = '<div class="text-center text-danger py-3">Failed to load instances</div>';
+        });
     }
-    var html = '';
-    instances.forEach(function(inst) {
-        var enabledBadge = inst.enabled
-            ? '<span class="badge bg-success">Enabled</span>'
-            : '<span class="badge bg-secondary">Disabled</span>';
-        html += '<div class="card card-body bg-light p-2 mb-2 d-flex flex-row align-items-center justify-content-between">'
-            + '<div class="flex-grow-1">'
-            + '<div class="fw-semibold">' + esc(inst.name) + ' ' + enabledBadge + '</div>'
-            + '<div class="small text-muted">' + esc(inst.url) + ' &middot; ' + esc(inst.username) + '</div>'
-            + '</div>'
-            + '<div class="d-flex gap-1">'
-            + '<button type="button" class="btn btn-outline-secondary btn-sm" onclick="editNPMInstance(' + inst.id + ')">Edit</button>'
-            + '<button type="button" class="btn btn-outline-info btn-sm" onclick="testNPMInstance(' + inst.id + ')">Test</button>'
-            + '<button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteNPMInstance(' + inst.id + ',\'' + esc(inst.name).replace(/'/g, "\\'") + '\')">Delete</button>'
-            + '</div>'
-            + '</div>';
-    });
-    listEl.innerHTML = html;
-}
 
-export function showNPMInstanceForm(editId: number | null): void {
-    var form = document.getElementById('npm-instance-form')!;
-    var title = document.getElementById('npm-form-title')!;
-
-    if (editId !== null && editId !== undefined) {
-        var inst = npmInstancesCache.find(function(i) { return i.id === editId; });
-        if (!inst) { toast('Instance not found', 'error'); return; }
-        title.textContent = 'Edit Instance';
-        (document.getElementById('ni-edit-id') as HTMLInputElement).value = '' + editId;
-        (document.getElementById('ni-name') as HTMLInputElement).value = inst.name || '';
-        (document.getElementById('ni-url') as HTMLInputElement).value = inst.url || '';
-        (document.getElementById('ni-user') as HTMLInputElement).value = inst.username || '';
-        (document.getElementById('ni-pass') as HTMLInputElement).value = '';
-        (document.getElementById('ni-pass') as HTMLInputElement).placeholder = 'Leave blank to keep current';
-        (document.getElementById('ni-enabled') as HTMLInputElement).checked = !!inst.enabled;
-    } else {
-        title.textContent = 'Add Instance';
-        (document.getElementById('ni-edit-id') as HTMLInputElement).value = '';
-        (document.getElementById('ni-name') as HTMLInputElement).value = '';
-        (document.getElementById('ni-url') as HTMLInputElement).value = '';
-        (document.getElementById('ni-user') as HTMLInputElement).value = '';
-        (document.getElementById('ni-pass') as HTMLInputElement).value = '';
-        (document.getElementById('ni-pass') as HTMLInputElement).placeholder = 'Password';
-        (document.getElementById('ni-enabled') as HTMLInputElement).checked = true;
+    function render(instances: T[]): void {
+        var listEl = document.getElementById(cfg.listId)!;
+        if (!instances.length) {
+            listEl.innerHTML = '<div class="text-center text-muted py-3">' + cfg.emptyMsg + '</div>';
+            return;
+        }
+        var html = '';
+        instances.forEach(function(inst) {
+            var enabledBadge = inst.enabled
+                ? '<span class="badge bg-success">Enabled</span>'
+                : '<span class="badge bg-secondary">Disabled</span>';
+            var extra = cfg.extraBadges ? cfg.extraBadges(inst) : '';
+            html += '<div class="card card-body bg-light p-2 mb-2 d-flex flex-row align-items-center justify-content-between">'
+                + '<div class="flex-grow-1">'
+                + '<div class="fw-semibold">' + esc(inst.name) + ' ' + enabledBadge + ' ' + extra + '</div>'
+                + '<div class="small text-muted">' + cfg.subtitle(inst) + '</div>'
+                + '</div>'
+                + '<div class="d-flex gap-1">'
+                + '<button type="button" class="btn btn-outline-secondary btn-sm" data-action="edit-' + cfg.action + '-instance" data-id="' + inst.id + '">Edit</button>'
+                + '<button type="button" class="btn btn-outline-info btn-sm" data-action="test-' + cfg.action + '-instance" data-id="' + inst.id + '">Test</button>'
+                + '<button type="button" class="btn btn-outline-danger btn-sm" data-action="delete-' + cfg.action + '-instance" data-id="' + inst.id + '" data-name="' + esc(inst.name).replace(/"/g, "&quot;") + '">Delete</button>'
+                + '</div>'
+                + '</div>';
+        });
+        listEl.innerHTML = html;
     }
-    form.classList.remove('d-none');
-}
 
-export function hideNPMInstanceForm(): void {
-    var form = document.getElementById('npm-instance-form')!;
-    form.classList.add('d-none');
-    (document.getElementById('ni-edit-id') as HTMLInputElement).value = '';
-}
+    function show(editId: number | null): void {
+        var form = document.getElementById(cfg.formId)!;
+        var title = document.getElementById(cfg.titleId)!;
+        var editing = editId !== null && editId !== undefined;
+        var inst: any = null;
 
-export function saveNPMInstance(): void {
-    var editId = (document.getElementById('ni-edit-id') as HTMLInputElement).value;
-    var name = (document.getElementById('ni-name') as HTMLInputElement).value.trim();
-    var url = (document.getElementById('ni-url') as HTMLInputElement).value.trim();
-    var user = (document.getElementById('ni-user') as HTMLInputElement).value.trim();
-    var pass = (document.getElementById('ni-pass') as HTMLInputElement).value;
-    var enabled = (document.getElementById('ni-enabled') as HTMLInputElement).checked;
+        if (editing) {
+            inst = cache.find(function(i) { return i.id === editId; });
+            if (!inst) { toast('Instance not found', 'error'); return; }
+            title.textContent = 'Edit Instance';
+            (document.getElementById(editIdId) as HTMLInputElement).value = '' + editId;
+        } else {
+            title.textContent = 'Add Instance';
+            (document.getElementById(editIdId) as HTMLInputElement).value = '';
+        }
 
-    if (!name) { toast('Name is required', 'error'); return; }
-    if (!url) { toast('URL is required', 'error'); return; }
-
-    var payload = { name: name, url: url, username: user, password: pass, enabled: enabled };
-    var btn = document.getElementById('btn-npm-save') as HTMLButtonElement;
-    btn.disabled = true;
-    var orig = btn.innerHTML;
-    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
-
-    var method = editId ? 'PUT' : 'POST';
-    var endpoint = editId ? '/api/npm-instances/' + editId : '/api/npm-instances';
-
-    apiFetch(endpoint, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
-        .then(function() {
-            toast(editId ? 'Instance updated' : 'Instance added', 'success');
-            hideNPMInstanceForm();
-            loadNPMInstances();
-        })
-        .catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
-            toast('Failed to save instance', 'error');
-        })
-        .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
-}
-
-export function deleteNPMInstance(id: number, name: string): void {
-    if (!confirm('Delete NPM instance "' + name + '"? This will remove all proxy hosts synced from this instance.')) return;
-    apiFetch('/api/npm-instances/' + id, { method: 'DELETE' })
-        .then(function(r) { if (!r.ok) throw new Error('Delete failed'); return r.json(); })
-        .then(function() { toast('Instance deleted', 'success'); loadNPMInstances(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
-}
-
-export function testNPMInstance(id: number): void {
-    toast('Testing connection...', 'info');
-    apiFetch('/api/npm-instances/' + id + '/test', { method: 'POST' })
-        .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string}>; })
-        .then(function(d) {
-            if (d.ok) toast('Connection OK: ' + (d.message || 'success'), 'success');
-            else toast('Connection failed: ' + (d.message || 'unknown error'), 'error');
-        })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
-}
-
-// ─── Authelia Instance CRUD ───────────────────────────────────
-
-var autheliaInstancesCache: AutheliaInstanceJSON[] = [];
-
-export function loadAutheliaInstances(): void {
-    var listEl = document.getElementById('authelia-instances-list');
-    if (!listEl) return;
-    listEl.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-sm"></span> Loading...</div>';
-    apiFetch('/api/authelia-instances').then(function(r){return r.json() as Promise<AutheliaInstanceJSON[]>;}).then(function(instances) {
-        autheliaInstancesCache = instances || [];
-        renderAutheliaInstances(autheliaInstancesCache);
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        listEl!.innerHTML = '<div class="text-center text-danger py-3">Failed to load instances</div>';
-    });
-}
-
-function renderAutheliaInstances(instances: AutheliaInstanceJSON[]): void {
-    var listEl = document.getElementById('authelia-instances-list')!;
-    if (!instances.length) {
-        listEl.innerHTML = '<div class="text-center text-muted py-3">No Authelia instances configured. Click "Add Instance" to create one.</div>';
-        return;
+        cfg.fields.forEach(function(f) {
+            var el = fieldEl(f);
+            if (!el) return;
+            if (f.kind === 'check') {
+                (el as HTMLInputElement).checked = editing
+                    ? !!inst[f.prop]
+                    : (f.default !== undefined ? !!f.default : true);
+            } else if (f.kind === 'pass') {
+                (el as HTMLInputElement).value = '';
+                (el as HTMLInputElement).placeholder = editing ? 'Leave blank to keep current' : 'Password';
+            } else {
+                el.value = editing ? '' + instanceValue(inst, f) : (f.default !== undefined ? '' + f.default : '');
+            }
+        });
+        form.classList.remove('d-none');
     }
-    var html = '';
-    instances.forEach(function(inst) {
-        var enabledBadge = inst.enabled
-            ? '<span class="badge bg-success">Enabled</span>'
-            : '<span class="badge bg-secondary">Disabled</span>';
-        var autoSyncBadge = inst.auto_sync
-            ? '<span class="badge bg-info">Auto-sync</span>'
-            : '';
-        html += '<div class="card card-body bg-light p-2 mb-2 d-flex flex-row align-items-center justify-content-between">'
-            + '<div class="flex-grow-1">'
-            + '<div class="fw-semibold">' + esc(inst.name) + ' ' + enabledBadge + ' ' + autoSyncBadge + '</div>'
-            + '<div class="small text-muted">' + esc(inst.config_path) + ' &middot; Policy: ' + esc(inst.default_policy) + '</div>'
-            + '</div>'
-            + '<div class="d-flex gap-1">'
-            + '<button type="button" class="btn btn-outline-secondary btn-sm" onclick="editAutheliaInstance(' + inst.id + ')">Edit</button>'
-            + '<button type="button" class="btn btn-outline-info btn-sm" onclick="testAutheliaInstance(' + inst.id + ')">Test</button>'
-            + '<button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteAutheliaInstance(' + inst.id + ',\'' + esc(inst.name).replace(/'/g, "\\'") + '\')">Delete</button>'
-            + '</div>'
-            + '</div>';
-    });
-    listEl.innerHTML = html;
-}
 
-export function showAutheliaInstanceForm(editId: number | null): void {
-    var form = document.getElementById('authelia-instance-form')!;
-    var title = document.getElementById('authelia-form-title')!;
-
-    if (editId !== null && editId !== undefined) {
-        var inst = autheliaInstancesCache.find(function(i) { return i.id === editId; });
-        if (!inst) { toast('Instance not found', 'error'); return; }
-        title.textContent = 'Edit Instance';
-        (document.getElementById('ai-edit-id') as HTMLInputElement).value = '' + editId;
-        (document.getElementById('ai-name') as HTMLInputElement).value = inst.name || '';
-        (document.getElementById('ai-config-path') as HTMLInputElement).value = inst.config_path || '';
-        (document.getElementById('ai-db-path') as HTMLInputElement).value = inst.db_path || '';
-        (document.getElementById('ai-default-policy') as HTMLSelectElement).value = inst.default_policy || 'one_factor';
-        (document.getElementById('ai-npm-ids') as HTMLInputElement).value = inst.npm_instance_ids || '[]';
-        (document.getElementById('ai-overrides') as HTMLInputElement).value = inst.overrides || '';
-        (document.getElementById('ai-auto-sync') as HTMLInputElement).checked = !!inst.auto_sync;
-        (document.getElementById('ai-enabled') as HTMLInputElement).checked = !!inst.enabled;
-    } else {
-        title.textContent = 'Add Instance';
-        (document.getElementById('ai-edit-id') as HTMLInputElement).value = '';
-        (document.getElementById('ai-name') as HTMLInputElement).value = '';
-        (document.getElementById('ai-config-path') as HTMLInputElement).value = '';
-        (document.getElementById('ai-db-path') as HTMLInputElement).value = '';
-        (document.getElementById('ai-default-policy') as HTMLSelectElement).value = 'one_factor';
-        (document.getElementById('ai-npm-ids') as HTMLInputElement).value = '[]';
-        (document.getElementById('ai-overrides') as HTMLInputElement).value = '';
-        (document.getElementById('ai-auto-sync') as HTMLInputElement).checked = true;
-        (document.getElementById('ai-enabled') as HTMLInputElement).checked = true;
+    function hide(): void {
+        document.getElementById(cfg.formId)!.classList.add('d-none');
+        (document.getElementById(editIdId) as HTMLInputElement).value = '';
     }
-    form.classList.remove('d-none');
+
+    function save(): void {
+        var editId = (document.getElementById(editIdId) as HTMLInputElement).value;
+        var payload: Record<string, unknown> = {};
+
+        for (var i = 0; i < cfg.fields.length; i++) {
+            var f = cfg.fields[i];
+            var el = fieldEl(f);
+            if (!el) continue;
+            var value: any;
+            if (f.kind === 'check') value = (el as HTMLInputElement).checked;
+            else if (f.kind === 'pass') value = (el as HTMLInputElement).value;
+            else value = el.value.trim();
+            if (f.required && !value) { toast((f.label || f.prop) + ' is required', 'error'); return; }
+            if (value === '' && f.default !== undefined) value = f.default;
+            payload[f.prop] = value;
+        }
+
+        var btn = document.getElementById(cfg.saveBtnId) as HTMLButtonElement;
+        btn.disabled = true;
+        var orig = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
+
+        var endpoint = editId ? cfg.endpoint + '/' + editId : cfg.endpoint;
+        apiFetch(endpoint, { method: editId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+            .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
+            .then(function() {
+                toast(editId ? 'Instance updated' : 'Instance added', 'success');
+                hide();
+                load();
+            })
+            .catch(function(err: Error) {
+                if (err.message === 'not authenticated') return;
+                toast('Failed to save instance', 'error');
+            })
+            .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
+    }
+
+    function remove(id: number, name: string): void {
+        if (!confirm(cfg.deleteConfirm(name))) return;
+        apiFetch(cfg.endpoint + '/' + id, { method: 'DELETE' })
+            .then(function(r) { if (!r.ok) throw new Error('Delete failed'); return r.json(); })
+            .then(function() { toast('Instance deleted', 'success'); load(); })
+            .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
+    }
+
+    function test(id: number): void {
+        toast('Testing connection...', 'info');
+        apiFetch(cfg.endpoint + '/' + id + '/test', { method: 'POST' })
+            .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string}>; })
+            .then(function(d) {
+                if (d.ok) toast('Connection OK: ' + (d.message || 'success'), 'success');
+                else toast('Connection failed: ' + (d.message || 'unknown error'), 'error');
+            })
+            .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
+    }
+
+    return { load: load, render: render, show: show, hide: hide, save: save, remove: remove, test: test };
 }
 
-export function hideAutheliaInstanceForm(): void {
-    var form = document.getElementById('authelia-instance-form')!;
-    form.classList.add('d-none');
-    (document.getElementById('ai-edit-id') as HTMLInputElement).value = '';
-}
+var kumaCrud = makeInstanceCrud<KumaInstanceJSON>({
+    action: 'kuma', prefix: 'ki', endpoint: '/api/kuma-instances',
+    listId: 'kuma-instances-list', formId: 'kuma-instance-form', titleId: 'kuma-form-title', saveBtnId: 'btn-kuma-save',
+    emptyMsg: 'No Kuma instances configured. Click "Add Instance" to create one.',
+    fields: [
+        { id: 'ki-name', prop: 'name', label: 'Name', required: true },
+        { id: 'ki-url', prop: 'url', label: 'URL', required: true },
+        { id: 'ki-user', prop: 'username' },
+        { id: 'ki-pass', prop: 'password', kind: 'pass' },
+        { id: 'ki-enabled', prop: 'enabled', kind: 'check' },
+    ],
+    subtitle: function(inst) { return esc(inst.url) + ' &middot; ' + esc(inst.username); },
+    deleteConfirm: function(name) { return 'Delete instance "' + name + '"? This will also remove all monitors synced to this instance from the database.'; },
+});
 
-export function saveAutheliaInstance(): void {
-    var editId = (document.getElementById('ai-edit-id') as HTMLInputElement).value;
-    var name = (document.getElementById('ai-name') as HTMLInputElement).value.trim();
-    var configPath = (document.getElementById('ai-config-path') as HTMLInputElement).value.trim();
-    var dbPath = (document.getElementById('ai-db-path') as HTMLInputElement).value.trim();
-    var defaultPolicy = (document.getElementById('ai-default-policy') as HTMLSelectElement).value;
-    var npmIds = (document.getElementById('ai-npm-ids') as HTMLInputElement).value.trim();
-    var overrides = (document.getElementById('ai-overrides') as HTMLInputElement).value.trim();
-    var autoSync = (document.getElementById('ai-auto-sync') as HTMLInputElement).checked;
-    var enabled = (document.getElementById('ai-enabled') as HTMLInputElement).checked;
+var npmCrud = makeInstanceCrud<NPMInstanceJSON>({
+    action: 'npm', prefix: 'ni', endpoint: '/api/npm-instances',
+    listId: 'npm-instances-list', formId: 'npm-instance-form', titleId: 'npm-form-title', saveBtnId: 'btn-npm-save',
+    emptyMsg: 'No NPM instances configured. Click "Add Instance" to create one.',
+    fields: [
+        { id: 'ni-name', prop: 'name', label: 'Name', required: true },
+        { id: 'ni-url', prop: 'url', label: 'URL', required: true },
+        { id: 'ni-user', prop: 'username' },
+        { id: 'ni-pass', prop: 'password', kind: 'pass' },
+        { id: 'ni-enabled', prop: 'enabled', kind: 'check' },
+    ],
+    subtitle: function(inst) { return esc(inst.url) + ' &middot; ' + esc(inst.username); },
+    deleteConfirm: function(name) { return 'Delete NPM instance "' + name + '"? This will remove all proxy hosts synced from this instance.'; },
+});
 
-    if (!name) { toast('Name is required', 'error'); return; }
-    if (!configPath) { toast('Config Path is required', 'error'); return; }
-    if (!npmIds) { npmIds = '[]'; }
+var autheliaCrud = makeInstanceCrud<AutheliaInstanceJSON>({
+    action: 'authelia', prefix: 'ai', endpoint: '/api/authelia-instances',
+    listId: 'authelia-instances-list', formId: 'authelia-instance-form', titleId: 'authelia-form-title', saveBtnId: 'btn-authelia-save',
+    emptyMsg: 'No Authelia instances configured. Click "Add Instance" to create one.',
+    fields: [
+        { id: 'ai-name', prop: 'name', label: 'Name', required: true },
+        { id: 'ai-config-path', prop: 'config_path', label: 'Config Path', required: true },
+        { id: 'ai-db-path', prop: 'db_path' },
+        { id: 'ai-default-policy', prop: 'default_policy', kind: 'select', default: 'one_factor' },
+        { id: 'ai-npm-ids', prop: 'npm_instance_ids', default: '[]' },
+        { id: 'ai-overrides', prop: 'overrides' },
+        { id: 'ai-auto-sync', prop: 'auto_sync', kind: 'check', default: true },
+        { id: 'ai-enabled', prop: 'enabled', kind: 'check', default: true },
+    ],
+    subtitle: function(inst) { return esc(inst.config_path) + ' &middot; Policy: ' + esc(inst.default_policy); },
+    extraBadges: function(inst) { return inst.auto_sync ? '<span class="badge bg-info">Auto-sync</span>' : ''; },
+    deleteConfirm: function(name) { return 'Delete Authelia instance "' + name + '"? This will remove all alerts and rules associated with this instance.'; },
+});
 
-    var payload = {
-        name: name, config_path: configPath, db_path: dbPath,
-        default_policy: defaultPolicy, npm_instance_ids: npmIds,
-        overrides: overrides, auto_sync: autoSync, enabled: enabled
-    };
-    var btn = document.getElementById('btn-authelia-save') as HTMLButtonElement;
-    btn.disabled = true;
-    var orig = btn.innerHTML;
-    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
+export function loadKumaInstances(): void { kumaCrud.load(); }
+export function showKumaInstanceForm(editId: number | null): void { kumaCrud.show(editId); }
+export function hideKumaInstanceForm(): void { kumaCrud.hide(); }
+export function saveKumaInstance(): void { kumaCrud.save(); }
+export function deleteKumaInstance(id: number, name: string): void { kumaCrud.remove(id, name); }
+export function testKumaInstance(id: number): void { kumaCrud.test(id); }
 
-    var method = editId ? 'PUT' : 'POST';
-    var endpoint = editId ? '/api/authelia-instances/' + editId : '/api/authelia-instances';
+export function loadNPMInstances(): void { npmCrud.load(); }
+export function showNPMInstanceForm(editId: number | null): void { npmCrud.show(editId); }
+export function hideNPMInstanceForm(): void { npmCrud.hide(); }
+export function saveNPMInstance(): void { npmCrud.save(); }
+export function deleteNPMInstance(id: number, name: string): void { npmCrud.remove(id, name); }
+export function testNPMInstance(id: number): void { npmCrud.test(id); }
 
-    apiFetch(endpoint, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
-        .then(function() {
-            toast(editId ? 'Instance updated' : 'Instance added', 'success');
-            hideAutheliaInstanceForm();
-            loadAutheliaInstances();
-        })
-        .catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
-            toast('Failed to save instance', 'error');
-        })
-        .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
-}
+export function loadAutheliaInstances(): void { autheliaCrud.load(); }
+export function showAutheliaInstanceForm(editId: number | null): void { autheliaCrud.show(editId); }
+export function hideAutheliaInstanceForm(): void { autheliaCrud.hide(); }
+export function saveAutheliaInstance(): void { autheliaCrud.save(); }
+export function deleteAutheliaInstance(id: number, name: string): void { autheliaCrud.remove(id, name); }
+export function testAutheliaInstance(id: number): void { autheliaCrud.test(id); }
 
-export function deleteAutheliaInstance(id: number, name: string): void {
-    if (!confirm('Delete Authelia instance "' + name + '"? This will remove all alerts and rules associated with this instance.')) return;
-    apiFetch('/api/authelia-instances/' + id, { method: 'DELETE' })
-        .then(function(r) { if (!r.ok) throw new Error('Delete failed'); return r.json(); })
-        .then(function() { toast('Instance deleted', 'success'); loadAutheliaInstances(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
-}
-
-export function testAutheliaInstance(id: number): void {
-    toast('Testing connection...', 'info');
-    apiFetch('/api/authelia-instances/' + id + '/test', { method: 'POST' })
-        .then(function(r) { return r.json() as Promise<{ok: boolean; message?: string}>; })
-        .then(function(d) {
-            if (d.ok) toast('Connection OK: ' + (d.message || 'success'), 'success');
-            else toast('Connection failed: ' + (d.message || 'unknown error'), 'error');
-        })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
-}
 
 // ─── Notifications (Gotify) ────────────────────────────────────
 
@@ -747,36 +580,3 @@ export function loadNotifyMissing(): void {
         });
 }
 
-window.loadSettings = loadSettings;
-window.saveSettings = saveSettings;
-window.notifyTest = notifyTest;
-window.addNotifyChannel = addNotifyChannel;
-window.removeNotifyChannel = removeNotifyChannel;
-window.loadNotifyMissing = loadNotifyMissing;
-window.copyTrmnlUrl = copyTrmnlUrl;
-window.loadTokens = loadTokens;
-window.createToken = createToken;
-window.revokeToken = revokeToken;
-window.rotateToken = rotateToken;
-window.testConnection = testConnection;
-window.loadKumaInstances = loadKumaInstances;
-window.showKumaInstanceForm = showKumaInstanceForm;
-window.hideKumaInstanceForm = hideKumaInstanceForm;
-window.saveKumaInstance = saveKumaInstance;
-window.deleteKumaInstance = deleteKumaInstance;
-window.testKumaInstance = testKumaInstance;
-window.editKumaInstance = function(id: number) { showKumaInstanceForm(id); };
-window.loadNPMInstances = loadNPMInstances;
-window.showNPMInstanceForm = showNPMInstanceForm;
-window.hideNPMInstanceForm = hideNPMInstanceForm;
-window.saveNPMInstance = saveNPMInstance;
-window.deleteNPMInstance = deleteNPMInstance;
-window.testNPMInstance = testNPMInstance;
-window.editNPMInstance = function(id: number) { showNPMInstanceForm(id); };
-window.loadAutheliaInstances = loadAutheliaInstances;
-window.showAutheliaInstanceForm = showAutheliaInstanceForm;
-window.hideAutheliaInstanceForm = hideAutheliaInstanceForm;
-window.saveAutheliaInstance = saveAutheliaInstance;
-window.deleteAutheliaInstance = deleteAutheliaInstance;
-window.testAutheliaInstance = testAutheliaInstance;
-window.editAutheliaInstance = function(id: number) { showAutheliaInstanceForm(id); };

@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "test": "go test ./...",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "serve-test": "http-server ./static -p 8765 -c-1 --silent"
@@ -33,8 +35,10 @@
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@playwright/test": "^1.60.0",
     "@types/node": "^26.0.1",
+    "happy-dom": "^20.14.5",
     "http-server": "^14.1.1",
     "typescript": "^7.0.0",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^5.0.0"
   }
 }

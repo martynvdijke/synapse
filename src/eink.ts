@@ -58,7 +58,7 @@ export function refreshDue(): boolean {
     return false;
 }
 
-function init(): void {
+export function initEink(): void {
     var params = new URLSearchParams(window.location.search);
     var einkParam = params.get('eink');
     var wallboard = params.get('wallboard') === '1' || params.get('wallboard') === 'true';
@@ -88,10 +88,3 @@ function init(): void {
     if (btn) btn.addEventListener('click', toggleEink);
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
-}
-
-window.toggleEink = toggleEink;

@@ -1,5 +1,6 @@
 // Tab visibility — per-browser, persisted in localStorage.
 // Lets users hide tabs they don't use (e.g. NPM Hosts when they don't use nginx proxy manager).
+import { toast } from './toast';
 
 export interface TabDef {
     id: string;

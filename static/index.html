@@ -289,7 +289,7 @@
         <div class="tab-pane fade" id="tab-events" role="tabpanel" aria-labelledby="tab-btn-events">
             <div class="d-flex align-items-center justify-content-between mb-2">
                 <span class="small text-muted">Unified feed of Docker engine events and reconcile runs.</span>
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-events-refresh" onclick="loadEvents()">Refresh</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-events-refresh" data-action="load-events">Refresh</button>
             </div>
             <div class="table-responsive bg-white rounded shadow-sm">
                 <table class="table table-hover align-middle" aria-label="Events feed">
@@ -740,58 +740,6 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-6 d-none">
-                            <h6 class="mb-3 text-success">Nginx Proxy Manager (Legacy)</h6>
-                            <div class="mb-2">
-                                <label class="form-label">URL</label>
-                                <input class="form-control form-control-sm" id="s-npm-host" placeholder="http://nginx:81">
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">Username</label>
-                                <input class="form-control form-control-sm" id="s-npm-user" placeholder="admin">
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">Password</label>
-                                <input class="form-control form-control-sm" type="password" id="s-npm-pass" placeholder="Leave blank to keep current">
-                            </div>
-                            <div class="d-flex align-items-center gap-2">
-                                <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-test-npm">Test NPM</button>
-                                <span class="test-result" id="test-npm-result"></span>
-                            </div>
-                        </div>
-                        <div class="col-md-6 d-none">
-                            <h6 class="mb-3 text-info">Authelia (Legacy)</h6>
-                            <div class="mb-2">
-                                <label class="form-label">Config Path</label>
-                                <input class="form-control form-control-sm" id="s-auth-config-path" placeholder="/config/configuration.yml">
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">Database Path</label>
-                                <input class="form-control form-control-sm" id="s-auth-db-path" placeholder="/config/db.sqlite3">
-                            </div>
-                            <div class="mb-2">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="s-auth-sync-enabled">
-                                    <label class="form-check-label" for="s-auth-sync-enabled">Auto-sync CNAMEs to Authelia</label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 d-none">
-                            <h6 class="mb-3 text-info">Authelia Policies (Legacy)</h6>
-                            <div class="mb-2">
-                                <label class="form-label">Default Policy</label>
-                                <select class="form-select form-select-sm" id="s-auth-default-policy">
-                                    <option value="one_factor">one_factor</option>
-                                    <option value="two_factor">two_factor</option>
-                                    <option value="bypass">bypass</option>
-                                    <option value="deny">deny</option>
-                                </select>
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">Policy Overrides (JSON: {"cname":"policy"})</label>
-                                <textarea class="form-control form-control-sm" id="s-auth-overrides" rows="3" placeholder='{"public.example.com":"bypass"}'></textarea>
-                            </div>
-                        </div>
                         <div class="col-12">
                             <h6 class="mb-3">Docker Compose</h6>
                             <div class="mb-2">
@@ -812,7 +760,7 @@
                                 <div class="form-text mb-2">Mutations require a bearer token in addition to your session. Tokens are shown once at creation — store them somewhere safe.</div>
                                 <div class="d-flex align-items-center gap-2 mb-2">
                                     <input class="form-control form-control-sm" id="s-token-name" placeholder="Token name (e.g. laptop, ci)" style="max-width:200px" autocomplete="off">
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="createToken()">Create token</button>
+                                    <button type="button" class="btn btn-outline-primary btn-sm" data-action="create-token">Create token</button>
                                 </div>
                                 <div id="token-list" class="small"></div>
                             </div>
@@ -839,7 +787,7 @@
                             <div class="mb-3 border rounded p-2 bg-light" id="notify-channels-section">
                                 <div class="d-flex align-items-center justify-content-between mb-1">
                                     <label class="form-label mb-0 fw-semibold">Notification Channels</label>
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="addNotifyChannel()">Add channel</button>
+                                    <button type="button" class="btn btn-outline-primary btn-sm" data-action="add-notify-channel">Add channel</button>
                                 </div>
                                 <div class="form-text mb-2">Every event is fanned out to all enabled channels (ntfy, Telegram, Discord, generic webhook, Gotify). When no channels are configured, the Gotify settings below are used as a single fallback channel.</div>
                                 <div id="notify-channels-list"></div>
@@ -864,8 +812,8 @@
                                 <div class="form-text">Create an application in Gotify and paste its token. While enabled, Synapse sends a message every check interval listing services and proxy hosts not covered by Uptime Kuma.</div>
                             </div>
                             <div class="d-flex align-items-center gap-2 mb-2">
-                                <button type="button" class="btn btn-outline-info btn-sm" id="btn-notify-test" onclick="notifyTest()">Send test notification</button>
-                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadNotifyMissing()">Preview missing items</button>
+                                <button type="button" class="btn btn-outline-info btn-sm" id="btn-notify-test" data-action="notify-test">Send test notification</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" data-action="load-notify-missing">Preview missing items</button>
                             </div>
                             <div class="mb-2">
                                 <label class="form-label">Currently missing from Uptime Kuma</label>

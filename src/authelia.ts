@@ -1,5 +1,7 @@
 // Authelia tab logic
 import type { AutheliaStatusResponse, AutheliaInstanceJSON, AutheliaAlert, TempAccessRule, AutheliaSyncResult, AutheliaSyncInstanceResult } from './types';
+import { esc, apiFetch, emptyRow } from './api';
+import { toast } from './toast';
 
 // ─── Instance Selector ──────────────────────────────────────────
 
@@ -32,7 +34,7 @@ export function loadAutheliaInstanceSelector(): void {
     });
 }
 
-function onInstanceSelectorChange(): void {
+export function onInstanceSelectorChange(): void {
     var sel = document.getElementById('auth-instance-selector') as HTMLSelectElement;
     var val = sel ? sel.value : '';
     selectedInstanceId = val ? parseInt(val, 10) : null;
@@ -111,7 +113,7 @@ export function loadAutheliaAlerts(): void {
                 + '<td data-label="Message" class="small">' + esc(a.message) + '</td>'
                 + '<td data-label="Severity"><span class="badge ' + sevBadge + '">' + sevIcon + ' ' + esc(a.severity) + '</span></td>'
                 + '<td data-label="Action">' + (a.status === 'open'
-                    ? '<button class="btn btn-outline-success btn-sm" onclick="resolveAlert(' + a.id + ')">Resolve</button>'
+                    ? '<button class="btn btn-outline-success btn-sm" data-action="resolve-alert" data-id="' + a.id + '">Resolve</button>'
                     : '<span class="text-muted">' + esc(a.status) + '</span>') + '</td>'
                 + '</tr>';
         }).join('');
@@ -139,7 +141,7 @@ export function loadAutheliaTempAccess(): void {
                 + '<td data-label="Expires" class="small">' + (r.expires_at ? new Date(r.expires_at).toLocaleString() : '—') + '</td>'
                 + '<td data-label="Status"><span class="badge ' + statusBadge + '">' + statusIcon + ' ' + esc(r.status) + '</span></td>'
                 + '<td data-label="Action">' + (r.status === 'active'
-                    ? '<button class="btn btn-outline-danger btn-sm" onclick="revokeTempAccess(' + r.id + ')">Revoke</button>'
+                    ? '<button class="btn btn-outline-danger btn-sm" data-action="revoke-temp-access" data-id="' + r.id + '">Revoke</button>'
                     : '—') + '</td>'
                 + '</tr>';
         }).join('');
@@ -210,12 +212,3 @@ export function runAutheliaSync(dryRun: boolean): void {
         .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
 }
 
-window.loadAutheliaInstanceSelector = loadAutheliaInstanceSelector;
-window.loadAutheliaDashboard = loadAutheliaDashboard;
-window.loadAutheliaStatus = loadAutheliaStatus;
-window.loadAutheliaAlerts = loadAutheliaAlerts;
-window.resolveAlert = resolveAlert;
-window.loadAutheliaTempAccess = loadAutheliaTempAccess;
-window.revokeTempAccess = revokeTempAccess;
-window.runAutheliaSync = runAutheliaSync;
-window.onInstanceSelectorChange = onInstanceSelectorChange;

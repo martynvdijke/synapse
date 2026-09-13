@@ -1,14 +1,19 @@
 // Synapse Dashboard — Entry point
 import './otel';
 import './dashboard.css';
-import './eink';
-import './api';
+import { initEink } from './eink';
 import { toast, setLoading } from './toast';
 import { connectSSE, setRefreshAll } from './sse';
 import { loadStatus, refreshAll } from './stats';
-import { loadDockerServices, loadKumaMonitors, loadNPMProxies, loadHistory, loadEvents, runReconcile } from './tabs';
-import { loadSettings, saveSettings, testConnection, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance, loadAutheliaInstances, showAutheliaInstanceForm, hideAutheliaInstanceForm, saveAutheliaInstance } from './settings';
-import { loadAutheliaInstanceSelector, loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync } from './authelia';
+import { loadDockerServices } from './docker';
+import { loadKumaMonitors, setupMonitorEditListeners } from './kuma';
+import { loadNPMProxies } from './npm';
+import { loadHistory, loadEvents, runReconcile } from './history';
+import { setupLinkEditorListeners } from './linkEditor';
+import { installActions } from './actions';
+import { apiFetch, logout } from './api';
+import { loadSettings, saveSettings, loadKumaInstances, showKumaInstanceForm, hideKumaInstanceForm, saveKumaInstance, loadNPMInstances, showNPMInstanceForm, hideNPMInstanceForm, saveNPMInstance, loadAutheliaInstances, showAutheliaInstanceForm, hideAutheliaInstanceForm, saveAutheliaInstance } from './settings';
+import { loadAutheliaInstanceSelector, loadAutheliaDashboard, loadAutheliaStatus, loadAutheliaAlerts, loadAutheliaTempAccess, resolveAlert, revokeTempAccess, runAutheliaSync, onInstanceSelectorChange } from './authelia';
 import { loadAlertRules, loadIncidents, saveAlertRule, resetAlertRuleForm } from './alerts';
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs';
 import { getVisibleTabButtons } from './tabVisibility';
@@ -16,6 +21,10 @@ import './tabVisibility';
 
 // Wire SSE refreshAll reference
 setRefreshAll(refreshAll);
+installActions();
+setupLinkEditorListeners();
+setupMonitorEditListeners();
+initEink();
 
 // ─── Confirmation Modal ───────────────────────────────────────
 function showConfirmModal(message: string, okText?: string): Promise<boolean> {
@@ -232,7 +241,6 @@ function startSync(source: string): void {
         toast('Sync failed to start', 'error');
     });
 }
-window.startSync = startSync;
 
 // Reconcile button on the Docker tab
 document.getElementById('btn-reconcile')!.addEventListener('click', runReconcile);

@@ -1,5 +1,7 @@
 // Log viewer tab logic
 import type { LogEntry, LogFilters } from './types';
+import { esc, apiFetch, emptyRow, loadingRow } from './api';
+import { toast } from './toast';
 
 var logsOffset = 0;
 var logsLimit = 200;
@@ -40,7 +42,7 @@ export function renderLogRow(e: LogEntry, isNew: boolean): string {
     var meta = e.metadata && Object.keys(e.metadata).length
         ? '<tr class="log-meta-row" data-log-idx="' + esc(e.timestamp) + '"><td colspan="6"><div class="log-meta-inner">' + esc(JSON.stringify(e.metadata, null, 2)) + '</div></td></tr>'
         : '';
-    return '<tr class="' + cls + '" onclick="toggleLogMeta(this)" data-log-ts="' + esc(e.timestamp) + '">'
+    return '<tr class="' + cls + '" data-action="toggle-log-meta" data-log-ts="' + esc(e.timestamp) + '">'
         + '<td class="log-time">' + timeStr(e.timestamp) + '</td>'
         + '<td>' + levelBadge(e.level) + '</td>'
         + '<td class="log-source">' + esc(e.source) + '</td>'
@@ -57,9 +59,14 @@ export function toggleLogMeta(row: HTMLElement): void {
     if (metaRow) metaRow.classList.toggle('show');
 }
 
-var logSearchDebounce: number | null = null;
+// ReturnType<typeof setTimeout> rather than number: @types/node (pulled in by
+// the OpenTelemetry browser packages) makes setTimeout return a Timeout object.
+var logSearchDebounce: ReturnType<typeof setTimeout> | null = null;
+var logFiltersBound = false;
 
 export function setupLogFilters(): void {
+    if (logFiltersBound) return;
+    logFiltersBound = true;
     document.getElementById('log-filter-level')!.addEventListener('change', function() { if (logsLoaded) loadLogs(false); });
     document.getElementById('log-filter-source')!.addEventListener('change', function() { if (logsLoaded) loadLogs(false); });
     document.getElementById('log-filter-error-kind')!.addEventListener('change', function() { if (logsLoaded) loadLogs(false); });
@@ -136,7 +143,3 @@ export function connectLogSSE(): void {
     connect();
 }
 
-window.toggleLogMeta = toggleLogMeta;
-window.setupLogFilters = setupLogFilters;
-window.loadLogs = loadLogs;
-window.connectLogSSE = connectLogSSE;

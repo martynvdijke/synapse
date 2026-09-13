@@ -24,9 +24,6 @@ export function toast(msg: string, type?: string): void {
     });
 }
 
-// Make globally accessible for modules that reference toast/setLoading directly
-window.toast = toast;
-window.setLoading = setLoading;
 
 export function setLoading(btnId: string, loading: boolean): void {
     var btn = document.getElementById(btnId) as HTMLButtonElement | null;

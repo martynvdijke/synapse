@@ -66,6 +66,13 @@ export function apiFetch(url: string, opts?: RequestInit): Promise<Response> {
     });
 }
 
+// getJSON fetches and parses JSON. It does not check r.ok, preserving the
+// existing callers' error handling (they inspect the JSON body / catch
+// 'not authenticated' themselves).
+export function getJSON<T>(url: string): Promise<T> {
+    return apiFetch(url).then(function(r) { return r.json() as Promise<T>; });
+}
+
 export function esc(s: string): string {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -104,6 +111,19 @@ export function skeletonRows(cols: number, count?: number): string {
 
 export function loadingRow(colspan: number): string {
     return skeletonRows(colspan, 5);
+}
+
+// Shared markup builders for the expandable detail rows (Docker / NPM).
+export function detailField(label: string, valueHtml: string): string {
+    return '<div class="detail-field"><span class="detail-label">' + label + '</span><span class="detail-value">' + valueHtml + '</span></div>';
+}
+
+export function detailInline(label: string, valueHtml: string): string {
+    return '<span class="detail-inline-label">' + label + ':</span> ' + valueHtml + '<br>';
+}
+
+export function detailContainer(fields: string[]): string {
+    return fields.length ? '<div class="detail-container">' + fields.join('') + '</div>' : '';
 }
 
 // --- Service links ---
@@ -212,28 +232,3 @@ export function getAutheliaInstances(): Promise<Response> {
     return apiFetch('/api/authelia-instances');
 }
 
-// Attach to window for inline event handlers
-window.esc = esc;
-window.apiFetch = apiFetch;
-window.getToken = getToken;
-window.logout = logout;
-window.emptyRow = emptyRow;
-window.loadingRow = loadingRow;
-window.getServiceLinks = getServiceLinks;
-window.createServiceLink = createServiceLink;
-window.updateServiceLink = updateServiceLink;
-window.deleteServiceLink = deleteServiceLink;
-window.refreshServiceLink = refreshServiceLink;
-window.getNPMProxyHosts = getNPMProxyHosts;
-window.createNPMProxyHost = createNPMProxyHost;
-window.updateNPMProxyHost = updateNPMProxyHost;
-window.createKumaMonitor = createKumaMonitor;
-window.updateKumaMonitor = updateKumaMonitor;
-window.deleteKumaMonitor = deleteKumaMonitor;
-(window as any).pauseKumaMonitor = pauseKumaMonitor;
-(window as any).resumeKumaMonitor = resumeKumaMonitor;
-(window as any).setMonitorTags = setMonitorTags;
-window.getKumaInstances = getKumaInstances;
-window.getNPMInstances = getNPMInstances;
-window.getAutheliaCoverage = getAutheliaCoverage;
-window.getAutheliaInstances = getAutheliaInstances;

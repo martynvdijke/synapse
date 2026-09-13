@@ -1,7 +1,12 @@
 // Dashboard stat card loading and connection health indicators
 import type { StatusResponse, AutheliaStatusResponse } from './types';
+import { apiFetch } from './api';
+import { loadDockerServices } from './docker';
+import { loadKumaMonitors } from './kuma';
+import { loadNPMProxies } from './npm';
+import { loadHistory } from './history';
 
-function setHealthDot(id: string, ok: boolean | null): void {
+export function setHealthDot(id: string, ok: boolean | null): void {
     var dot = document.getElementById(id);
     if (!dot) return;
     dot.className = 'health-dot';
@@ -90,5 +95,3 @@ export function refreshAll(): void {
     loadHistory();
 }
 
-window.loadStatus = loadStatus;
-window.refreshAll = refreshAll;
