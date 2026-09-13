@@ -439,3 +439,32 @@ func TestCreateProxyHostDuplicateDomain(t *testing.T) {
 		t.Fatalf("expected NPM error message in error, got: %v", err)
 	}
 }
+
+// The request context is threaded into Login and the proxy-host fetch, so a
+// canceled caller context must abort before any round trip completes.
+func TestGetProxyHosts_ContextCanceled(t *testing.T) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("[]"))
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := GetProxyHosts(ctx, srv.URL, "admin", "secret"); err == nil {
+		t.Fatal("expected error when context is already canceled")
+	}
+}
+
+func TestGetProxyHostsFull_ContextCanceled(t *testing.T) {
+	srv := mockNPMJWT(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("[]"))
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	if _, err := c.GetProxyHostsFull(ctx); err == nil {
+		t.Fatal("expected error when context is already canceled")
+	}
+}
