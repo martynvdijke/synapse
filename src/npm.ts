@@ -1,17 +1,18 @@
 // Nginx Proxy Manager tab: proxy list + expandable detail rows.
-import type { ProxyResponse, NPMProxyHost } from './types';
+import type { ProxyResponse, NPMProxyHost, ApiErrorBody } from './types';
 import { esc, apiFetch, emptyRow, loadingRow, detailInline, detailContainer } from './api';
 
 export function loadNPMProxies(): void {
     document.getElementById('npm-tbody')!.innerHTML = loadingRow(4);
-    var summaryReq = apiFetch('/api/proxies').then(function(r){ return r.json() as Promise<(ProxyResponse & {error?: string})[]>; });
-    var detailReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([]); });
-    Promise.all([summaryReq, detailReq]).then(function(res: any[]) {
-        var proxies = res[0] as (ProxyResponse & {error?: string})[];
-        var hosts = res[1] as NPMProxyHost[];
+    var summaryReq = apiFetch('/api/proxies').then(function(r){ return r.json() as Promise<(ProxyResponse & ApiErrorBody)[]>; });
+    var detailReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([] as NPMProxyHost[]); });
+    Promise.all([summaryReq, detailReq]).then(function(res: [(ProxyResponse & ApiErrorBody)[], NPMProxyHost[]]) {
+        var proxies = res[0];
+        var hosts = res[1];
         var tbody = document.getElementById('npm-tbody')!;
-        if ((proxies as any).error) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc((proxies as any).error) + '</td></tr>';
+        var proxyErr = (proxies as unknown as ApiErrorBody).error;
+        if (proxyErr) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">' + esc(proxyErr) + '</td></tr>';
             return;
         }
         if (!proxies.length && !hosts.length) {
@@ -40,8 +41,8 @@ export function loadNPMProxies(): void {
             }
         });
         tbody.innerHTML = rows.join('');
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
         document.getElementById('npm-tbody')!.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">Failed to load proxies</td></tr>';
     });
 }

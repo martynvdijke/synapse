@@ -120,8 +120,9 @@ export function renderTabVisibilityControls(): void {
     ALL_TABS.forEach(function(tab) {
         var cb = document.getElementById('tab-visible-' + tab.id) as HTMLInputElement | null;
         if (!cb) return;
-        cb.addEventListener('change', function() {
-            setTabHidden(tab.id, !cb.checked);
+        var cbEl = cb;
+        cbEl.addEventListener('change', function() {
+            setTabHidden(tab.id, !cbEl.checked);
         });
     });
 
@@ -146,7 +147,14 @@ function initTabVisibility(): void {
 
 initTabVisibility();
 
+declare global {
+    interface Window {
+        getHiddenTabs: typeof getHiddenTabs;
+        applyTabVisibility: typeof applyTabVisibility;
+        setTabHidden: typeof setTabHidden;
+    }
+}
 // Expose for e2e / debugging
-(window as any).getHiddenTabs = getHiddenTabs;
-(window as any).applyTabVisibility = applyTabVisibility;
-(window as any).setTabHidden = setTabHidden;
+window.getHiddenTabs = getHiddenTabs;
+window.applyTabVisibility = applyTabVisibility;
+window.setTabHidden = setTabHidden;

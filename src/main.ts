@@ -82,9 +82,9 @@ document.getElementById('btn-ta-submit')!.addEventListener('click', function() {
     if (!duration) { toast('Duration is required', 'error'); return; }
 
     apiFetch('/api/authelia/temp-access', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip: ip, reason: reason, duration: duration }) })
-        .then(function(r){return r.json();})
-        .then(function(d: any) { if (d.error) { toast(d.error, 'error'); return; } toast('Temp access rule added', 'success'); (document.getElementById('ta-ip') as HTMLInputElement).value = ''; (document.getElementById('ta-reason') as HTMLInputElement).value = ''; (document.getElementById('ta-duration') as HTMLInputElement).value = ''; loadAutheliaTempAccess(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to add rule', 'error'); });
+        .then(function(r){return r.json() as Promise<{error?: string}>;})
+        .then(function(d: {error?: string}) { if (d.error) { toast(d.error, 'error'); return; } toast('Temp access rule added', 'success'); (document.getElementById('ta-ip') as HTMLInputElement).value = ''; (document.getElementById('ta-reason') as HTMLInputElement).value = ''; (document.getElementById('ta-duration') as HTMLInputElement).value = ''; loadAutheliaTempAccess(); })
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to add rule', 'error'); });
 });
 
 document.getElementById('btn-logout')!.addEventListener('click', logout);
@@ -231,10 +231,9 @@ function startSync(source: string): void {
     (document.getElementById('btn-npm') as HTMLButtonElement).disabled = true;
     document.getElementById('stat-status')!.innerHTML = '<span class="badge bg-primary">Running...</span>';
     toast('Sync started: ' + source, 'info');
-    apiFetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(function(d) {
-        console.log(source + ' sync started', d);
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    apiFetch('/api/sync/' + source, { method: 'POST' }).then(r => r.json()).then(function() {
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
         (document.getElementById('btn-docker') as HTMLButtonElement).disabled = false;
         (document.getElementById('btn-npm') as HTMLButtonElement).disabled = false;
         document.getElementById('stat-status')!.innerHTML = '<span class="badge bg-secondary">Idle</span>';

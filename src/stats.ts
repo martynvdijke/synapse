@@ -35,7 +35,7 @@ export function loadStatus(): void {
         if (d.connection_health) {
             setHealthDot('health-docker', d.connection_health.docker ? d.connection_health.docker.ok : null);
 
-            // NPM health: show aggregate (all healthy = green, any healthy = yellow, all down = red)
+            // NPM health: show aggregate (all healthy = green, partial healthy = yellow, all down = red)
             if (d.connection_health.npm && d.connection_health.npm.instances && d.connection_health.npm.instances.length > 0) {
                 var anyHealthy = d.connection_health.npm.instances.some(function(i) { return i.ok; });
                 var allHealthy = d.connection_health.npm.instances.every(function(i) { return i.ok; });
@@ -64,8 +64,8 @@ export function loadStatus(): void {
             var openIncidents = d.open_incidents || 0;
             statAlerts.innerHTML = '<span class="badge ' + (openIncidents > 0 ? 'bg-danger' : 'bg-success') + '">' + openIncidents + ' open</span>';
         }
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
     });
     // Load authelia status separately
     apiFetch('/api/authelia/status').then(function(r){return r.json() as Promise<AutheliaStatusResponse>;}).then(function(d) {
@@ -82,8 +82,8 @@ export function loadStatus(): void {
         var matched = d.matched ? d.matched.length : 0;
         var coverage = total > 0 ? Math.round(matched / total * 100) : 0;
         el!.innerHTML = '<span class="badge ' + (coverage >= 100 ? 'bg-success' : coverage > 0 ? 'bg-warning text-dark' : 'bg-danger') + '">' + matched + '/' + total + ' (' + coverage + '%)</span>';
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
     });
 }
 

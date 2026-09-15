@@ -1,5 +1,5 @@
 // Docker services tab: table, expandable detail rows, link badges.
-import type { ServiceInfo, ServiceLink, AutheliaCoverageResponse } from './types';
+import type { ServiceInfo, ServiceLink, AutheliaCoverageResponse, ApiErrorBody } from './types';
 import { esc, apiFetch, emptyRow, loadingRow, detailField, detailInline, detailContainer } from './api';
 
 // Populated by loadDockerServices; read by the link editor to resolve row indices.
@@ -66,13 +66,13 @@ function renderDockerDetailRow(svc: ServiceInfo): string {
 
 export function loadDockerServices(): void {
     document.getElementById('docker-tbody')!.innerHTML = loadingRow(7);
-    var svcReq = apiFetch('/api/services').then(function(r){return r.json() as Promise<(ServiceInfo & {error?: string})[]>;});
-    var linkReq = apiFetch('/api/service-links').then(function(r){return r.ok ? r.json() as Promise<ServiceLink[]> : Promise.resolve([]);});
-    var covReq = apiFetch('/api/authelia/coverage').then(function(r){return r.ok ? r.json() as Promise<AutheliaCoverageResponse> : Promise.resolve(null);});
-    Promise.all([svcReq, linkReq, covReq]).then(function(res: any[]) {
-        var services = res[0] as (ServiceInfo & {error?: string})[];
-        var links = res[1] as ServiceLink[];
-        var covResp = res[2] as AutheliaCoverageResponse | null;
+    var svcReq = apiFetch('/api/services').then(function(r){return r.json() as Promise<(ServiceInfo & ApiErrorBody)[]>;});
+    var linkReq = apiFetch('/api/service-links').then(function(r){return r.ok ? r.json() as Promise<ServiceLink[]> : Promise.resolve([] as ServiceLink[]);});
+    var covReq = apiFetch('/api/authelia/coverage').then(function(r){return r.ok ? r.json() as Promise<AutheliaCoverageResponse> : Promise.resolve(null as AutheliaCoverageResponse | null);});
+    Promise.all([svcReq, linkReq, covReq]).then(function(res: [(ServiceInfo & ApiErrorBody)[], ServiceLink[], AutheliaCoverageResponse | null]) {
+        var services = res[0];
+        var links = res[1];
+        var covResp = res[2];
         var coverageByService: Record<string, { covered: boolean; policy: string }> = {};
         if (covResp && covResp.instances) {
             for (var instIdx = 0; instIdx < covResp.instances.length; instIdx++) {
@@ -89,8 +89,9 @@ export function loadDockerServices(): void {
         links.forEach(function(l) { linkMap[l.service_name] = l; });
         linkServices = services as ServiceInfo[];
         var tbody = document.getElementById('docker-tbody')!;
-        if ((services as any).error) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">' + esc((services as any).error) + '</td></tr>';
+        var svcErr = (services as unknown as ApiErrorBody).error;
+        if (svcErr) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">' + esc(svcErr) + '</td></tr>';
             return;
         }
         if (!services.length) {

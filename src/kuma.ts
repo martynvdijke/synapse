@@ -1,36 +1,43 @@
 // Uptime Kuma tab: monitor list, stats detail, pause/resume, edit/delete.
-import type { MonitorResponse, MonitorStats, MonitorTag } from './types';
+import type { MonitorResponse, MonitorStats, MonitorTag, ApiErrorBody, MonitorTagAck, TagInput } from './types';
 import { esc, apiFetch, emptyRow, loadingRow, pauseKumaMonitor, resumeKumaMonitor, updateKumaMonitor, deleteKumaMonitor, setMonitorTags } from './api';
 import { toast } from './toast';
 import { renderTagChips, parseTagsInput, tagsEqual } from './monitorTags';
 import { loadDockerServices } from './docker';
 
+function extractError(body: unknown, fallback: string): string {
+    var b = body as ApiErrorBody;
+    return (b && (b.error || b.msg || b.message)) || fallback;
+}
+
 export function pauseKumaMonitorAction(kumaId: number, instanceId: number): void {
     pauseKumaMonitor(kumaId, instanceId).then(function(r: Response){
-        return r.json().then(function(body:any){ if(!r.ok) throw new Error((body && body.error) || body.msg || body.message || ('HTTP '+r.status)); return body; });
-    }).then(function(body:any){
+        return r.json().then(function(body: unknown){ if(!r.ok) throw new Error(extractError(body, 'HTTP '+r.status)); return body as ApiErrorBody; });
+    }).then(function(body: ApiErrorBody){
         toast(body && body.msg ? body.msg : 'Monitor paused', 'success');
         loadKumaMonitors();
-    }).catch(function(err: Error){
-        if(err.message==='not authenticated') return;
-        toast('Pause failed: '+err.message, 'error');
+    }).catch(function(err: unknown){
+        var msg = err instanceof Error ? err.message : String(err);
+        if(msg==='not authenticated') return;
+        toast('Pause failed: '+msg, 'error');
     });
 }
 
 export function resumeKumaMonitorAction(kumaId: number, instanceId: number): void {
     resumeKumaMonitor(kumaId, instanceId).then(function(r: Response){
-        return r.json().then(function(body:any){ if(!r.ok) throw new Error((body && body.error) || body.msg || body.message || ('HTTP '+r.status)); return body; });
-    }).then(function(body:any){
+        return r.json().then(function(body: unknown){ if(!r.ok) throw new Error(extractError(body, 'HTTP '+r.status)); return body as ApiErrorBody; });
+    }).then(function(body: ApiErrorBody){
         toast(body && body.msg ? body.msg : 'Monitor resumed', 'success');
         loadKumaMonitors();
-    }).catch(function(err: Error){
-        if(err.message==='not authenticated') return;
-        toast('Resume failed: '+err.message, 'error');
+    }).catch(function(err: unknown){
+        var msg = err instanceof Error ? err.message : String(err);
+        if(msg==='not authenticated') return;
+        toast('Resume failed: '+msg, 'error');
     });
 }
 
 // ─── Monitor detail stats cache ────────────────────────────────
-var monitorStatsCache = new Map();
+var monitorStatsCache = new Map<string, CacheEntry>();
 var STATS_CACHE_TTL = 60000; // 60 seconds
 
 interface CacheEntry {
@@ -40,7 +47,7 @@ interface CacheEntry {
 
 function getCachedStats(instanceId: string, monitorId: string): MonitorStats | null {
     var key = instanceId + ':' + monitorId;
-    var entry = monitorStatsCache.get(key) as CacheEntry | undefined;
+    var entry = monitorStatsCache.get(key);
     if (entry && Date.now() - entry.timestamp < STATS_CACHE_TTL) return entry.stats;
     return null;
 }
@@ -101,21 +108,23 @@ export function loadMonitorStats(monitorId: string, instanceId: string): void {
             monitorStatsCache.set(cacheKey, { stats: stats, timestamp: Date.now() });
             document.getElementById('monitor-detail-body')!.innerHTML = renderMonitorStats(stats, mon);
         })
-        .catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
+        .catch(function(err: unknown) {
+            var msg2 = err instanceof Error ? err.message : String(err);
+            if (msg2 === 'not authenticated') return;
             var msg = 'Stats unavailable';
-            if (err.message === '404') msg = 'Instance not found';
-            else if (err.message === '502') msg = 'Stats unavailable (Socket.IO connection failed)';
+            if (msg2 === '404') msg = 'Instance not found';
+            else if (msg2 === '502') msg = 'Stats unavailable (Socket.IO connection failed)';
             document.getElementById('monitor-detail-body')!.innerHTML = '<div class="text-center text-danger py-3">' + msg + '</div>';
         });
 }
 
 export function loadKumaMonitors(): void {
     document.getElementById('kuma-tbody')!.innerHTML = loadingRow(10);
-    apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & {error?: string})[]>;}).then(function(monitors) {
+    apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & ApiErrorBody)[]>;}).then(function(monitors) {
         var tbody = document.getElementById('kuma-tbody')!;
-        if ((monitors as any).error) {
-            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">' + esc((monitors as any).error) + '</td></tr>';
+        var monErr = (monitors as unknown as ApiErrorBody).error;
+        if (monErr) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">' + esc(monErr) + '</td></tr>';
             return;
         }
         if (!monitors.length) {
@@ -204,15 +213,15 @@ export function saveMonitorEdit(): void {
     for (var i=0;i<kumaMonitorList.length;i++){ if(kumaMonitorList[i].id===monitorEditState.id && kumaMonitorList[i].instance_id===monitorEditState.instanceId){ origMon=kumaMonitorList[i]; break; } }
     var tagsChanged = false;
     if (origMon) {
-        tagsChanged = !tagsEqual(origMon.tags, tagsParsed as any);
+        tagsChanged = !tagsEqual(origMon.tags, tagsParsed);
     } else {
         tagsChanged = tagsRaw.length>0;
     }
     updateKumaMonitor(monitorEditState.id, monitorEditState.instanceId, input).then(function(r) {
         if (!r.ok) {
-            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+            return r.json().then(function(body: unknown) { throw new Error(extractError(body, 'HTTP ' + r.status)); });
         }
-        return r.json();
+        return r.json() as Promise<unknown>;
     }).then(function() {
         if (!tagsChanged) {
             toast('Monitor updated');
@@ -223,9 +232,9 @@ export function saveMonitorEdit(): void {
             return null;
         }
         // Call setMonitorTags after update
-        return setMonitorTags(monitorEditState!.id, monitorEditState!.instanceId, tagsParsed as any).then(function(r: Response){
-            return r.json().then(function(body:any){ if(!r.ok) throw new Error((body && body.error) || body.msg || ('HTTP '+r.status)); return body; });
-        }).then(function(body:any){
+        return setMonitorTags(monitorEditState!.id, monitorEditState!.instanceId, tagsParsed as TagInput[]).then(function(r: Response){
+            return r.json().then(function(body: unknown){ if(!r.ok) throw new Error(extractError(body, 'HTTP '+r.status)); return body as MonitorTagAck; });
+        }).then(function(body: MonitorTagAck){
             var msg = body && body.msg ? body.msg : (body && body.added ? 'Tags updated' : 'Monitor updated');
             // surface Kuma ack verbatim if present
             if (body && body.errors && body.errors.length) {
@@ -237,15 +246,17 @@ export function saveMonitorEdit(): void {
             if (modal2) modal2.hide();
             loadKumaMonitors();
             loadDockerServices();
-        }).catch(function(err: Error){
-            if(err.message==='not authenticated') return;
-            toast('Tags update failed: '+err.message, 'error');
+        }).catch(function(err: unknown){
+            var m = err instanceof Error ? err.message : String(err);
+            if(m==='not authenticated') return;
+            toast('Tags update failed: '+m, 'error');
             // still reload to reflect monitor edit
             loadKumaMonitors();
         });
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        toast('Update failed: ' + err.message, 'error');
+    }).catch(function(err: unknown) {
+        var m2 = err instanceof Error ? err.message : String(err);
+        if (m2 === 'not authenticated') return;
+        toast('Update failed: ' + m2, 'error');
     });
 }
 
@@ -253,18 +264,19 @@ export function deleteMonitor(): void {
     if (!monitorEditState) return;
     deleteKumaMonitor(monitorEditState.id, monitorEditState.instanceId).then(function(r) {
         if (!r.ok) {
-            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+            return r.json().then(function(body: unknown) { throw new Error(extractError(body, 'HTTP ' + r.status)); });
         }
-        return r.json();
+        return r.json() as Promise<unknown>;
     }).then(function() {
         toast('Monitor deleted');
         var modal = bootstrap.Modal.getInstance(document.getElementById('monitor-edit-modal')!);
         if (modal) modal.hide();
         loadKumaMonitors();
         loadDockerServices();
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        toast('Delete failed: ' + err.message, 'error');
+    }).catch(function(err: unknown) {
+        var m = err instanceof Error ? err.message : String(err);
+        if (m === 'not authenticated') return;
+        toast('Delete failed: ' + m, 'error');
     });
 }
 
@@ -278,9 +290,9 @@ export function setupMonitorEditListeners(): void {
             if (!preview) return;
             var parsed = parseTagsInput(tagsInputEl!.value);
             if (!parsed.length) { preview.innerHTML = '<span class="text-muted small">No tags</span>'; return; }
-            var tmp: MonitorTag[] = parsed.map(function(p:any){
-                if ((p as any).id) return { id: (p as any).id, name: String((p as any).id) } as MonitorTag;
-                return { id: 0, name: (p as any).name } as MonitorTag;
+            var tmp: MonitorTag[] = parsed.map(function(p: TagInput){
+                if ('id' in p) return { id: p.id, name: String(p.id) } as MonitorTag;
+                return { id: 0, name: p.name } as MonitorTag;
             });
             preview.innerHTML = tmp.map(function(t){ return '<span class="badge bg-dark me-1">' + esc(t.name) + '</span>'; }).join('');
         });

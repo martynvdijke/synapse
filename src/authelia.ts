@@ -124,7 +124,7 @@ export function resolveAlert(id: number): void {
     apiFetch('/api/authelia/alerts/' + id + '/resolve', { method: 'POST' })
         .then(function(r){return r.json();})
         .then(function() { toast('Alert resolved', 'success'); loadAutheliaAlerts(); loadAutheliaStatus(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to resolve alert', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to resolve alert', 'error'); });
 }
 
 export function loadAutheliaTempAccess(): void {
@@ -152,7 +152,7 @@ export function revokeTempAccess(id: number): void {
     apiFetch('/api/authelia/temp-access/' + id + '/revoke', { method: 'POST' })
         .then(function(r){return r.json();})
         .then(function() { toast('Access rule revoked', 'success'); loadAutheliaTempAccess(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to revoke rule', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to revoke rule', 'error'); });
 }
 
 function renderSyncResult(d: AutheliaSyncResult, dryRun: boolean): void {
@@ -208,7 +208,7 @@ export function runAutheliaSync(dryRun: boolean): void {
             if (!dryRun && !d.error) toast('Sync completed', 'success');
             if (d.error) toast('Sync error: ' + d.error, 'error');
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Sync failed', 'error'); })
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Sync failed', 'error'); })
         .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
 }
 

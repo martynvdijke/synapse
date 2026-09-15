@@ -112,7 +112,7 @@ export function loadLogs(append: boolean): void {
         if (loadMore) loadMore.style.display = entries.length < logsLimit ? 'none' : '';
         logsOffset += entries.length;
         logsLoaded = true;
-    }).catch(function(err: Error) { if (err.message === 'not authenticated') return; if (!append) tbody.innerHTML = emptyRow(6, 'Failed to load logs'); });
+    }).catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; if (!append) tbody.innerHTML = emptyRow(6, 'Failed to load logs'); });
 }
 
 export function connectLogSSE(): void {

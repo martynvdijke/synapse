@@ -1,5 +1,5 @@
 // Alerts tab logic — rule CRUD + incident lifecycle
-import type { AlertRuleJSON, AlertIncidentJSON } from './types';
+import type { AlertRuleJSON, AlertIncidentJSON, ApiErrorBody } from './types';
 import { esc, apiFetch, emptyRow } from './api';
 import { toast } from './toast';
 
@@ -50,8 +50,8 @@ export function loadAlertRules(): void {
                 + '</td>'
                 + '</tr>';
         }).join('');
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
         toast('Failed to load alert rules', 'error');
     });
 }
@@ -84,14 +84,14 @@ export function editAlertRule(id: number): void {
 
 export function deleteAlertRule(id: number): void {
     apiFetch('/api/alert-rules/' + id, { method: 'DELETE' })
-        .then(function(r){return r.json();})
-        .then(function(d: any) {
+        .then(function(r){return r.json() as Promise<ApiErrorBody>;})
+        .then(function(d: ApiErrorBody) {
             if (d.error) { toast(d.error, 'error'); return; }
             toast('Alert rule deleted', 'success');
             resetAlertRuleForm();
             loadAlertRules();
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete rule', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to delete rule', 'error'); });
 }
 
 export function saveAlertRule(): void {
@@ -115,8 +115,8 @@ export function saveAlertRule(): void {
     } else {
         req = apiFetch('/api/alert-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     }
-    req.then(function(r){return r.json();})
-        .then(function(d: any) {
+    req.then(function(r){return r.json() as Promise<ApiErrorBody>;})
+        .then(function(d: ApiErrorBody) {
             if (d.error) { toast(d.error, 'error'); return; }
             toast(id ? 'Alert rule updated' : 'Alert rule created', 'success');
             resetAlertRuleForm();
@@ -124,7 +124,7 @@ export function saveAlertRule(): void {
             if (collapse) collapse.hide();
             loadAlertRules();
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to save rule', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to save rule', 'error'); });
 }
 
 export function loadIncidents(): void {
@@ -155,31 +155,31 @@ export function loadIncidents(): void {
                     + '</tr>';
             }).join('');
         })
-        .catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
+        .catch(function(err: unknown) {
+            if (err instanceof Error && err.message === 'not authenticated') return;
             toast('Failed to load incidents', 'error');
         });
 }
 
 export function ackIncident(id: number): void {
     apiFetch('/api/incidents/' + id + '/ack', { method: 'POST' })
-        .then(function(r){return r.json();})
-        .then(function(d: any) {
+        .then(function(r){return r.json() as Promise<ApiErrorBody>;})
+        .then(function(d: ApiErrorBody) {
             if (d.error) { toast(d.error, 'error'); return; }
             toast('Incident acknowledged', 'success');
             loadIncidents();
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to acknowledge incident', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to acknowledge incident', 'error'); });
 }
 
 export function resolveIncident(id: number): void {
     apiFetch('/api/incidents/' + id + '/resolve', { method: 'POST' })
-        .then(function(r){return r.json();})
-        .then(function(d: any) {
+        .then(function(r){return r.json() as Promise<ApiErrorBody>;})
+        .then(function(d: ApiErrorBody) {
             if (d.error) { toast(d.error, 'error'); return; }
             toast('Incident resolved', 'success');
             loadIncidents();
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to resolve incident', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to resolve incident', 'error'); });
 }
 

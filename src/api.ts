@@ -206,7 +206,7 @@ export function resumeKumaMonitor(kumaId: number, instanceId: number): Promise<R
     return apiFetch('/api/monitors/' + kumaId + '/resume?instance=' + instanceId, { method: 'POST' });
 }
 
-export function setMonitorTags(kumaId: number, instanceId: number, tags: Array<number | { id: number; name?: string; value?: string; color?: string } | string>): Promise<Response> {
+export function setMonitorTags(kumaId: number, instanceId: number, tags: Array<number | { id: number; name?: string; value?: string; color?: string } | string | { name: string }>): Promise<Response> {
     return apiFetch('/api/monitors/' + kumaId + '/tags?instance=' + instanceId, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

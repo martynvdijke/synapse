@@ -1,5 +1,5 @@
 // Browser OpenTelemetry bootstrap. Imported first from main.ts so the global
-// fetch is instrumented before any app code runs. No-ops unless the server
+// fetch is instrumented before app code runs. No-ops unless the server
 // rendered the otel-enabled meta tag (Dashboard handler).
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';

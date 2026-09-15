@@ -53,9 +53,9 @@ function loadLinkTargets(force?: boolean): Promise<void> {
         populateLinkTargetSelects();
         return Promise.resolve();
     }
-    var npmReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([]); });
-    var kumaReq = apiFetch('/api/monitors').then(function(r){ return r.ok ? r.json() as Promise<MonitorResponse[]> : Promise.resolve([]); });
-    return Promise.all([npmReq, kumaReq]).then(function(res: any[]) {
+    var npmReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([] as NPMProxyHost[]); });
+    var kumaReq = apiFetch('/api/monitors').then(function(r){ return r.ok ? r.json() as Promise<MonitorResponse[]> : Promise.resolve([] as MonitorResponse[]); });
+    return Promise.all([npmReq, kumaReq]).then(function(res: [NPMProxyHost[], MonitorResponse[]]) {
         linkNPMHosts = res[0] || [];
         linkKumaMonitors = res[1] || [];
         linkTargetsCache = { npm: linkNPMHosts, kuma: linkKumaMonitors, ts: Date.now() };
@@ -90,25 +90,25 @@ export function openLinkEditor(serviceName: string): void {
 
     // Load the independent instance lists in parallel instead of chaining them.
     var pInstances = Promise.all([
-        getJSON<any[]>('/api/npm-instances').then(function(insts: any[]) {
-            linkNPMInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+        getJSON<{id:number; name:string; enabled:boolean}[]>('/api/npm-instances').then(function(insts) {
+            linkNPMInstances = (insts || []).filter(function(i){ return i.enabled; });
             populateSelect(document.getElementById('link-npm-instance') as HTMLSelectElement,
                 linkNPMInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
-        }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load NPM instances', 'error'); }),
-        getJSON<any[]>('/api/kuma-instances').then(function(insts: any[]) {
-            linkKumaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+        }).catch(function(err: unknown) { if (!(err instanceof Error) || err.message !== 'not authenticated') toast('Failed to load NPM instances', 'error'); }),
+        getJSON<{id:number; name:string; enabled:boolean}[]>('/api/kuma-instances').then(function(insts) {
+            linkKumaInstances = (insts || []).filter(function(i){ return i.enabled; });
             populateSelect(document.getElementById('link-kuma-instance') as HTMLSelectElement,
                 linkKumaInstances.map(function(i){ return { label: i.name, value: String(i.id) }; }), '');
-        }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Kuma instances', 'error'); }),
-        apiFetch('/api/authelia-instances').then(function(r){ return r.ok ? r.json() : Promise.resolve([]); }).then(function(insts: any[]) {
-            linkAutheliaInstances = (insts || []).filter(function(i: any){ return i.enabled; });
+        }).catch(function(err: unknown) { if (!(err instanceof Error) || err.message !== 'not authenticated') toast('Failed to load Kuma instances', 'error'); }),
+        apiFetch('/api/authelia-instances').then(function(r){ return r.ok ? r.json() as Promise<{id:number; name:string; enabled:boolean}[]> : Promise.resolve([] as {id:number; name:string; enabled:boolean}[]); }).then(function(insts) {
+            linkAutheliaInstances = (insts || []).filter(function(i){ return i.enabled; });
             var sel = document.getElementById('link-authelia-instance') as HTMLSelectElement;
             var opts = '<option value="">— Not linked —</option>';
             for (var i = 0; i < linkAutheliaInstances.length; i++) {
                 opts += '<option value="' + linkAutheliaInstances[i].id + '">' + esc(linkAutheliaInstances[i].name) + '</option>';
             }
             sel.innerHTML = opts;
-        }).catch(function(err: Error) { if (err.message !== 'not authenticated') toast('Failed to load Authelia instances', 'error'); }),
+        }).catch(function(err: unknown) { if (!(err instanceof Error) || err.message !== 'not authenticated') toast('Failed to load Authelia instances', 'error'); }),
     ]);
 
     var pLinks = getJSON<ServiceLink[]>('/api/service-links').then(function(links: ServiceLink[]) {
@@ -117,7 +117,7 @@ export function openLinkEditor(serviceName: string): void {
         }
         (document.getElementById('link-unlink-btn') as HTMLButtonElement).disabled = !linkEditorLink;
         (document.getElementById('link-refresh-btn') as HTMLButtonElement).disabled = !linkEditorLink;
-    }).catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to load service links', 'error'); });
+    }).catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to load service links', 'error'); });
 
     var pTargets = loadLinkTargets();
 
@@ -139,8 +139,8 @@ export function openLinkEditor(serviceName: string): void {
             }
         }
         new bootstrap.Modal(document.getElementById('link-editor-modal')!).show();
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
         toast('Failed to open link editor', 'error');
     });
 }
@@ -178,10 +178,10 @@ export function saveServiceLink(): void {
         : createServiceLink(input);
     req.then(function(r) {
         if (!r.ok) {
-            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+            return r.json().then(function(body: unknown) { var b = body as {error?: string}; throw new Error((b && b.error) || ('HTTP ' + r.status)); });
         }
-        return r.json();
-    }).then(function(body: any) {
+        return r.json() as Promise<{authelia_actions?: Array<{action:string;cname:string;policy?:string;message:string}>}>;
+    }).then(function(body: {authelia_actions?: Array<{action:string;cname:string;policy?:string;message:string}>}) {
         toast('Service link saved');
         var actions: Array<{ action: string; cname: string; policy?: string; message: string }> = (body && body.authelia_actions) || [];
         var actionsBox = document.getElementById('link-authelia-actions')!;
@@ -203,9 +203,9 @@ export function saveServiceLink(): void {
         var modal = bootstrap.Modal.getInstance(document.getElementById('link-editor-modal')!);
         if (modal) modal.hide();
         loadDockerServices();
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        toast('Save failed: ' + err.message, 'error');
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
+        toast('Save failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
     });
 }
 
@@ -217,8 +217,8 @@ export function unlinkServiceLink(): void {
         var modal = bootstrap.Modal.getInstance(document.getElementById('link-editor-modal')!);
         if (modal) modal.hide();
         loadDockerServices();
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
         toast('Unlink failed', 'error');
     });
 }
@@ -227,15 +227,15 @@ export function refreshServiceLinkDetails(): void {
     if (!linkEditorLink) return;
     refreshServiceLink(linkEditorLink.id).then(function(r) {
         if (!r.ok) {
-            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+            return r.json().then(function(body: unknown) { var b = body as {error?: string}; throw new Error((b && b.error) || ('HTTP ' + r.status)); });
         }
-        return r.json();
+        return r.json() as Promise<unknown>;
     }).then(function() {
         toast('Link details refreshed');
         loadDockerServices();
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        toast('Refresh failed: ' + err.message, 'error');
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
+        toast('Refresh failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
     });
 }
 
@@ -255,9 +255,9 @@ export function createNPMHostFromLink(): void {
     };
     createNPMProxyHost(input).then(function(r) {
         if (!r.ok) {
-            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+            return r.json().then(function(body: unknown) { var b = body as {error?: string}; throw new Error((b && b.error) || ('HTTP ' + r.status)); });
         }
-        return r.json();
+        return r.json() as Promise<unknown>;
     }).then(function() {
         toast('NPM proxy host created');
         return loadLinkTargets(true);
@@ -269,9 +269,9 @@ export function createNPMHostFromLink(): void {
                 break;
             }
         }
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        toast('Create failed: ' + err.message, 'error');
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
+        toast('Create failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
     });
 }
 
@@ -290,9 +290,9 @@ export function createKumaMonitorFromLink(): void {
     };
     createKumaMonitor(input).then(function(r) {
         if (!r.ok) {
-            return r.json().then(function(body) { throw new Error((body && body.error) || ('HTTP ' + r.status)); });
+            return r.json().then(function(body: unknown) { var b = body as {error?: string}; throw new Error((b && b.error) || ('HTTP ' + r.status)); });
         }
-        return r.json();
+        return r.json() as Promise<MonitorResponse>;
     }).then(function(res: MonitorResponse) {
         toast('Kuma monitor created');
         return loadLinkTargets(true).then(function() {
@@ -304,9 +304,9 @@ export function createKumaMonitorFromLink(): void {
                 }
             }
         });
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        toast('Create failed: ' + err.message, 'error');
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
+        toast('Create failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
     });
 }
 

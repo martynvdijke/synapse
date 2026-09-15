@@ -1,5 +1,5 @@
 // Uptime Kuma monitor tag helpers (pure, unit-tested).
-import type { MonitorTag } from './types';
+import type { MonitorTag, TagInput } from './types';
 import { esc } from './api';
 
 export function renderTagChips(tags?: MonitorTag[]): string {
@@ -14,23 +14,23 @@ export function renderTagChips(tags?: MonitorTag[]): string {
     }).join('');
 }
 
-export function parseTagsInput(raw: string): Array<{ id: number } | { name: string }> {
+export function parseTagsInput(raw: string): TagInput[] {
     if (!raw.trim()) return [];
     var parts = raw.split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length>0; });
-    var out: Array<{ id: number } | { name: string }> = [];
+    var out: TagInput[] = [];
     for (var i=0;i<parts.length;i++) {
         var p = parts[i];
         var n = parseInt(p, 10);
         if (!isNaN(n) && String(n) === p) { out.push({ id: n }); continue; }
         if (!isNaN(Number(p)) && Number.isInteger(Number(p))) { out.push({ id: Number(p) }); continue; }
         // fallback to name object
-        out.push({ name: p } as any);
+        out.push({ name: p });
     }
     return out;
 }
 
-export function tagsEqual(a?: MonitorTag[], b?: Array<{id:number}|{name:string}>): boolean {
+export function tagsEqual(a?: MonitorTag[], b?: TagInput[]): boolean {
     var aIds = (a||[]).map(function(t){return String(t.id);}).sort().join(',');
-    var bIds = (b||[]).map(function(o:any){return String(o.id||o.name||'');}).sort().join(',');
+    var bIds = (b||[]).map(function(o: TagInput){return String((o as {id?:number}).id ?? (o as {name?:string}).name ?? '');}).sort().join(',');
     return aIds===bIds;
 }

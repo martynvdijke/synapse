@@ -73,9 +73,10 @@ function renderTrmnlUrls(): void {
 export function loadTokens(): void {
     var listEl = document.getElementById('token-list');
     if (!listEl) return;
+    var el = listEl;
     apiFetch('/api/tokens').then(function(r){return r.json() as Promise<APIToken[]>;}).then(function(tokens) {
         if (!tokens || !tokens.length) {
-            listEl.innerHTML = '<span class="text-muted">No API tokens yet. Create one to use with scripts or the CLI.</span>';
+            el.innerHTML = '<span class="text-muted">No API tokens yet. Create one to use with scripts or the CLI.</span>';
             return;
         }
         var html = '';
@@ -94,10 +95,10 @@ export function loadTokens(): void {
                 + '<div class="d-flex gap-1">' + actions + '</div>'
                 + '</div>';
         });
-        listEl.innerHTML = html;
-    }).catch(function(err: Error) {
-        if (err.message === 'not authenticated') return;
-        listEl.innerHTML = '<span class="text-danger">Failed to load tokens</span>';
+        el.innerHTML = html;
+    }).catch(function(err: unknown) {
+        if (err instanceof Error && err.message === 'not authenticated') return;
+        el.innerHTML = '<span class="text-danger">Failed to load tokens</span>';
     });
 }
 
@@ -111,7 +112,7 @@ export function createToken(): void {
             (document.getElementById('s-token-name') as HTMLInputElement).value = '';
             loadTokens();
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to create token', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to create token', 'error'); });
 }
 
 export function revokeToken(id: number): void {
@@ -119,7 +120,7 @@ export function revokeToken(id: number): void {
     apiFetch('/api/tokens/' + id + '/revoke', { method: 'POST' })
         .then(function(r) { if (!r.ok) throw new Error('Revoke failed'); return r.json(); })
         .then(function() { toast('Token revoked', 'success'); loadTokens(); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to revoke token', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to revoke token', 'error'); });
 }
 
 export function rotateToken(id: number): void {
@@ -130,7 +131,7 @@ export function rotateToken(id: number): void {
             alert('New token — store it now, it will not be shown again:\n\n' + d.token);
             loadTokens();
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to rotate token', 'error'); });
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to rotate token', 'error'); });
 }
 
 export function copyTrmnlUrl(btn: HTMLElement): void {
@@ -276,7 +277,7 @@ export function saveSettings(e: Event): void {
     apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function(r) { if (!r.ok) throw new Error('Save failed'); return r.json(); })
         .then(function() { toast('Settings saved', 'success'); })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to save settings', 'error'); })
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to save settings', 'error'); })
         .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
 }
 
@@ -310,7 +311,7 @@ interface InstanceCrudConfig<T> {
     deleteConfirm: (name: string) => string;
 }
 
-function instanceValue(inst: any, f: InstanceField): any {
+function instanceValue(inst: Record<string, unknown>, f: InstanceField): unknown {
     var v = inst[f.prop];
     if (f.kind === 'check') return !!v;
     if (v === undefined || v === null || v === '') return f.default !== undefined ? f.default : '';
@@ -332,8 +333,8 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
         getJSON<T[]>(cfg.endpoint).then(function(instances) {
             cache = instances || [];
             render(cache);
-        }).catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
+        }).catch(function(err: unknown) {
+            if (err instanceof Error && err.message === 'not authenticated') return;
             listEl!.innerHTML = '<div class="text-center text-danger py-3">Failed to load instances</div>';
         });
     }
@@ -369,7 +370,7 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
         var form = document.getElementById(cfg.formId)!;
         var title = document.getElementById(cfg.titleId)!;
         var editing = editId !== null && editId !== undefined;
-        var inst: any = null;
+        var inst: T | undefined = undefined;
 
         if (editing) {
             inst = cache.find(function(i) { return i.id === editId; });
@@ -386,13 +387,13 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
             if (!el) return;
             if (f.kind === 'check') {
                 (el as HTMLInputElement).checked = editing
-                    ? !!inst[f.prop]
+                    ? !!(inst as Record<string, unknown>)[f.prop]
                     : (f.default !== undefined ? !!f.default : true);
             } else if (f.kind === 'pass') {
                 (el as HTMLInputElement).value = '';
                 (el as HTMLInputElement).placeholder = editing ? 'Leave blank to keep current' : 'Password';
             } else {
-                el.value = editing ? '' + instanceValue(inst, f) : (f.default !== undefined ? '' + f.default : '');
+                el.value = editing ? '' + String(instanceValue(inst as Record<string, unknown>, f) ?? '') : (f.default !== undefined ? '' + f.default : '');
             }
         });
         form.classList.remove('d-none');
@@ -411,7 +412,7 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
             var f = cfg.fields[i];
             var el = fieldEl(f);
             if (!el) continue;
-            var value: any;
+            var value: unknown;
             if (f.kind === 'check') value = (el as HTMLInputElement).checked;
             else if (f.kind === 'pass') value = (el as HTMLInputElement).value;
             else value = el.value.trim();
@@ -433,8 +434,8 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
                 hide();
                 load();
             })
-            .catch(function(err: Error) {
-                if (err.message === 'not authenticated') return;
+            .catch(function(err: unknown) {
+                if (err instanceof Error && err.message === 'not authenticated') return;
                 toast('Failed to save instance', 'error');
             })
             .finally(function() { btn.disabled = false; btn.innerHTML = orig; });
@@ -445,7 +446,7 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
         apiFetch(cfg.endpoint + '/' + id, { method: 'DELETE' })
             .then(function(r) { if (!r.ok) throw new Error('Delete failed'); return r.json(); })
             .then(function() { toast('Instance deleted', 'success'); load(); })
-            .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
+            .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Failed to delete instance', 'error'); });
     }
 
     function test(id: number): void {
@@ -456,7 +457,7 @@ function makeInstanceCrud<T extends { id: number; name: string; enabled: boolean
                 if (d.ok) toast('Connection OK: ' + (d.message || 'success'), 'success');
                 else toast('Connection failed: ' + (d.message || 'unknown error'), 'error');
             })
-            .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
+            .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Connection test failed', 'error'); });
     }
 
     return { load: load, render: render, show: show, hide: hide, save: save, remove: remove, test: test };
@@ -552,13 +553,14 @@ export function notifyTest(): void {
                 toast('Test failed: ' + (d.error || 'unknown error'), 'error');
             }
         })
-        .catch(function(err: Error) { if (err.message === 'not authenticated') return; toast('Test notification failed', 'error'); })
+        .catch(function(err: unknown) { if (err instanceof Error && err.message === 'not authenticated') return; toast('Test notification failed', 'error'); })
         .finally(function() { btn.disabled = false; });
 }
 
 export function loadNotifyMissing(): void {
     var listEl = document.getElementById('notify-missing-list');
     if (!listEl) return;
+    var el2 = listEl;
     apiFetch('/api/notify/missing')
         .then(function(r) { return r.json() as Promise<{docker: string[]; npm: string[]; degraded: boolean; reasons?: string[]}>; })
         .then(function(d) {
@@ -572,11 +574,11 @@ export function loadNotifyMissing(): void {
                 if (d.docker.length) parts.push('<span class="fw-semibold">Docker services:</span><ul class="mb-0">' + d.docker.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>');
                 if (d.npm.length) parts.push('<span class="fw-semibold">NPM proxy hosts:</span><ul class="mb-0">' + d.npm.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>');
             }
-            listEl.innerHTML = parts.join('<br>');
+            el2.innerHTML = parts.join('<br>');
         })
-        .catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
-            listEl.innerHTML = '<span class="text-danger">Failed to load missing items</span>';
+        .catch(function(err: unknown) {
+            if (err instanceof Error && err.message === 'not authenticated') return;
+            el2.innerHTML = '<span class="text-danger">Failed to load missing items</span>';
         });
 }
 

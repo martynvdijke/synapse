@@ -8,7 +8,8 @@
     "test:unit:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "serve-test": "http-server ./static -p 8765 -c-1 --silent"
+    "serve-test": "http-server ./static -p 8765 -c-1 --silent",
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
@@ -39,6 +40,6 @@
     "http-server": "^14.1.1",
     "typescript": "^7.0.0",
     "vite": "^8.0.16",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.1"
   }
 }

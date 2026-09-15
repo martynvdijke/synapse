@@ -103,8 +103,8 @@ export function runReconcile(): void {
             if (changesEl) changesEl.innerHTML = renderReconcileChanges(res.changes);
             if (res.changes.length) { loadEvents(); loadHistory(); loadDockerServices(); }
         })
-        .catch(function(err: Error) {
-            if (err.message === 'not authenticated') return;
+        .catch(function(err: unknown) {
+            if (err instanceof Error && err.message === 'not authenticated') return;
             resultEl.textContent = 'Failed';
             toast('Reconcile failed', 'error');
         })

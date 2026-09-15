@@ -446,3 +446,16 @@ export interface AlertIncidentJSON {
   resolved_at?: string;
   last_notified_at?: string;
 }
+
+export interface ApiErrorBody {
+  error?: string;
+  msg?: string;
+  message?: string;
+}
+
+export interface MonitorTagAck extends ApiErrorBody {
+  added?: number;
+  errors?: string[];
+}
+
+export type TagInput = { id: number } | { name: string };
