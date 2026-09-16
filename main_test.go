@@ -887,7 +887,7 @@ func setupRouter(app *App) *gin.Engine {
 	}
 	r.LoadHTMLGlob(absPath)
 
-	r.GET("/", app.Dashboard)
+	r.GET("/", app.DashboardPage)
 	r.GET("/login", func(c *gin.Context) { c.HTML(http.StatusOK, "login.html", nil) })
 	r.GET("/setup", func(c *gin.Context) { c.HTML(http.StatusOK, "setup.html", nil) })
 	r.GET("/overview", app.OverviewPage)
@@ -907,6 +907,7 @@ func setupRouter(app *App) *gin.Engine {
 	{
 		api.POST("/logout", app.HandleLogout)
 		api.GET("/settings", app.GetSettings)
+		api.GET("/dashboard", app.Dashboard)
 		api.GET("/status", app.Status)
 		api.GET("/sync/progress", app.ProgressSSE)
 		api.GET("/sync/history", app.SyncHistory)
@@ -2307,6 +2308,96 @@ func TestSetMonitorTags_Diff(t *testing.T) {
 	r.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusOK {
 		t.Fatalf("expected 200 raw array, got %d: %s", w3.Code, w3.Body.String())
+	}
+}
+
+func TestDashboardAggregate_AllSections(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	// Seed snapshot
+	app.snapshot.Store(&DashboardSnapshot{GeneratedAt: time.Now(), Version: 42, Services: []synclib.ServiceInfo{{Name: "web"}}, Proxies: []synclib.ProxyInfo{{CNAME: "example.com"}}, Monitors: []KumaMonitorSummary{{ID: 1, Name: "m"}}})
+	req := authRequest(t, "GET", "/api/dashboard", "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["version"] != float64(42) {
+		t.Errorf("version %v", body["version"])
+	}
+	sections, _ := body["sections"].(map[string]any)
+	for _, k := range []string{"status", "services", "proxies", "monitors", "history", "links", "authelia", "npm_hosts"} {
+		if _, ok := sections[k]; !ok {
+			t.Errorf("missing section %s", k)
+		}
+	}
+}
+
+func TestDashboardAggregate_Filter(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	app.snapshot.Store(&DashboardSnapshot{GeneratedAt: time.Now(), Version: 1, Services: []synclib.ServiceInfo{}})
+	req := authRequest(t, "GET", "/api/dashboard?sections=status,monitors", "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	sections, _ := body["sections"].(map[string]any)
+	if _, ok := sections["status"]; !ok {
+		t.Error("status missing")
+	}
+	if _, ok := sections["monitors"]; !ok {
+		t.Error("monitors missing")
+	}
+	if _, ok := sections["services"]; ok {
+		t.Error("services should be filtered out")
+	}
+}
+
+func TestDashboardAggregate_UnknownSection(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	req := authRequest(t, "GET", "/api/dashboard?sections=bogus", "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 got %d %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["valid"] == nil {
+		t.Error("valid missing")
+	}
+}
+
+func TestDashboardAggregate_NoSnapshot(t *testing.T) {
+	app, r := setupTest(t)
+	sid := createTestSession(t, app)
+	app.snapshot.Store(nil)
+	// ensure channel not blocking
+	app.snapshotRefreshCh = make(chan struct{}, 1)
+	req := authRequest(t, "GET", "/api/dashboard", "", sid)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["stale"] != true {
+		t.Error("stale should be true")
+	}
+	sections, _ := body["sections"].(map[string]any)
+	if _, ok := sections["status"]; ok {
+		t.Error("status should be omitted when no snapshot")
+	}
+	if _, ok := sections["history"]; !ok {
+		t.Error("history should still be present")
 	}
 }
 

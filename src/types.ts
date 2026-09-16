@@ -237,6 +237,7 @@ export interface StatusResponse {
   kuma_error: string;
   last_docker: string;
   last_npm: string;
+  snapshot?: { generated_at: string; version: number; stale: boolean; last_error?: Record<string, string> };
   open_incidents?: number;
   connection_health?: {
     docker?: { ok: boolean };
@@ -445,6 +446,16 @@ export interface AlertIncidentJSON {
   ack_at?: string;
   resolved_at?: string;
   last_notified_at?: string;
+}
+
+export interface DashboardResponse {
+  generated_at: string; version: number; stale: boolean;
+  last_error?: Record<string, string> | null;
+  sections: {
+    status?: StatusResponse; services?: ServiceInfo[]; proxies?: ProxyResponse[];
+    monitors?: MonitorResponse[]; history?: SyncRun[]; links?: ServiceLink[];
+    authelia?: AutheliaStatusResponse; npm_hosts?: NPMProxyHost[];
+  };
 }
 
 export interface ApiErrorBody {

@@ -223,6 +223,11 @@ export function getNPMInstances(): Promise<Response> {
     return apiFetch('/api/npm-instances');
 }
 
+export function getDashboard(sections?: string[]): Promise<Response> {
+    var q = sections && sections.length ? '?sections=' + sections.join(',') : '';
+    return apiFetch('/api/dashboard' + q);
+}
+
 // --- Authelia ---
 export function getAutheliaCoverage(): Promise<Response> {
     return apiFetch('/api/authelia/coverage');

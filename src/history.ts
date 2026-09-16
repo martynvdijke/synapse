@@ -4,15 +4,10 @@ import { esc, apiFetch, emptyRow, loadingRow } from './api';
 import { toast } from './toast';
 import { loadDockerServices } from './docker';
 
-export function loadHistory(): void {
-    document.getElementById('history-tbody')!.innerHTML = loadingRow(9);
-    apiFetch('/api/sync/history').then(function(r){return r.json() as Promise<SyncRun[]>;}).then(function(runs) {
-        var tbody = document.getElementById('history-tbody')!;
-        if (!runs.length) {
-            tbody.innerHTML = emptyRow(9, 'No sync history yet');
-            return;
-        }
-        tbody.innerHTML = runs.map(function(r) {
+export function renderHistory(runs: SyncRun[]): void {
+    var tbody = document.getElementById('history-tbody')!;
+    if (!runs.length) { tbody.innerHTML = emptyRow(9, 'No sync history yet'); return; }
+    tbody.innerHTML = runs.map(function(r) {
             var badge = 'bg-primary';
             if (r.status === 'completed') badge = 'bg-success';
             else if (r.status === 'completed_with_errors') badge = 'bg-warning text-dark';
@@ -31,7 +26,11 @@ export function loadHistory(): void {
                 + '<td data-label="Error" class="small text-danger">' + esc(r.error_message || '') + '</td>'
                 + '</tr>';
         }).join('');
-    });
+}
+
+export function loadHistory(): void {
+    document.getElementById('history-tbody')!.innerHTML = loadingRow(9);
+    apiFetch('/api/sync/history').then(function(r){return r.json() as Promise<SyncRun[]>;}).then(function(runs) { renderHistory(runs); });
 }
 
 export function loadEvents(): void {

@@ -118,21 +118,13 @@ export function loadMonitorStats(monitorId: string, instanceId: string): void {
         });
 }
 
-export function loadKumaMonitors(): void {
-    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(10);
-    apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & ApiErrorBody)[]>;}).then(function(monitors) {
-        var tbody = document.getElementById('kuma-tbody')!;
-        var monErr = (monitors as unknown as ApiErrorBody).error;
-        if (monErr) {
-            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">' + esc(monErr) + '</td></tr>';
-            return;
-        }
-        if (!monitors.length) {
-            tbody.innerHTML = emptyRow(10, 'No monitors in Uptime Kuma');
-            return;
-        }
-        kumaMonitorList = monitors as MonitorResponse[];
-        tbody.innerHTML = monitors.map(function(m) {
+export function renderKumaMonitors(monitors: (MonitorResponse & ApiErrorBody)[]): void {
+    var tbody = document.getElementById('kuma-tbody')!;
+    var monErr = (monitors as unknown as ApiErrorBody).error;
+    if (monErr) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">' + esc(monErr) + '</td></tr>'; return; }
+    if (!monitors.length) { tbody.innerHTML = emptyRow(10, 'No monitors in Uptime Kuma'); return; }
+    kumaMonitorList = monitors as MonitorResponse[];
+    tbody.innerHTML = monitors.map(function(m) {
             var isPaused = m.active === false;
             var pausedBadge = isPaused ? ' <span class="badge bg-warning text-dark">⏸ Paused</span>' : '';
             var tagsHtml = renderTagChips(m.tags);
@@ -156,7 +148,11 @@ export function loadKumaMonitors(): void {
                 + '<td data-label="Actions" class="text-nowrap">' + toggleBtn + editBtn + '</td>'
                 + '</tr>';
         }).join('');
-    });
+}
+
+export function loadKumaMonitors(): void {
+    document.getElementById('kuma-tbody')!.innerHTML = loadingRow(10);
+    apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & ApiErrorBody)[]>;}).then(function(monitors) { renderKumaMonitors(monitors); });
 }
 
 // ─── Monitor edit state ─────────────────────────────────────────

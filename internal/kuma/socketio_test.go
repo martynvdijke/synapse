@@ -421,9 +421,9 @@ func TestClient_QueryMonitorsViaSocketIO_Cache(t *testing.T) {
 	}
 
 	// Expire the cache: results must be re-fetched
-	c.mu.Lock()
-	c.monCacheAt = time.Now().Add(-monitorCacheTTL - time.Second)
-	c.mu.Unlock()
+	// compat
+	c.monitors.Invalidate()
+	// compat
 	if _, err := c.QueryMonitorsViaSocketIO(); err != nil {
 		t.Fatalf("post-expiry query: %v", err)
 	}
@@ -451,9 +451,9 @@ func TestClient_AddMonitorViaSocketIO_InvalidatesCache(t *testing.T) {
 	if _, err := c.QueryMonitorsViaSocketIO(); err != nil {
 		t.Fatalf("initial query: %v", err)
 	}
-	c.mu.Lock()
-	cached := c.monCache != nil
-	c.mu.Unlock()
+	// compat
+	cached :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	// compat
 	if !cached {
 		t.Fatal("expected cache to be populated after query")
 	}
@@ -461,9 +461,9 @@ func TestClient_AddMonitorViaSocketIO_InvalidatesCache(t *testing.T) {
 	if _, err := c.AddMonitorViaSocketIO("http", "new", "http://new.local", "", 0); err != nil {
 		t.Fatalf("add monitor: %v", err)
 	}
-	c.mu.Lock()
-	cached = c.monCache != nil
-	c.mu.Unlock()
+	// compat
+	cached =  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	// compat
 	if cached {
 		t.Fatal("expected cache to be invalidated after successful add")
 	}
