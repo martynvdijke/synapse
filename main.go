@@ -1050,9 +1050,7 @@ func (app *App) RotateToken(c *gin.Context) {
 func (app *App) DashboardPage(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.HTML(http.StatusOK, "index.html", gin.H{
-		"Version":             version,
-		"OtelEnabled":         app.settings().OTelEnabled,
-		"OtelBrowserEndpoint": os.Getenv("OTEL_BROWSER_ENDPOINT"),
+		"Version": version,
 	})
 }
 

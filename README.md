@@ -121,7 +121,6 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `OTEL_ENDPOINT` | — | OpenTelemetry OTLP collector endpoint (gRPC by default, e.g. `http://otel-collector:4317`) |
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | OTLP transport for traces/metrics/logs: `grpc` or `http/protobuf` |
-| `OTEL_BROWSER_ENDPOINT` | — | OTLP/HTTP traces URL for browser tracing (e.g. `http://otel-collector:4318/v1/traces`). Requires the collector to allow the app origin via CORS |
 | `DOCKER_SOCKET` | — | Docker Engine socket (`unix:///var/run/docker.sock`, `tcp://`, or path). Leave empty to disable the event watcher |
 | `DOCKER_EVENTS_ENABLED` | `false` | Track Docker container events |
 | `DOCKER_EVENTS_RETENTION_DAYS` | `30` | Days to retain Docker events before purging |

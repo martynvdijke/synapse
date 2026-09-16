@@ -1,5 +1,4 @@
 // Synapse Dashboard — Entry point
-import './otel';
 import './dashboard.css';
 import { initEink } from './eink';
 import { toast, setLoading } from './toast';
