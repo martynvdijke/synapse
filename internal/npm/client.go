@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -19,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"synapse/internal/logging"
+	"synapse/internal/ttlcache"
 )
 
 // ProxyHost mirrors the flattened shape returned by the NPM REST API
@@ -97,42 +97,13 @@ type Client struct {
 	client      *http.Client
 	tracer      trace.Tracer
 
-	mu          sync.Mutex
-	hostCache   []ProxyHost // cached proxy host list
-	hostCacheAt time.Time   // when hostCache was populated
-}
-
-// proxyCacheTTL bounds how long a cached proxy-host query result is reused.
-// The dashboard fires several API calls in a burst (status, proxies,
-// proxy-hosts); without caching each call would perform a fresh HTTP round
-// trip to every NPM instance and block on the 30s client timeout when an
-// instance is unreachable. 15s keeps the burst instant while still letting
-// sync operations see recent changes.
-const proxyCacheTTL = 15 * time.Second
-
-// cachedHosts returns the cached proxy host list when it is still fresh.
-func (c *Client) cachedHosts() ([]ProxyHost, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.hostCache != nil && time.Since(c.hostCacheAt) < proxyCacheTTL {
-		return c.hostCache, true
-	}
-	return nil, false
-}
-
-func (c *Client) storeHosts(hosts []ProxyHost) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.hostCache = hosts
-	c.hostCacheAt = time.Now()
+	hosts *ttlcache.Store[[]ProxyHost]
 }
 
 // invalidateHosts clears the cached proxy host list. Call after successful
 // create/update/delete so subsequent queries reflect the change.
 func (c *Client) invalidateHosts() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.hostCache = nil
+	c.hosts.Invalidate()
 }
 
 func NewClient(url, user, pass string) *Client {
@@ -143,6 +114,7 @@ func NewClient(url, user, pass string) *Client {
 			Timeout:   30 * time.Second,
 		},
 		tracer: otel.Tracer("npm"),
+		hosts:  ttlcache.New[[]ProxyHost](ttlcache.EnvDuration("UPSTREAM_CACHE_TTL", 60*time.Second), ttlcache.EnvDuration("UPSTREAM_RETRY_FLOOR", 5*time.Second)),
 	}
 }
 
@@ -285,59 +257,61 @@ var npmTracer = otel.Tracer("npm")
 // miss the cache and fetch once each; the mutex keeps the cached fields
 // safe.
 func (c *Client) fetchHosts(ctx context.Context) ([]ProxyHost, error) {
-	if hosts, ok := c.cachedHosts(); ok {
-		return hosts, nil
-	}
-
-	start := time.Now()
-	url := fmt.Sprintf("%s/api/nginx/proxy-hosts", c.url)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.ensureLoggedIn(ctx); err != nil {
-		logging.LogError("npm", "Failed to authenticate to NPM",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		logging.LogError("npm", "Failed to fetch proxy hosts from NPM",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodySnippet := ""
-		if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
-			bodySnippet = strings.TrimSpace(string(bodyBytes))
+	hosts, stale, err := c.hosts.Fetch(func() ([]ProxyHost, error) {
+		start := time.Now()
+		url := fmt.Sprintf("%s/api/nginx/proxy-hosts", c.url)
+		req, rerr := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if rerr != nil {
+			return nil, rerr
 		}
-		err := fmt.Errorf("failed to get proxy hosts: status %d: %s", resp.StatusCode, bodySnippet)
-		logging.LogError("npm", "NPM request returned non-OK status",
-			slog.Int("status", resp.StatusCode),
-			slog.String("response_body_snippet", bodySnippet),
-			slog.Duration("duration", time.Since(start)),
-		)
+		if err := c.ensureLoggedIn(ctx); err != nil {
+			logging.LogError("npm", "Failed to authenticate to NPM",
+				slog.String("error", err.Error()),
+				slog.Duration("duration", time.Since(start)),
+			)
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		resp, rerr := c.client.Do(req)
+		if rerr != nil {
+			logging.LogError("npm", "Failed to fetch proxy hosts from NPM",
+				slog.String("error", rerr.Error()),
+				slog.Duration("duration", time.Since(start)),
+			)
+			return nil, rerr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			bodySnippet := ""
+			if bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 200)); readErr == nil {
+				bodySnippet = strings.TrimSpace(string(bodyBytes))
+			}
+			rerr = fmt.Errorf("failed to get proxy hosts: status %d: %s", resp.StatusCode, bodySnippet)
+			logging.LogError("npm", "NPM request returned non-OK status",
+				slog.Int("status", resp.StatusCode),
+				slog.String("response_body_snippet", bodySnippet),
+				slog.Duration("duration", time.Since(start)),
+			)
+			return nil, rerr
+		}
+		var hs []ProxyHost
+		if err := json.NewDecoder(resp.Body).Decode(&hs); err != nil {
+			logging.LogError("npm", "Failed to decode NPM proxy hosts response",
+				slog.String("error", err.Error()),
+				slog.String("error_kind", string(logging.ErrorKindParse)),
+				slog.Duration("duration", time.Since(start)),
+			)
+			return nil, err
+		}
+		return hs, nil
+	})
+	if err != nil {
+		if stale {
+			logging.LogWarn("npm", "Serving stale proxy hosts after fetch failure", slog.String("error", err.Error()))
+			return hosts, nil
+		}
 		return nil, err
 	}
-
-	var hosts []ProxyHost
-	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
-		logging.LogError("npm", "Failed to decode NPM proxy hosts response",
-			slog.String("error", err.Error()),
-			slog.String("error_kind", string(logging.ErrorKindParse)),
-			slog.Duration("duration", time.Since(start)),
-		)
-		return nil, err
-	}
-	c.storeHosts(hosts)
 	return hosts, nil
 }
 

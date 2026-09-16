@@ -312,15 +312,13 @@ func (app *App) ensureAutheliaRule(serviceName string, instanceID int, policy st
 
 // ServiceLinks lists all persisted service links with resolved instance names.
 func (app *App) ServiceLinks(c *gin.Context) {
-	links, err := app.database.GetServiceLinks()
+	result, err := app.serviceLinkViews()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	npmNames, kumaNames := app.instanceNameMaps()
-	result := make([]ServiceLinkView, 0, len(links))
-	for _, l := range links {
-		result = append(result, toServiceLinkView(l, npmNames, kumaNames))
+	if result == nil {
+		result = []ServiceLinkView{}
 	}
 	c.JSON(http.StatusOK, result)
 }

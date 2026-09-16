@@ -428,7 +428,12 @@ func GetDockerServicesWithStatus(ctx context.Context, composePath string, client
 	// exists in ANY instance.
 	kumaMap := make(map[string]kuma.KumaMonitor)
 	for _, ic := range clients {
-		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping",
 				slog.Int("instance_id", ic.InstanceID),
@@ -548,6 +553,11 @@ func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClien
 	var npmEntries []npm.ProxyEntry
 	var npmErrs []error
 	for _, nc := range npmClients {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		entries, err := nc.Client.GetProxyHosts(ctx)
 		if err != nil {
 			logging.LogError("sync", "Failed to fetch proxy hosts from NPM instance",
@@ -570,7 +580,12 @@ func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClien
 	// Merge monitors from all Kuma instances.
 	kumaMap := make(map[string]kuma.KumaMonitor)
 	for _, ic := range clients {
-		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping",
 				slog.Int("instance_id", ic.InstanceID),

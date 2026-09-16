@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -301,6 +302,11 @@ type App struct {
 	mu            sync.Mutex
 	running       bool
 	progressChans []chan synclib.Progress
+
+	snapshot           atomic.Pointer[DashboardSnapshot]
+	snapshotMu         sync.Mutex
+	snapshotRefreshCh  chan struct{}
+	snapshotVersion    uint64
 }
 
 func (app *App) settings() db.Settings {
@@ -356,6 +362,15 @@ func getEnvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getEnvDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return def
@@ -427,9 +442,10 @@ func main() {
 	}
 
 	app := &App{
-		database:     database,
-		kumaRegistry: kuma.NewRegistry(database),
-		npmRegistry:  npm.NewRegistry(database),
+		database:           database,
+		kumaRegistry:       kuma.NewRegistry(database),
+		npmRegistry:        npm.NewRegistry(database),
+		snapshotRefreshCh: make(chan struct{}, 1),
 	}
 
 	// Connect to the Docker Engine (graceful when the socket is unavailable —
@@ -499,7 +515,7 @@ func main() {
 	r.LoadHTMLGlob("static/*.html")
 	r.Static("/dist", "./static/dist")
 
-	r.GET("/", app.Dashboard)
+	r.GET("/", app.DashboardPage)
 	r.GET("/setup", func(c *gin.Context) {
 		count, _ := app.database.CountAdminUsers()
 		if count > 0 {
@@ -571,6 +587,7 @@ func main() {
 		api.GET("/notify/missing", app.NotifyMissing)
 		api.GET("/logs", app.LogsHandler)
 		api.GET("/logs/stream", app.LogsStreamSSE)
+		api.GET("/dashboard", app.Dashboard)
 		api.GET("/authelia/status", app.AutheliaStatus)
 		api.GET("/authelia/coverage", app.AutheliaCoverage)
 		api.GET("/authelia/alerts", app.AutheliaAlerts)
@@ -659,6 +676,8 @@ func main() {
 	if startupSettings.ReconcileEnabled && startupSettings.ReconcileIntervalMinutes > 0 {
 		go app.startReconcileScheduler(ctx)
 	}
+
+	go app.startSnapshotRefresher(ctx)
 
 	// Start alert rule evaluation scheduler. The loop idles when the master
 	// switch is off, so enabling alerts at runtime needs no restart.
@@ -1028,7 +1047,7 @@ func (app *App) RotateToken(c *gin.Context) {
 	})
 }
 
-func (app *App) Dashboard(c *gin.Context) {
+func (app *App) DashboardPage(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.HTML(http.StatusOK, "index.html", gin.H{
 		"Version":             version,
@@ -1906,7 +1925,14 @@ func (app *App) TestAutheliaInstance(c *gin.Context) {
 }
 
 func (app *App) Status(c *gin.Context) {
+	if snap := app.getSnapshot(); snap != nil {
+		c.JSON(http.StatusOK, app.statusPayload(snap))
+		return
+	}
 	s := app.settings()
+	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
+	defer cancel()
 
 	// Docker health
 	var dockerErr string
@@ -1946,7 +1972,7 @@ func (app *App) Status(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, clients)
+		npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(ctx, npmClients, clients)
 		mu.Lock()
 		npmCount = len(npmProxies)
 		if npmFetchErr != nil {
@@ -1994,7 +2020,7 @@ func (app *App) Status(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		total, _ := app.kumaMonitorCount(clients)
+		total, _ := app.kumaMonitorCountWithContext(ctx, clients)
 		mu.Lock()
 		monitorCount = total
 		mu.Unlock()
@@ -2011,7 +2037,7 @@ func (app *App) Status(c *gin.Context) {
 			cl, err := app.npmRegistry.Get(int(inst.ID))
 			if err != nil {
 				errMsg = err.Error()
-			} else if _, err := cl.GetProxyHosts(c.Request.Context()); err != nil {
+			} else if _, err := cl.GetProxyHosts(ctx); err != nil {
 				errMsg = err.Error()
 			}
 			list = append(list, gin.H{
@@ -2076,9 +2102,13 @@ func (app *App) Status(c *gin.Context) {
 // When no instance can be reached it falls back to the sync table count
 // so the dashboard never shows a bogus 0.
 func (app *App) kumaMonitorCount(clients []kuma.InstanceClient) (total, up int) {
+	return app.kumaMonitorCountWithContext(context.Background(), clients)
+}
+
+func (app *App) kumaMonitorCountWithContext(ctx context.Context, clients []kuma.InstanceClient) (total, up int) {
 	live := false
 	for _, ic := range clients {
-		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
+		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
 		if err != nil {
 			continue
 		}
@@ -2167,9 +2197,21 @@ func (app *App) TrmnlStats(c *gin.Context) {
 }
 
 func (app *App) Services(c *gin.Context) {
+	if snap := app.getSnapshot(); snap != nil {
+		setSnapshotHeaders(c, snap)
+		if snap.Services == nil {
+			c.JSON(http.StatusOK, []synclib.ServiceInfo{})
+			return
+		}
+		c.JSON(http.StatusOK, snap.Services)
+		return
+	}
 	s := app.settings()
 	clients, _ := app.kumaRegistry.All()
-	result, err := synclib.GetDockerServicesWithStatus(c.Request.Context(), s.ComposePath, clients)
+	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
+	defer cancel()
+	result, err := synclib.GetDockerServicesWithStatus(ctx, s.ComposePath, clients)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -2177,7 +2219,7 @@ func (app *App) Services(c *gin.Context) {
 	if result == nil {
 		result = []synclib.ServiceInfo{}
 	}
-	app.enrichWithContainerState(c.Request.Context(), result)
+	app.enrichWithContainerState(ctx, result)
 	c.JSON(http.StatusOK, result)
 }
 
@@ -2213,9 +2255,21 @@ func (app *App) enrichWithContainerState(ctx context.Context, services []synclib
 }
 
 func (app *App) Proxies(c *gin.Context) {
+	if snap := app.getSnapshot(); snap != nil {
+		setSnapshotHeaders(c, snap)
+		if snap.Proxies == nil {
+			c.JSON(http.StatusOK, []synclib.ProxyInfo{})
+			return
+		}
+		c.JSON(http.StatusOK, snap.Proxies)
+		return
+	}
 	clients, _ := app.kumaRegistry.All()
 	npmClients, _ := app.npmRegistry.All()
-	result, err := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, clients)
+	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
+	defer cancel()
+	result, err := synclib.GetNPMProxiesWithStatus(ctx, npmClients, clients)
 	if err != nil && len(result) == 0 {
 		// All instances failed — no partial results to serve.
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2255,12 +2309,24 @@ type KumaMonitorSummary struct {
 }
 
 func (app *App) KumaMonitors(c *gin.Context) {
+	if snap := app.getSnapshot(); snap != nil {
+		setSnapshotHeaders(c, snap)
+		if snap.Monitors == nil {
+			c.JSON(http.StatusOK, []KumaMonitorSummary{})
+			return
+		}
+		c.JSON(http.StatusOK, snap.Monitors)
+		return
+	}
 	clients, err := app.kumaRegistry.All()
 	if err != nil {
 		logging.LogWarn("app", "KumaRegistry returned partial results",
 			slog.String("error", err.Error()),
 		)
 	}
+	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
+	defer cancel()
 
 	// Build instance name map from DB (lightweight — ent caches internally).
 	instances, _ := app.database.GetKumaInstances()
@@ -2274,7 +2340,7 @@ func (app *App) KumaMonitors(c *gin.Context) {
 		// GetMonitors() is deprecated and always returns ErrRESTNotSupported
 		// (Uptime Kuma has no REST list endpoint); the Socket.IO query is the
 		// real path and also carries status/uptime/ping. Cached per client.
-		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
+		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
 		if err != nil {
 			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
 				slog.Int("instance_id", ic.InstanceID),
@@ -2711,6 +2777,9 @@ func (app *App) DockerSync(c *gin.Context) {
 				}
 			}
 			app.mu.Unlock()
+			if strings.Contains(p.Status, "completed") {
+				app.requestSnapshotRefresh()
+			}
 		})
 	}()
 
@@ -2746,6 +2815,9 @@ func (app *App) NPMSync(c *gin.Context) {
 				}
 			}
 			app.mu.Unlock()
+			if strings.Contains(p.Status, "completed") {
+				app.requestSnapshotRefresh()
+			}
 		})
 	}()
 
@@ -2806,6 +2878,9 @@ func (app *App) runScheduledSync() {
 			slog.String("status", p.Status),
 			slog.String("message", p.Message),
 		)
+		if strings.Contains(p.Status, "completed") {
+			app.requestSnapshotRefresh()
+		}
 	})
 
 	log.Println("scheduler: starting periodic npm sync")
@@ -2813,6 +2888,9 @@ func (app *App) runScheduledSync() {
 	npmClients, _ := app.npmRegistry.All()
 	synclib.RunNPMSync(context.Background(), npmClients, clients, app.database, func(p synclib.Progress) {
 		log.Printf("[scheduler] npm sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
+		if strings.Contains(p.Status, "completed") {
+			app.requestSnapshotRefresh()
+		}
 	})
 
 	log.Println("scheduler: periodic sync complete")

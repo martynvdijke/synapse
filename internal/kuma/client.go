@@ -1,14 +1,18 @@
 package kuma
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+
+	"synapse/internal/logging"
+	"synapse/internal/ttlcache"
 )
 
 var ErrRESTNotSupported = errors.New("REST API not supported by Uptime Kuma; use Socket.IO equivalents")
@@ -19,12 +23,12 @@ var ErrRESTNotSupported = errors.New("REST API not supported by Uptime Kuma; use
 type ClientTestHooks struct {
 	QueryMonitors    func() ([]KumaMonitor, error)
 	QueryDockerHosts func() ([]DockerHost, error)
-	AddMonitor      func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error)
-	DeleteMonitor   func(monitorID int) error
-	EditMonitor     func(monitorID int, payload map[string]any) error
-	PauseMonitor    func(monitorID int) error
-	ResumeMonitor   func(monitorID int) error
-	AddMonitorTag   func(monitorID, tagID int) error
+	AddMonitor       func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error)
+	DeleteMonitor    func(monitorID int) error
+	EditMonitor      func(monitorID int, payload map[string]any) error
+	PauseMonitor     func(monitorID int) error
+	ResumeMonitor    func(monitorID int) error
+	AddMonitorTag    func(monitorID, tagID int) error
 	DeleteMonitorTag func(monitorID, tagID int) error
 }
 
@@ -37,9 +41,7 @@ type Client struct {
 	tracer    trace.Tracer
 	testHooks *ClientTestHooks // only set in tests
 
-	mu            sync.Mutex
-	monCache      []KumaMonitor // cached monitor query result
-	monCacheAt    time.Time     // when monCache was populated
+	monitors *ttlcache.Store[[]KumaMonitor]
 }
 
 type Monitor struct {
@@ -67,7 +69,8 @@ func NewClient(url string) *Client {
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 			Timeout:   30 * time.Second,
 		},
-		tracer: otel.Tracer("kuma"),
+		tracer:   otel.Tracer("kuma"),
+		monitors: ttlcache.New[[]KumaMonitor](ttlcache.EnvDuration("UPSTREAM_CACHE_TTL", 60*time.Second), ttlcache.EnvDuration("UPSTREAM_RETRY_FLOOR", 5*time.Second)),
 	}
 }
 
@@ -103,8 +106,19 @@ var addMonitorFn = AddMonitorViaSocketIO
 // Each returns a restore function; use with defer or t.Cleanup.
 func SetQueryMonitorsTestHook(fn func(url, user, pass string) ([]KumaMonitor, error)) func() {
 	orig := queryMonitorsFn
+	origCtx := queryMonitorsCtxFn
 	queryMonitorsFn = fn
-	return func() { queryMonitorsFn = orig }
+	if fn != nil {
+		queryMonitorsCtxFn = func(ctx context.Context, url, user, pass string) ([]KumaMonitor, error) {
+			return fn(url, user, pass)
+		}
+	} else {
+		queryMonitorsCtxFn = nil
+	}
+	return func() {
+		queryMonitorsFn = orig
+		queryMonitorsCtxFn = origCtx
+	}
 }
 
 func SetQueryDockerHostsTestHook(fn func(url, user, pass string) ([]DockerHost, error)) func() {
@@ -177,36 +191,33 @@ func (c *Client) SetTestHooks(hooks *ClientTestHooks) {
 	c.testHooks = hooks
 }
 
-// monitorCacheTTL bounds how long a cached Socket.IO monitor query result is
-// reused. The dashboard fires several API calls in a burst (status, services,
-// proxies, monitors); without caching each call would open a fresh Socket.IO
-// connection and block for the full collection window. 15s keeps the burst
-// instant while still letting sync operations see recent changes.
-const monitorCacheTTL = 15 * time.Second
+var queryMonitorsCtxFn func(ctx context.Context, kumaURL, username, password string) ([]KumaMonitor, error)
 
-// QueryMonitorsViaSocketIO fetches monitors from Kuma via Socket.IO using
-// the Client's stored credentials. Results are cached for monitorCacheTTL so
-// the burst of dashboard requests shares a single Socket.IO collection.
 func (c *Client) QueryMonitorsViaSocketIO() ([]KumaMonitor, error) {
+	return c.QueryMonitorsViaSocketIOContext(context.Background())
+}
+
+func (c *Client) QueryMonitorsViaSocketIOContext(ctx context.Context) ([]KumaMonitor, error) {
 	if c.testHooks != nil && c.testHooks.QueryMonitors != nil {
 		return c.testHooks.QueryMonitors()
 	}
-	c.mu.Lock()
-	if c.monCache != nil && time.Since(c.monCacheAt) < monitorCacheTTL {
-		out := c.monCache
-		c.mu.Unlock()
-		return out, nil
-	}
-	c.mu.Unlock()
-
-	monitors, err := queryMonitorsFn(c.url, c.username, c.password)
+	monitors, stale, err := c.monitors.Fetch(func() ([]KumaMonitor, error) {
+		if queryMonitorsCtxFn != nil {
+			return queryMonitorsCtxFn(ctx, c.url, c.username, c.password)
+		}
+		return queryMonitorsFn(c.url, c.username, c.password)
+	})
 	if err != nil {
+		if stale {
+			logging.LogWarn("kuma", "Serving stale monitors after fetch failure", slog.String("error", err.Error()))
+			return monitors, nil
+		}
+		if _, has, _ := c.monitors.Peek(); has {
+			logging.LogWarn("kuma", "Serving stale monitors after fetch failure", slog.String("error", err.Error()))
+			return monitors, nil
+		}
 		return nil, err
 	}
-	c.mu.Lock()
-	c.monCache = monitors
-	c.monCacheAt = time.Now()
-	c.mu.Unlock()
 	return monitors, nil
 }
 
@@ -228,9 +239,7 @@ func (c *Client) AddMonitorViaSocketIO(monitorType, name, url, dockerContainer s
 	}
 	id, err := addMonitorFn(c.url, c.username, c.password, monitorType, name, url, dockerContainer, dockerHostID)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return id, err
 }
@@ -243,9 +252,7 @@ func (c *Client) DeleteMonitorViaSocketIO(monitorID int) error {
 	}
 	err := deleteMonitorFn(c.url, c.username, c.password, monitorID)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return err
 }
@@ -258,9 +265,7 @@ func (c *Client) EditMonitorViaSocketIO(monitorID int, payload map[string]any) e
 	}
 	err := editMonitorFn(c.url, c.username, c.password, monitorID, payload)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return err
 }
@@ -271,9 +276,7 @@ func (c *Client) PauseMonitorViaSocketIO(monitorID int) error {
 	}
 	err := pauseMonitorFn(c.url, c.username, c.password, monitorID)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return err
 }
@@ -284,9 +287,7 @@ func (c *Client) ResumeMonitorViaSocketIO(monitorID int) error {
 	}
 	err := resumeMonitorFn(c.url, c.username, c.password, monitorID)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return err
 }
@@ -297,9 +298,7 @@ func (c *Client) AddMonitorTagViaSocketIO(monitorID, tagID int) error {
 	}
 	err := addMonitorTagFn(c.url, c.username, c.password, monitorID, tagID)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return err
 }
@@ -310,9 +309,7 @@ func (c *Client) DeleteMonitorTagViaSocketIO(monitorID, tagID int) error {
 	}
 	err := deleteMonitorTagFn(c.url, c.username, c.password, monitorID, tagID)
 	if err == nil {
-		c.mu.Lock()
-		c.monCache = nil
-		c.mu.Unlock()
+		c.monitors.Invalidate()
 	}
 	return err
 }

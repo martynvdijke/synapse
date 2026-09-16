@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { esc, emptyRow, skeletonCell, skeletonRows } from './api';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { esc, emptyRow, skeletonCell, skeletonRows, getDashboard } from './api';
 
 describe('esc', () => {
     it('escapes HTML metacharacters', () => {
@@ -35,5 +35,27 @@ describe('emptyRow', () => {
 describe('skeletonCell', () => {
     it('defaults width to 60%', () => {
         expect(skeletonCell()).toContain('width:60%');
+    });
+});
+
+describe('getDashboard', () => {
+    beforeEach(() => vi.unstubAllGlobals());
+    it('builds correct URL without sections', async () => {
+        const mockFetch = vi.fn().mockResolvedValue(new Response('{}'));
+        vi.stubGlobal('fetch', mockFetch);
+        await getDashboard();
+        expect(mockFetch.mock.calls[0][0]).toBe('/api/dashboard');
+    });
+    it('appends sections query param when provided', async () => {
+        const mockFetch = vi.fn().mockResolvedValue(new Response('{}'));
+        vi.stubGlobal('fetch', mockFetch);
+        await getDashboard(['status','monitors']);
+        expect(mockFetch.mock.calls[0][0]).toBe('/api/dashboard?sections=status,monitors');
+    });
+    it('omits empty sections array', async () => {
+        const mockFetch = vi.fn().mockResolvedValue(new Response('{}'));
+        vi.stubGlobal('fetch', mockFetch);
+        await getDashboard([]);
+        expect(mockFetch.mock.calls[0][0]).toBe('/api/dashboard');
     });
 });

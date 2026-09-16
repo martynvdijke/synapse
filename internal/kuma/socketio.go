@@ -577,8 +577,8 @@ func (c *sioClient) close() {
 // --- Kuma-specific query ---
 
 type MonitorStats struct {
-	ID       int     `json:"id"`
-	Status   int     `json:"status"`
+	ID        int     `json:"id"`
+	Status    int     `json:"status"`
 	Uptime24h float64 `json:"uptime_24h"`
 	Uptime7d  float64 `json:"uptime_7d"`
 	Uptime1y  float64 `json:"uptime_1y"`
@@ -595,22 +595,22 @@ type MonitorTag struct {
 }
 
 type KumaMonitor struct {
-	ID              int         `json:"id"`
-	Name            string      `json:"name"`
-	URL             string      `json:"url,omitempty"`
-	Type            string      `json:"type"`
-	DockerContainer string      `json:"docker_container,omitempty"`
-	DockerHost      int         `json:"docker_host,omitempty"`
-	Status          int         `json:"status"`
-	Uptime24h       float64     `json:"uptime_24h"`
-	Uptime7d        float64     `json:"uptime_7d"`
-	Uptime1y        float64     `json:"uptime_1y"`
-	Ping            float64     `json:"ping"`
-	LastMsg         string      `json:"last_msg,omitempty"`
-	Interval        int         `json:"interval,omitempty"`
-	RetryInterval   int         `json:"retryInterval,omitempty"`
-	MaxRetries      int         `json:"maxretries,omitempty"`
-	Active          bool        `json:"active"`
+	ID              int          `json:"id"`
+	Name            string       `json:"name"`
+	URL             string       `json:"url,omitempty"`
+	Type            string       `json:"type"`
+	DockerContainer string       `json:"docker_container,omitempty"`
+	DockerHost      int          `json:"docker_host,omitempty"`
+	Status          int          `json:"status"`
+	Uptime24h       float64      `json:"uptime_24h"`
+	Uptime7d        float64      `json:"uptime_7d"`
+	Uptime1y        float64      `json:"uptime_1y"`
+	Ping            float64      `json:"ping"`
+	LastMsg         string       `json:"last_msg,omitempty"`
+	Interval        int          `json:"interval,omitempty"`
+	RetryInterval   int          `json:"retryInterval,omitempty"`
+	MaxRetries      int          `json:"maxretries,omitempty"`
+	Active          bool         `json:"active"`
 	Tags            []MonitorTag `json:"tags,omitempty"`
 }
 
@@ -858,18 +858,22 @@ collect:
 }
 
 func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
+	return QueryMonitorsViaSocketIOContext(context.Background(), kumaURL, username, password)
+}
+
+func QueryMonitorsViaSocketIOContext(ctx context.Context, kumaURL, username, password string) ([]KumaMonitor, error) {
 	queryStart := time.Now()
 	logging.LogInfo("kuma", "Querying monitors via Socket.IO",
 		slog.String("kuma_url", kumaURL),
 	)
 
 	type named struct {
-		name, url, mtype, dockerContainer string
-		dockerHost                        int
+		name, url, mtype, dockerContainer   string
+		dockerHost                          int
 		interval, retryInterval, maxRetries int
-		active                            bool
-		activeSet                         bool
-		tags                              []MonitorTag
+		active                              bool
+		activeSet                           bool
+		tags                                []MonitorTag
 	}
 
 	var (
@@ -1094,6 +1098,8 @@ func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor
 loop:
 	for {
 		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		case ev := <-events:
 			handleEvent(ev)
 		case err := <-loginErr:
@@ -1123,6 +1129,9 @@ loop:
 collectLoop:
 	for {
 		select {
+		case <-ctx.Done():
+			// Deadline/cancel must not be reported as a successful (partial) result.
+			return nil, ctx.Err()
 		case ev := <-events:
 			eventCounts[ev.Name]++
 			handleEvent(ev)
@@ -1208,14 +1217,14 @@ func GetMonitorStats(client *Client, monitorID int) (*MonitorStats, error) {
 	)
 
 	var (
-		upt24    float64
-		upt7d    float64
-		upt1y    float64
-		ping     float64
-		status   int
-		lastMsg  string
-		certInfo string
-		loginErr = make(chan error, 1)
+		upt24     float64
+		upt7d     float64
+		upt1y     float64
+		ping      float64
+		status    int
+		lastMsg   string
+		certInfo  string
+		loginErr  = make(chan error, 1)
 		loginSent bool
 	)
 
@@ -1373,8 +1382,8 @@ collectLoop:
 	)
 
 	return &MonitorStats{
-		ID:       monitorID,
-		Status:   status,
+		ID:        monitorID,
+		Status:    status,
 		Uptime24h: upt24,
 		Uptime7d:  upt7d,
 		Uptime1y:  upt1y,
@@ -1431,7 +1440,9 @@ func AddMonitorViaSocketIO(kumaURL, username, password string, monitorType, name
 					select {
 					case resp := <-ackCh:
 						if len(resp) > 0 {
-							var r struct{ Ok bool `json:"ok"` }
+							var r struct {
+								Ok bool `json:"ok"`
+							}
 							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
 								loginErr <- nil
 								return
@@ -1500,26 +1511,26 @@ loop:
 		if len(resp) > 0 {
 			var r addResponse
 			if json.Unmarshal(resp[0], &r) == nil {
-			if r.Ok {
-				// Modern Kuma returns the ID in the monitorID field;
-				// older versions embedded it at the start of msg.
-				monitorID := r.MonitorID
-				if monitorID == 0 {
-					fmt.Sscanf(r.Msg, "%d", &monitorID)
-				}
-				if monitorID > 0 {
-					logging.LogInfo("kuma", "Monitor added via Socket.IO",
-						slog.String("name", name),
-						slog.Int("monitor_id", monitorID),
+				if r.Ok {
+					// Modern Kuma returns the ID in the monitorID field;
+					// older versions embedded it at the start of msg.
+					monitorID := r.MonitorID
+					if monitorID == 0 {
+						fmt.Sscanf(r.Msg, "%d", &monitorID)
+					}
+					if monitorID > 0 {
+						logging.LogInfo("kuma", "Monitor added via Socket.IO",
+							slog.String("name", name),
+							slog.Int("monitor_id", monitorID),
+						)
+						return monitorID, nil
+					}
+					logging.LogWarn("kuma", "Could not parse monitor ID from add response",
+						slog.String("msg", r.Msg),
 					)
-					return monitorID, nil
+					// Return 0 as ID success — caller can still proceed
+					return 0, nil
 				}
-				logging.LogWarn("kuma", "Could not parse monitor ID from add response",
-					slog.String("msg", r.Msg),
-				)
-				// Return 0 as ID success — caller can still proceed
-				return 0, nil
-			}
 				return 0, fmt.Errorf("add monitor rejected: %s", r.Msg)
 			}
 		}
@@ -1683,5 +1694,11 @@ func DeleteMonitorTagViaSocketIO(kumaURL, username, password string, monitorID, 
 		return nil
 	case <-time.After(10 * time.Second):
 		return fmt.Errorf("delete monitor tag response timeout")
+	}
+}
+
+func init() {
+	if queryMonitorsCtxFn == nil {
+		queryMonitorsCtxFn = QueryMonitorsViaSocketIOContext
 	}
 }

@@ -1,6 +1,7 @@
 package kuma
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -49,7 +50,10 @@ func TestClient_QueryMonitorsViaSocketIO_UsesFnVar(t *testing.T) {
 		}
 		return []KumaMonitor{{ID: 1, Name: "m1"}}, nil
 	}
-	defer func() { queryMonitorsFn = QueryMonitorsViaSocketIO }()
+	queryMonitorsCtxFn = func(ctx context.Context, url, user, pass string) ([]KumaMonitor, error) {
+		return queryMonitorsFn(url, user, pass)
+	}
+	defer func() { queryMonitorsFn = QueryMonitorsViaSocketIO; queryMonitorsCtxFn = QueryMonitorsViaSocketIOContext }()
 
 	c := NewClient("http://kuma:3000")
 	c.username = "u"
@@ -180,18 +184,18 @@ func TestClientPauseMonitorSuccess(t *testing.T) {
 	})
 	defer restoreQ()
 	c.QueryMonitorsViaSocketIO()
-	c.mu.Lock()
-	hasCache := c.monCache != nil
-	c.mu.Unlock()
+	// compat
+	hasCache :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	// compat
 	if !hasCache {
 		t.Fatal("cache should be set")
 	}
 	if err := c.PauseMonitorViaSocketIO(5); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	c.mu.Lock()
-	hasCache = c.monCache != nil
-	c.mu.Unlock()
+	// compat
+	hasCache =  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	// compat
 	if hasCache {
 		t.Fatal("cache should be invalidated after pause success")
 	}
@@ -225,9 +229,9 @@ func TestClientResumeMonitorSuccess(t *testing.T) {
 	if err := c.ResumeMonitorViaSocketIO(3); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
-	c.mu.Lock()
-	hasCache := c.monCache != nil
-	c.mu.Unlock()
+	// compat
+	hasCache :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	// compat
 	if hasCache {
 		t.Fatal("cache should be invalidated after resume")
 	}
@@ -314,9 +318,9 @@ func TestClientPauseResumeTagCacheInvalidationOnFailure(t *testing.T) {
 	})
 	defer restore()
 	_ = c.PauseMonitorViaSocketIO(1)
-	c.mu.Lock()
-	hasCache := c.monCache != nil
-	c.mu.Unlock()
+	// compat
+	hasCache :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	// compat
 	if !hasCache {
 		t.Fatal("cache should remain on failure")
 	}
