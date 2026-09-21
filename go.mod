@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	entgo.io/ent v0.14.6
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/gin-contrib/gzip v1.2.7
+	github.com/gin-contrib/gzip v1.2.8
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/mattn/go-sqlite3 v1.14.52
