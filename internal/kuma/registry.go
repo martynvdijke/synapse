@@ -2,6 +2,7 @@ package kuma
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -25,7 +26,21 @@ type cachedClient struct {
 	user   string
 	pass   string
 	ready  bool // Socket.IO login verified at least once
+	// failedAt records when the last login attempt failed. While a failure is
+	// within loginRetryCooldown the registry skips the instance instead of
+	// paying the full Socket.IO login timeout again on every call.
+	failedAt time.Time
 }
+
+// loginRetryCooldown bounds how often a failed Socket.IO login is retried.
+// Without it a broken instance (bad handshake, auth wall, unreachable) makes
+// every All/Get caller pay the ~10s login timeout, which can exhaust the
+// snapshot build budget and stall API handlers.
+var loginRetryCooldown = 60 * time.Second
+
+// ErrLoginCooldown is wrapped by getOrLogin when an instance is skipped
+// because its previous login attempt failed within loginRetryCooldown.
+var ErrLoginCooldown = errors.New("login retry cooldown active")
 
 // Registry manages connected Kuma clients for all configured instances.
 // Clients are constructed lazily on first use and cached for the process
@@ -57,10 +72,17 @@ func (r *Registry) All() ([]InstanceClient, error) {
 	for _, inst := range instances {
 		c, err := r.getOrLogin(int(inst.ID), inst.Username, inst.Password, inst.URL)
 		if err != nil {
-			logging.LogWarn("kuma", "Failed to connect to Kuma instance, skipping",
-				slog.String("instance", inst.Name),
-				slog.String("error", err.Error()),
-			)
+			if errors.Is(err, ErrLoginCooldown) {
+				logging.LogDebug("kuma", "Skipping Kuma instance during login retry cooldown",
+					slog.String("instance", inst.Name),
+					slog.String("error", err.Error()),
+				)
+			} else {
+				logging.LogWarn("kuma", "Failed to connect to Kuma instance, skipping",
+					slog.String("instance", inst.Name),
+					slog.String("error", err.Error()),
+				)
+			}
 			continue
 		}
 		result = append(result, InstanceClient{InstanceID: int(inst.ID), Client: c})
@@ -92,12 +114,19 @@ func (r *Registry) Invalidate(id int) {
 // getOrLogin returns a cached, verified client for the instance, creating
 // and verifying Socket.IO login on first use.
 func (r *Registry) getOrLogin(id int, user, pass, url string) (*Client, error) {
+	now := time.Now()
 	r.mu.Lock()
 	cc, exists := r.clients[id]
 	r.mu.Unlock()
 
-	if exists && cc.ready {
-		return cc.client, nil
+	if exists {
+		if cc.ready {
+			return cc.client, nil
+		}
+		if remaining := loginRetryCooldown - now.Sub(cc.failedAt); remaining > 0 {
+			return nil, fmt.Errorf("socket.io login to kuma instance %d failed %s ago: retrying in %s: %w",
+				id, now.Sub(cc.failedAt).Round(time.Second), remaining.Round(time.Second), ErrLoginCooldown)
+		}
 	}
 
 	c := NewClient(url)
@@ -105,6 +134,9 @@ func (r *Registry) getOrLogin(id int, user, pass, url string) (*Client, error) {
 	c.password = pass
 
 	if err := verifySocketIOLoginFn(url, user, pass); err != nil {
+		r.mu.Lock()
+		r.clients[id] = &cachedClient{user: user, pass: pass, failedAt: time.Now()}
+		r.mu.Unlock()
 		return nil, fmt.Errorf("socket.io login to kuma instance %d: %w", id, err)
 	}
 

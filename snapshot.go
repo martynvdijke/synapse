@@ -123,6 +123,13 @@ func (app *App) queryKumaMonitors(ctx context.Context) ([]KumaMonitorSummary, bo
 	return result, ok
 }
 
+// snapshotSectionTimeout bounds each snapshot section independently. Sections
+// run in their own goroutines and must not share one budget: resolving Kuma
+// clients (registry login attempts) happens in the build preamble and can
+// consume several seconds on its own, which previously left every section
+// with an already-expired context and blanked out services/npm/monitors.
+const snapshotSectionTimeout = 10 * time.Second
+
 func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	prev := app.getSnapshot()
 	snap := &DashboardSnapshot{}
@@ -168,7 +175,9 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		proxies, err := synclib.GetNPMProxiesWithStatus(ctx, npmClients, clients)
+		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
+		defer cancel()
+		proxies, err := synclib.GetNPMProxiesWithStatus(sctx, npmClients, clients)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil && len(proxies) == 0 {
@@ -222,7 +231,9 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		total, _ := app.kumaMonitorCountWithContext(ctx, clients)
+		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
+		defer cancel()
+		total, _ := app.kumaMonitorCountWithContext(sctx, clients)
 		mu.Lock()
 		snap.MonitorCount = total
 		mu.Unlock()
@@ -231,13 +242,15 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
+		defer cancel()
 		list := make([]gin.H, 0, len(npmInstances))
 		for _, inst := range npmInstances {
 			errMsg := ""
 			cl, err := app.npmRegistry.Get(int(inst.ID))
 			if err != nil {
 				errMsg = err.Error()
-			} else if _, err := cl.GetProxyHosts(ctx); err != nil {
+			} else if _, err := cl.GetProxyHosts(sctx); err != nil {
 				errMsg = err.Error()
 			}
 			list = append(list, gin.H{"id": inst.ID, "name": inst.Name, "ok": errMsg == "", "last_error": errMsg})
@@ -250,7 +263,9 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		result, err := synclib.GetDockerServicesWithStatus(ctx, s.ComposePath, clients)
+		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
+		defer cancel()
+		result, err := synclib.GetDockerServicesWithStatus(sctx, s.ComposePath, clients)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
@@ -260,7 +275,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		if result == nil {
 			result = []synclib.ServiceInfo{}
 		}
-		app.enrichWithContainerState(ctx, result)
+		app.enrichWithContainerState(sctx, result)
 		snap.Services = result
 		delete(snap.LastError, "services")
 	}()
@@ -268,7 +283,9 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		monitors, ok := app.queryKumaMonitors(ctx)
+		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
+		defer cancel()
+		monitors, ok := app.queryKumaMonitors(sctx)
 		mu.Lock()
 		defer mu.Unlock()
 		if ok {
@@ -332,13 +349,15 @@ func (app *App) requestSnapshotRefresh() {
 }
 
 func (app *App) startSnapshotRefresher(ctx context.Context) {
+	// Sections get their own snapshotSectionTimeout inside buildSnapshot, so
+	// the long-lived ctx is passed through unchanged: cancellation on shutdown
+	// still propagates, while a slow preamble (e.g. Kuma login attempts) no
+	// longer eats the section budgets.
 	runBuild := func() {
 		if !app.snapshotMu.TryLock() {
 			return
 		}
-		bctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		app.buildSnapshot(bctx)
-		cancel()
+		app.buildSnapshot(ctx)
 		app.snapshotMu.Unlock()
 	}
 
@@ -371,9 +390,7 @@ func (app *App) startSnapshotRefresher(ctx context.Context) {
 			// Sync-triggered refresh: wait for any in-flight build rather than
 			// dropping the request, so post-sync data is never missed.
 			app.snapshotMu.Lock()
-			bctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			app.buildSnapshot(bctx)
-			cancel()
+			app.buildSnapshot(ctx)
 			app.snapshotMu.Unlock()
 		}
 	}

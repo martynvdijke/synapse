@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"synapse/internal/db"
 )
@@ -218,6 +219,55 @@ func TestRegistryInvalidate(t *testing.T) {
 	r.Get(int(inst.ID)) // re-login after invalidate
 	if atomic.LoadInt32(&loginCalls) != 2 {
 		t.Errorf("expected 2 logins after invalidate, got %d", loginCalls)
+	}
+}
+
+func TestRegistryLoginRetryCooldown(t *testing.T) {
+	d := setupTestDB(t)
+
+	var loginCalls int32
+	original := verifySocketIOLoginFn
+	verifySocketIOLoginFn = func(url, user, pass string) error {
+		atomic.AddInt32(&loginCalls, 1)
+		return errors.New("login failed")
+	}
+	defer func() { verifySocketIOLoginFn = original }()
+
+	inst, err := d.CreateKumaInstance(&db.KumaInstance{Name: "bad", URL: "http://bad", Username: "u", Password: "p", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewRegistry(d)
+
+	// First call attempts the login and records the failure.
+	if clients, _ := r.All(); len(clients) != 0 {
+		t.Fatalf("expected no clients, got %d", len(clients))
+	}
+	if got := atomic.LoadInt32(&loginCalls); got != 1 {
+		t.Fatalf("expected 1 login attempt, got %d", got)
+	}
+
+	// Within the cooldown further calls skip the instance without retrying the
+	// login (which would cost the full Socket.IO login timeout each time).
+	if clients, _ := r.All(); len(clients) != 0 {
+		t.Fatalf("expected no clients, got %d", len(clients))
+	}
+	if _, err := r.Get(int(inst.ID)); !errors.Is(err, ErrLoginCooldown) {
+		t.Fatalf("expected ErrLoginCooldown, got %v", err)
+	}
+	if got := atomic.LoadInt32(&loginCalls); got != 1 {
+		t.Fatalf("expected still 1 login attempt during cooldown, got %d", got)
+	}
+
+	// Once the cooldown has passed the instance is retried.
+	r.mu.Lock()
+	r.clients[int(inst.ID)].failedAt = time.Now().Add(-2 * loginRetryCooldown)
+	r.mu.Unlock()
+	if _, err := r.Get(int(inst.ID)); err == nil || errors.Is(err, ErrLoginCooldown) {
+		t.Fatalf("expected a fresh login failure after cooldown, got %v", err)
+	}
+	if got := atomic.LoadInt32(&loginCalls); got != 2 {
+		t.Fatalf("expected 2 login attempts after cooldown, got %d", got)
 	}
 }
 
