@@ -6,10 +6,13 @@ package main
 // TestMutations_RequireSessionAndToken.
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,64 @@ import (
 	"synapse/internal/kuma"
 	"synapse/internal/npm"
 )
+
+// writeDiscoveryDoc serves a minimal Authelia-style discovery document.
+func writeDiscoveryDoc(w http.ResponseWriter, issuer string) {
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{
+		"issuer": %q,
+		"authorization_endpoint": %q,
+		"token_endpoint": %q,
+		"jwks_uri": %q,
+		"response_types_supported": ["code"],
+		"subject_types_supported": ["public"],
+		"id_token_signing_alg_values_supported": ["RS256"]
+	}`, issuer, issuer+"/api/oidc/authorization", issuer+"/api/oidc/token", issuer+"/jwks.json")
+}
+
+// TestOIDCDiscoveryRetry covers the startup race fixed in oidcDiscoveryRetry:
+// Authelia (behind NPM) is unreachable when synapse boots, the first discovery
+// fails, and the background retry must install the provider once it is up —
+// no container restart required.
+func TestOIDCDiscoveryRetry(t *testing.T) {
+	var ready atomic.Bool
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			http.Error(w, "not ready", http.StatusBadGateway)
+			return
+		}
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		writeDiscoveryDoc(w, srv.URL)
+	}))
+	defer srv.Close()
+
+	app := &App{}
+	app.oidcCfg = auth.Config{Issuer: srv.URL, ClientID: "test-client", Scopes: []string{"openid"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.oidcDiscoveryRetry(ctx, 10*time.Millisecond)
+
+	if oauth, verifier := app.oidcRuntime(); oauth != nil || verifier != nil {
+		t.Fatal("runtime pieces set before discovery ever succeeded")
+	}
+
+	ready.Store(true)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if oauth, verifier := app.oidcRuntime(); oauth != nil && verifier != nil {
+			if oauth.Endpoint.AuthURL != srv.URL+"/api/oidc/authorization" {
+				t.Fatalf("unexpected authorization endpoint %q", oauth.Endpoint.AuthURL)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("discovery retry never recovered after provider became reachable")
+}
 
 // setupOIDCTest builds an app+router with OIDC enabled (config-only, no
 // provider discovery) so the OR middleware path is exercised without network.

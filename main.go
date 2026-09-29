@@ -147,31 +147,73 @@ func (app *App) oidcEnabled() bool {
 	return app.oidcCfg.Enabled()
 }
 
-// initOIDC discovers the Authelia OIDC provider and builds the verifier.
-// Returns nil (disabled) when OIDC_CLIENT_ID is unset — local auth is then
-// unchanged. Discovery failure returns an error but must not crash startup;
-// callers check app.oidcProvider != nil before serving OIDC routes.
+// initOIDC loads the OIDC_* env config and attempts a first Authelia
+// discovery. Returns nil (disabled) when OIDC_CLIENT_ID is unset — local auth
+// is then unchanged. Discovery failure returns an error but must not crash
+// startup; main retries via oidcDiscoveryRetry and callers gate on oidcRuntime.
 func (app *App) initOIDC(ctx context.Context) error {
 	app.oidcCfg = auth.LoadFromEnv()
 	if !app.oidcCfg.Enabled() {
 		slog.Info("oidc disabled (OIDC_CLIENT_ID unset) — local auth only")
 		return nil
 	}
+	return app.discoverOIDC(ctx)
+}
+
+// discoverOIDC runs Authelia OIDC discovery and installs the provider pieces.
+// Safe to call more than once (idempotent on success); the latest successful
+// discovery wins.
+func (app *App) discoverOIDC(ctx context.Context) error {
 	provider, err := oidc.NewProvider(ctx, app.oidcCfg.Issuer)
 	if err != nil {
 		return fmt.Errorf("oidc discovery %s: %w", app.oidcCfg.Issuer, err)
 	}
-	app.oidcProvider = provider
-	app.oidcVerifier = provider.Verifier(&oidc.Config{ClientID: app.oidcCfg.ClientID})
-	app.oauth2Cfg = &oauth2.Config{
+	verifier := provider.Verifier(&oidc.Config{ClientID: app.oidcCfg.ClientID})
+	oauthCfg := &oauth2.Config{
 		ClientID:     app.oidcCfg.ClientID,
 		ClientSecret: app.oidcCfg.ClientSecret,
 		RedirectURL:  app.oidcCfg.RedirectURL,
 		Scopes:       app.oidcCfg.Scopes,
 		Endpoint:     provider.Endpoint(),
 	}
+	app.oidcMu.Lock()
+	app.oidcProvider = provider
+	app.oidcVerifier = verifier
+	app.oauth2Cfg = oauthCfg
+	app.oidcMu.Unlock()
 	slog.Info("oidc enabled", "issuer", app.oidcCfg.Issuer)
 	return nil
+}
+
+// oidcDiscoveryRetry keeps retrying discovery in the background while the
+// provider is unreachable. Authelia sits behind NPM, so at container start it
+// may not answer yet; without this, OIDC login would 404 until a restart.
+// Runs until the first success or ctx cancellation.
+func (app *App) oidcDiscoveryRetry(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := app.discoverOIDC(ctx); err != nil {
+					slog.Warn("oidc discovery retry failed", "error", err)
+					continue
+				}
+				return
+			}
+		}
+	}()
+}
+
+// oidcRuntime returns the request-time OIDC pieces. Discovery may complete
+// after startup, so handlers must not read the App fields directly.
+func (app *App) oidcRuntime() (*oauth2.Config, *oidc.IDTokenVerifier) {
+	app.oidcMu.RLock()
+	defer app.oidcMu.RUnlock()
+	return app.oauth2Cfg, app.oidcVerifier
 }
 
 // mutationAuthMiddleware enforces the OIDC OR rule for state-changing routes:
@@ -294,7 +336,10 @@ type App struct {
 	dockerClient *docker.Client
 
 	// OIDC (Authelia) login. Zero value = disabled; local auth unchanged.
+	// discoverOIDC installs the provider pieces (startup or background retry),
+	// so request handlers read them via oidcRuntime, never directly.
 	oidcCfg      auth.Config
+	oidcMu       sync.RWMutex
 	oidcProvider *oidc.Provider
 	oidcVerifier *oidc.IDTokenVerifier
 	oauth2Cfg    *oauth2.Config
@@ -486,9 +531,11 @@ func main() {
 	defer stop()
 
 	// Authelia OIDC discovery (disabled when OIDC_CLIENT_ID is unset).
-	// Discovery failure warns but does not crash; OIDC routes then 404/503.
+	// Discovery failure warns but does not crash; OIDC routes then 404/503
+	// until the background retry reaches Authelia (e.g. it/NPM still booting).
 	if err := app.initOIDC(ctx); err != nil {
-		slog.Warn("oidc init failed — OIDC login unavailable", "error", err)
+		slog.Warn("oidc init failed — retrying in background", "error", err)
+		app.oidcDiscoveryRetry(ctx, 30*time.Second)
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -803,7 +850,8 @@ func (app *App) HandleOIDCStatus(c *gin.Context) {
 
 // HandleOIDCLogin starts Authorization Code + PKCE S256 against Authelia.
 func (app *App) HandleOIDCLogin(c *gin.Context) {
-	if !app.oidcEnabled() || app.oauth2Cfg == nil {
+	oauthCfg, _ := app.oidcRuntime()
+	if !app.oidcEnabled() || oauthCfg == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "oidc not configured"})
 		return
 	}
@@ -825,7 +873,7 @@ func (app *App) HandleOIDCLogin(c *gin.Context) {
 	c.SetCookie("oidc_state", state, 300, "/", "", false, true)
 	c.SetCookie("oidc_nonce", nonce, 300, "/", "", false, true)
 	c.SetCookie("oidc_verifier", verifier, 300, "/", "", false, true)
-	url := app.oauth2Cfg.AuthCodeURL(state,
+	url := oauthCfg.AuthCodeURL(state,
 		oauth2.SetAuthURLParam("nonce", nonce),
 		oauth2.SetAuthURLParam("code_challenge", auth.ChallengeS256(verifier)),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"))
@@ -836,7 +884,8 @@ func (app *App) HandleOIDCLogin(c *gin.Context) {
 // ID token, enforces email_verified, links/provisions the user by email, and
 // creates an OIDC session.
 func (app *App) HandleOIDCCallback(c *gin.Context) {
-	if !app.oidcEnabled() || app.oauth2Cfg == nil || app.oidcVerifier == nil {
+	oauthCfg, oidcVerifier := app.oidcRuntime()
+	if !app.oidcEnabled() || oauthCfg == nil || oidcVerifier == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "oidc not configured"})
 		return
 	}
@@ -865,7 +914,7 @@ func (app *App) HandleOIDCCallback(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	token, err := app.oauth2Cfg.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", verifier))
+	token, err := oauthCfg.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", verifier))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "code exchange failed"})
 		return
@@ -875,7 +924,7 @@ func (app *App) HandleOIDCCallback(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing id_token"})
 		return
 	}
-	idToken, err := app.oidcVerifier.Verify(ctx, rawID)
+	idToken, err := oidcVerifier.Verify(ctx, rawID)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid id_token"})
 		return
