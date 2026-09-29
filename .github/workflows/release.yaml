@@ -13,6 +13,8 @@ jobs:
     uses: ./.github/workflows/ci.yaml
     secrets: inherit
     permissions:
+      actions: read
+      checks: read
       contents: write
       pull-requests: write
       packages: write
