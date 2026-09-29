@@ -1,3 +1,10 @@
+## [1.31.3](https://github.com/martynvdijke/synapse/compare/v1.31.2...v1.31.3) (2026-09-29)
+
+
+### Bug Fixes
+
+* keep compose services when a slow kuma instance exhausts the snapshot budget ([7ed492e](https://github.com/martynvdijke/synapse/commit/7ed492ef2163f52fa8253a433c4a3a4ed959fd52))
+
 ## [1.31.2](https://github.com/martynvdijke/synapse/compare/v1.31.1...v1.31.2) (2026-09-29)
 
 
