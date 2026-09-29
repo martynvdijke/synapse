@@ -1245,6 +1245,61 @@ func TestGetDockerServicesWithStatusEmptyClients(t *testing.T) {
 	}
 }
 
+func TestGetDockerServicesWithStatusContextExpiry(t *testing.T) {
+	// Client 1 answers quickly and links nginx-web; client 2 is slow and
+	// blows the caller's context deadline. The compose-derived services (and
+	// the linkage from finished queries) must still be returned; previously
+	// the function returned a bare context error and the snapshot section
+	// was discarded, blanking the services list.
+	fast := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 100, Name: "nginx-web", Type: "http"}})
+
+	slow := kuma.NewClient("http://kuma-slow.invalid")
+	slow.SetTestHooks(&kuma.ClientTestHooks{
+		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
+			time.Sleep(80 * time.Millisecond)
+			return nil, context.DeadlineExceeded
+		},
+	})
+
+	never := kuma.NewClient("http://kuma-never.invalid")
+	never.SetTestHooks(&kuma.ClientTestHooks{
+		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
+			t.Error("instances after the expired context must not be queried")
+			return nil, nil
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	clients := []kuma.InstanceClient{
+		fast,
+		{InstanceID: 2, Client: slow},
+		{InstanceID: 3, Client: never},
+	}
+
+	services, err := GetDockerServicesWithStatus(ctx, "../../testdata/docker-compose.yml", clients)
+	if err != nil {
+		t.Fatalf("services must survive an expired context, got error: %v", err)
+	}
+	if len(services) == 0 {
+		t.Fatal("expected services, got none")
+	}
+
+	foundNginx := false
+	for _, s := range services {
+		if s.ContainerName == "nginx-web" {
+			foundNginx = true
+			if !s.InKuma {
+				t.Error("linkage from the completed instance must be preserved")
+			}
+		}
+	}
+	if !foundNginx {
+		t.Fatal("nginx-web service not found in result")
+	}
+}
+
 // --- NPM sync tests ---
 
 // mockNpmClient starts an httptest server with JWT auth and NPM proxy host

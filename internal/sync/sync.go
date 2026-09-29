@@ -425,13 +425,17 @@ func GetDockerServicesWithStatus(ctx context.Context, composePath string, client
 	}
 
 	// Merge monitors from all Kuma instances. A service is "InKuma" if it
-	// exists in ANY instance.
+	// exists in ANY instance. Kuma linkage is best-effort: if the caller's
+	// context expires while an instance is slow, stop querying further
+	// instances but still return the compose-derived services so a single
+	// slow Kuma instance cannot blank out the whole services list.
 	kumaMap := make(map[string]kuma.KumaMonitor)
 	for _, ic := range clients {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			logging.LogWarn("sync", "Kuma query interrupted, returning services without full monitor linkage",
+				slog.String("error", err.Error()),
+			)
+			break
 		}
 		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
 		if err != nil {
