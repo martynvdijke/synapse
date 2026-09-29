@@ -121,7 +121,7 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `OTEL_ENDPOINT` | — | OpenTelemetry OTLP collector endpoint (gRPC by default, e.g. `http://otel-collector:4317`) |
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | OTLP transport for traces/metrics/logs: `grpc` or `http/protobuf` |
-| `DOCKER_SOCKET` | — | Docker Engine socket (`unix:///var/run/docker.sock`, `tcp://`, or path). Leave empty to disable the event watcher |
+| `DOCKER_SOCKET` | — | Initial Docker Engine socket (`unix:///var/run/docker.sock`, `tcp://`, or path); the socket saved in Settings takes precedence. Empty = disabled until set in Settings |
 | `DOCKER_EVENTS_ENABLED` | `false` | Track Docker container events |
 | `DOCKER_EVENTS_RETENTION_DAYS` | `30` | Days to retain Docker events before purging |
 | `RECONCILE_ENABLED` | `false` | Periodically reconcile linked services to desired state |

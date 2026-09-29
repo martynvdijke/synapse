@@ -396,6 +396,33 @@ func (app *App) settings() db.Settings {
 	})
 }
 
+// connectDocker initializes the Docker Engine client from the persisted
+// docker_socket setting (the DOCKER_SOCKET env var seeds that setting's
+// default — see settings()). Connection failures are non-fatal: event
+// tracking and container state enrichment stay disabled.
+func (app *App) connectDocker() {
+	sock := app.settings().DockerSocket
+	if sock == "" {
+		slog.Info("docker integration disabled — no docker_socket configured")
+		return
+	}
+	dc, err := docker.New(sock)
+	if err == nil {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err = dc.Ping(pingCtx)
+		pingCancel()
+		if err != nil {
+			dc = nil
+		}
+	}
+	if dc == nil {
+		slog.Warn("docker engine unreachable — event tracking and container state disabled", "socket", sock, "error", err)
+		return
+	}
+	app.dockerClient = dc
+	slog.Info("docker engine connected", "socket", sock)
+}
+
 func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -495,23 +522,7 @@ func main() {
 
 	// Connect to the Docker Engine (graceful when the socket is unavailable —
 	// event tracking and container state enrichment degrade to disabled).
-	if sock := getEnv("DOCKER_SOCKET", ""); sock != "" {
-		dc, err := docker.New(sock)
-		if err == nil {
-			pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			err = dc.Ping(pingCtx)
-			pingCancel()
-			if err != nil {
-				dc = nil
-			}
-		}
-		if dc == nil {
-			slog.Warn("docker engine unreachable — event tracking and container state disabled", "socket", sock, "error", err)
-		} else {
-			app.dockerClient = dc
-			slog.Info("docker engine connected", "socket", sock)
-		}
-	}
+	app.connectDocker()
 
 	// Read OTel endpoint from database settings, fall back to env var
 	otelSettings := app.settings()

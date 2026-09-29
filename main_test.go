@@ -1545,6 +1545,41 @@ func fakeDockerEngine(t *testing.T, containers []docker.ContainerSummary) *docke
 	return docker.NewWithClient(srv.URL, srv.Client())
 }
 
+// ─── connectDocker (persisted socket setting) ──────────────────────
+
+func TestConnectDockerUsesPersistedSetting(t *testing.T) {
+	app, _ := setupTest(t)
+	t.Setenv("DOCKER_SOCKET", "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_ping" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	if err := app.database.SaveSettingsMap(map[string]string{"docker_socket": srv.URL}); err != nil {
+		t.Fatalf("save docker_socket: %v", err)
+	}
+
+	app.connectDocker()
+	if app.dockerClient == nil {
+		t.Fatal("expected docker client from persisted docker_socket setting, got nil")
+	}
+}
+
+func TestConnectDockerDisabledWhenUnconfigured(t *testing.T) {
+	app, _ := setupTest(t)
+	t.Setenv("DOCKER_SOCKET", "")
+
+	app.connectDocker()
+	if app.dockerClient != nil {
+		t.Fatal("expected nil docker client when no socket is configured")
+	}
+}
+
 // ─── Service link ensure_missing + Authelia integration tests ──────
 
 func TestCreateServiceLink_EnsureMissing_AutoCreates(t *testing.T) {
