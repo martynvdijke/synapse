@@ -1,3 +1,15 @@
+## [1.31.1](https://github.com/martynvdijke/synapse/compare/v1.31.0...v1.31.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **auth:** retry Authelia OIDC discovery in the background ([6cf683d](https://github.com/martynvdijke/synapse/commit/6cf683d5ec4ad1599053a3f195b870b629ff9615))
+* **ci:** allow actions/checks read in the reusable CI call ([0bc529a](https://github.com/martynvdijke/synapse/commit/0bc529ae1548a945a901525f918b4fcceb16167f))
+* cleanup tooling and enable TS strict mode ([2755238](https://github.com/martynvdijke/synapse/commit/27552386caeb1c095882b26950da44d0430e62f3))
+* coalesce upstream calls and serve dashboard from a snapshot ([2dbca51](https://github.com/martynvdijke/synapse/commit/2dbca51debd7d48c679c18f4350b552ea6ac44c4))
+* **deps:** update all non-major dependencies ([#59](https://github.com/martynvdijke/synapse/issues/59)) ([4bf0c0d](https://github.com/martynvdijke/synapse/commit/4bf0c0d244cbe7919ee8fbbf71e97d61ec3272dc))
+* drop browser OpenTelemetry, rely on backend instrumentation ([c78fc11](https://github.com/martynvdijke/synapse/commit/c78fc112c3170b8ba0d1feff91ddb9ed9c04db58))
+
 # [1.31.0](https://github.com/martynvdijke/synapse/compare/v1.30.4...v1.31.0) (2026-09-13)
 
 
