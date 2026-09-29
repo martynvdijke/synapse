@@ -1,3 +1,10 @@
+## [1.31.4](https://github.com/martynvdijke/synapse/compare/v1.31.3...v1.31.4) (2026-09-29)
+
+
+### Bug Fixes
+
+* stop slow kuma logins from starving the snapshot build ([71b2d32](https://github.com/martynvdijke/synapse/commit/71b2d32a14538b7d2d88a14c9d37b20d4904ad60))
+
 ## [1.31.3](https://github.com/martynvdijke/synapse/compare/v1.31.2...v1.31.3) (2026-09-29)
 
 
