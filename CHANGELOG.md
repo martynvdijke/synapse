@@ -1,3 +1,10 @@
+## [1.31.2](https://github.com/martynvdijke/synapse/compare/v1.31.1...v1.31.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* connect to docker using the persisted docker_socket setting ([ebb8f7f](https://github.com/martynvdijke/synapse/commit/ebb8f7f692bf58e47f1d44dfe48f9588da01f9ba))
+
 ## [1.31.1](https://github.com/martynvdijke/synapse/compare/v1.31.0...v1.31.1) (2026-09-29)
 
 
