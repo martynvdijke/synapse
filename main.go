@@ -2367,14 +2367,19 @@ type KumaMonitorSummary struct {
 }
 
 func (app *App) KumaMonitors(c *gin.Context) {
-	if snap := app.getSnapshot(); snap != nil {
-		setSnapshotHeaders(c, snap)
-		if snap.Monitors == nil {
-			c.JSON(http.StatusOK, []KumaMonitorSummary{})
+	// ?fresh=1 bypasses the dashboard snapshot and queries Kuma live. The link
+	// editor uses it after creating a monitor so the new monitor is
+	// immediately selectable rather than waiting for the next snapshot rebuild.
+	if c.Query("fresh") != "1" {
+		if snap := app.getSnapshot(); snap != nil {
+			setSnapshotHeaders(c, snap)
+			if snap.Monitors == nil {
+				c.JSON(http.StatusOK, []KumaMonitorSummary{})
+				return
+			}
+			c.JSON(http.StatusOK, snap.Monitors)
 			return
 		}
-		c.JSON(http.StatusOK, snap.Monitors)
-		return
 	}
 	clients, err := app.kumaRegistry.All()
 	if err != nil {
@@ -2491,6 +2496,7 @@ func (app *App) PauseKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	app.requestSnapshotRefresh()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -2515,6 +2521,7 @@ func (app *App) ResumeKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	app.requestSnapshotRefresh()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -2629,6 +2636,7 @@ func (app *App) SetMonitorTags(c *gin.Context) {
 		}
 	}
 	res.Errors = errs
+	app.requestSnapshotRefresh()
 	c.JSON(http.StatusOK, res)
 }
 

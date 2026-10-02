@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"synapse/internal/db"
+	"synapse/internal/kuma"
 	synclib "synapse/internal/sync"
 )
 
@@ -132,6 +135,67 @@ func TestHandlersServeSnapshot(t *testing.T) {
 		t.Fatalf("monitors %d", rec3.Code)
 	}
 	_ = r
+}
+
+// TestKumaMonitorsFreshBypassesSnapshot verifies that GET /api/monitors is
+// snapshot-backed by default but queries the live upstream when ?fresh=1 is
+// set, which the link editor relies on to see newly created monitors.
+func TestKumaMonitorsFreshBypassesSnapshot(t *testing.T) {
+	app, _ := setupTest(t)
+	app.snapshotRefreshCh = make(chan struct{}, 1)
+	if _, err := app.database.CreateKumaInstance(&db.KumaInstance{
+		Name: "k", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true,
+	}); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	monitors := []kuma.KumaMonitor{{ID: 7, Name: "live", Type: "http", URL: "http://live"}}
+	installKumaHooks(t, &monitors)
+	app.snapshot.Store(&DashboardSnapshot{
+		GeneratedAt: time.Now(),
+		Version:     42,
+		Monitors:    []KumaMonitorSummary{{ID: 1, Name: "stale"}},
+	})
+	gin.SetMode(gin.TestMode)
+
+	// Default: the stored snapshot is served, header included.
+	w := httptest.NewRequest(http.MethodGet, "/api/monitors", nil)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = w
+	app.KumaMonitors(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("snapshot monitors status %d", rec.Code)
+	}
+	if rec.Header().Get("X-Snapshot-Version") != "42" {
+		t.Fatalf("expected snapshot header, got %v", rec.Header())
+	}
+	var got []KumaMonitorSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode snapshot monitors: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "stale" {
+		t.Fatalf("expected snapshot monitor, got %v", got)
+	}
+
+	// ?fresh=1: live upstream data, no snapshot header.
+	w2 := httptest.NewRequest(http.MethodGet, "/api/monitors?fresh=1", nil)
+	rec2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(rec2)
+	c2.Request = w2
+	app.KumaMonitors(c2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("fresh monitors status %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if rec2.Header().Get("X-Snapshot-Version") != "" {
+		t.Fatalf("fresh response should not be snapshot-backed: %v", rec2.Header())
+	}
+	got = nil
+	if err := json.Unmarshal(rec2.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode fresh monitors: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "live" || got[0].InstanceName != "k" {
+		t.Fatalf("expected live monitor with instance name, got %v", got)
+	}
 }
 
 func TestColdStartNot500(t *testing.T) {

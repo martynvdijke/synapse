@@ -21,11 +21,11 @@ function populateSelect(el: HTMLSelectElement, items: Array<{ label: string; val
     el.innerHTML = html;
 }
 
-// Cache link targets for a short window. The backend already caches the upstream
-// NPM/Kuma responses for 15s per client, but the editor is opened infrequently so
-// that cache is usually cold — re-fetching every open pays the full external
-// integration cost. A 30s client-side TTL keeps repeated opens instant while
-// staying close to the backend's freshness window.
+// Cache link targets for a short window. The NPM list is served live, and Kuma
+// monitors are fetched with ?fresh=1 to bypass the backend's dashboard
+// snapshot, so each refresh pays the full external integration cost; a 30s
+// client-side TTL keeps repeated opens instant while staying close to the
+// backend's freshness window.
 var linkTargetsCache: { npm: NPMProxyHost[]; kuma: MonitorResponse[]; ts: number } | null = null;
 var LINK_TARGETS_TTL = 30000;
 
@@ -54,7 +54,7 @@ function loadLinkTargets(force?: boolean): Promise<void> {
         return Promise.resolve();
     }
     var npmReq = apiFetch('/api/npm/proxy-hosts').then(function(r){ return r.ok ? r.json() as Promise<NPMProxyHost[]> : Promise.resolve([] as NPMProxyHost[]); });
-    var kumaReq = apiFetch('/api/monitors').then(function(r){ return r.ok ? r.json() as Promise<MonitorResponse[]> : Promise.resolve([] as MonitorResponse[]); });
+    var kumaReq = apiFetch('/api/monitors?fresh=1').then(function(r){ return r.ok ? r.json() as Promise<MonitorResponse[]> : Promise.resolve([] as MonitorResponse[]); });
     return Promise.all([npmReq, kumaReq]).then(function(res: [NPMProxyHost[], MonitorResponse[]]) {
         linkNPMHosts = res[0] || [];
         linkKumaMonitors = res[1] || [];

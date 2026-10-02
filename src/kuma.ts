@@ -152,7 +152,9 @@ export function renderKumaMonitors(monitors: (MonitorResponse & ApiErrorBody)[])
 
 export function loadKumaMonitors(): void {
     document.getElementById('kuma-tbody')!.innerHTML = loadingRow(10);
-    apiFetch('/api/monitors').then(function(r){return r.json() as Promise<(MonitorResponse & ApiErrorBody)[]>;}).then(function(monitors) { renderKumaMonitors(monitors); });
+    // ?fresh=1 bypasses the dashboard snapshot so mutations (and monitors
+    // created elsewhere) show up as soon as the tab is refreshed.
+    apiFetch('/api/monitors?fresh=1').then(function(r){return r.json() as Promise<(MonitorResponse & ApiErrorBody)[]>;}).then(function(monitors) { renderKumaMonitors(monitors); });
 }
 
 // ─── Monitor edit state ─────────────────────────────────────────

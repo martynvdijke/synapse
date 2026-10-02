@@ -863,6 +863,10 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 		}
 	}
 
+	// Make the new monitor visible in the dashboard snapshot without waiting
+	// for the next periodic rebuild.
+	app.requestSnapshotRefresh()
+
 	c.JSON(http.StatusOK, KumaMonitorSummary{
 		ID:              id,
 		Name:            input.Name,
@@ -1049,6 +1053,7 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 			}
 		}
 	}
+	app.requestSnapshotRefresh()
 	c.JSON(http.StatusOK, updated)
 }
 
@@ -1098,6 +1103,7 @@ func (app *App) DeleteKumaMonitor(c *gin.Context) {
 			}
 		}
 	}
+	app.requestSnapshotRefresh()
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 

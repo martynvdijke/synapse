@@ -506,6 +506,73 @@ func TestKumaMonitorCRUD(t *testing.T) {
 	}
 }
 
+// TestKumaMonitorMutationsRequestSnapshotRefresh verifies that successful
+// monitor mutations nudge the snapshot refresher so the dashboard and other
+// snapshot-backed endpoints catch up without waiting for the periodic rebuild.
+func TestKumaMonitorMutationsRequestSnapshotRefresh(t *testing.T) {
+	app, r := setupTest(t)
+	app.snapshotRefreshCh = make(chan struct{}, 1)
+	sessionID := createTestSession(t, app)
+
+	monitors := []kuma.KumaMonitor{
+		{ID: 1, Name: "web-monitor", Type: "http", URL: "http://localhost:80/health"},
+	}
+	installKumaHooks(t, &monitors)
+	t.Cleanup(kuma.SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error { return nil }))
+	t.Cleanup(kuma.SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error { return nil }))
+	t.Cleanup(kuma.SetAddMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error { return nil }))
+	t.Cleanup(kuma.SetDeleteMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error { return nil }))
+
+	kumaInst, err := app.database.CreateKumaInstance(&db.KumaInstance{
+		Name: "kuma-test", URL: "http://kuma:3001", Username: "admin", Password: "p", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create kuma instance: %v", err)
+	}
+	kumaID := int(kumaInst.ID)
+
+	drain := func() {
+		for {
+			select {
+			case <-app.snapshotRefreshCh:
+			default:
+				return
+			}
+		}
+	}
+	assertRefresh := func(action string) {
+		t.Helper()
+		select {
+		case <-app.snapshotRefreshCh:
+		default:
+			t.Fatalf("%s did not request a snapshot refresh", action)
+		}
+	}
+
+	steps := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"create", "POST", "/api/monitors",
+			fmt.Sprintf(`{"instance_id":%d,"name":"api-probe","type":"http","url":"http://localhost:8080/health"}`, kumaID)},
+		{"update", "PUT", fmt.Sprintf("/api/monitors/1?instance=%d", kumaID), `{"name":"renamed"}`},
+		{"pause", "POST", fmt.Sprintf("/api/monitors/1/pause?instance=%d", kumaID), ""},
+		{"resume", "POST", fmt.Sprintf("/api/monitors/1/resume?instance=%d", kumaID), ""},
+		{"tags", "PUT", fmt.Sprintf("/api/monitors/1/tags?instance=%d", kumaID), `{"tags":[1]}`},
+		{"delete", "DELETE", fmt.Sprintf("/api/monitors/1?instance=%d", kumaID), ""},
+	}
+	for _, step := range steps {
+		w := doJSON(t, r, authRequest(t, step.method, step.path, step.body, sessionID))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", step.name, w.Code, w.Body.String())
+		}
+		assertRefresh(step.name)
+		drain()
+	}
+}
+
 func TestKumaMonitorRenameAndDeletePropagateToLinks(t *testing.T) {
 	app, r := setupTest(t)
 	sessionID := createTestSession(t, app)
