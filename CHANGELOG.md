@@ -1,3 +1,10 @@
+## [1.31.6](https://github.com/martynvdijke/synapse/compare/v1.31.5...v1.31.6) (2026-10-03)
+
+
+### Bug Fixes
+
+* make new kuma monitors immediately available in link editor ([c54f65b](https://github.com/martynvdijke/synapse/commit/c54f65b13e43f6e7cdb7951ec0104ee62727dfeb))
+
 ## [1.31.5](https://github.com/martynvdijke/synapse/compare/v1.31.4...v1.31.5) (2026-10-02)
 
 
