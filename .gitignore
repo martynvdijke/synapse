@@ -37,3 +37,6 @@ static/dist/
 # OpenCode / OpenSpec dev artifacts
 .opencode/
 openspec/
+
+# Zensical build output
+site/
