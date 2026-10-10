@@ -23,7 +23,7 @@
             {% if item.kind == "authelia" %}
               <span class="label label--warning">{{ item.kind }}</span>
             {% elsif item.kind == "incident" %}
-              <span class="label label--danger">{{ item.kind }}</span>
+              <span class="label label--error">{{ item.kind }}</span>
             {% else %}
               <span class="label">{{ item.kind }}</span>
             {% endif %}

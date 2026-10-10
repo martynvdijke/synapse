@@ -28,7 +28,7 @@
           {% if docker_ok %}
             <span class="label label--success">OK</span>
           {% else %}
-            <span class="label label--danger">ERROR</span>
+            <span class="label label--error">ERROR</span>
           {% endif %}
         </div>
       </div>
@@ -38,7 +38,7 @@
           {% if npm_ok %}
             <span class="label label--success">OK</span>
           {% else %}
-            <span class="label label--danger">ERROR</span>
+            <span class="label label--error">ERROR</span>
           {% endif %}
         </div>
       </div>
@@ -48,7 +48,7 @@
           {% if kuma_ok %}
             <span class="label label--success">OK</span>
           {% else %}
-            <span class="label label--danger">ERROR</span>
+            <span class="label label--error">ERROR</span>
           {% endif %}
         </div>
       </div>
@@ -57,13 +57,13 @@
       <div class="item">
         <div class="meta">Up</div>
         <div class="content">
-          <span class="value value--medium">{{ up }}</span>
+          <span class="value">{{ up }}</span>
         </div>
       </div>
       <div class="item">
         <div class="meta">Down</div>
         <div class="content">
-          <span class="value value--medium">{{ down }}</span>
+          <span class="value">{{ down }}</span>
         </div>
       </div>
       <div class="item">
