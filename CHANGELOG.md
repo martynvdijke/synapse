@@ -1,3 +1,10 @@
+## [1.31.8](https://github.com/martynvdijke/synapse/compare/v1.31.7...v1.31.8) (2026-10-12)
+
+
+### Bug Fixes
+
+* **trmnl:** replace invalid framework classes (value--medium, label--danger) ([#73](https://github.com/martynvdijke/synapse/issues/73)) ([243a1c1](https://github.com/martynvdijke/synapse/commit/243a1c189cdc3b7f2c3522a4dfad860403522c51))
+
 ## [1.31.7](https://github.com/martynvdijke/synapse/compare/v1.31.6...v1.31.7) (2026-10-06)
 
 
