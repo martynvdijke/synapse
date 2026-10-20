@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -77,9 +78,9 @@ func createTestSessionRaw(t *testing.T, app *App) (string, int64) {
 		t.Fatalf("create admin: %v", err)
 	}
 	sessionID := generateSessionID()
-	sessionStoreMu.Lock()
-	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(1 * time.Hour), UserID: userID}
-	sessionStoreMu.Unlock()
+	if _, err := app.database.CreateSession(sessionID, userID, false, "", nil, time.Hour); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 	return sessionID, userID
 }
 
@@ -91,9 +92,9 @@ func createTestUser(t *testing.T, app *App, username string) (string, int64) {
 		t.Fatalf("create user %s: %v", username, err)
 	}
 	sessionID := generateSessionID()
-	sessionStoreMu.Lock()
-	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(1 * time.Hour), UserID: userID}
-	sessionStoreMu.Unlock()
+	if _, err := app.database.CreateSession(sessionID, userID, false, "", nil, time.Hour); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 	return sessionID, userID
 }
 
@@ -550,11 +551,122 @@ func TestTrmnlApiTokenSaveAndLoad(t *testing.T) {
 	r.ServeHTTP(w2, req2)
 	var s map[string]any
 	json.NewDecoder(w2.Body).Decode(&s)
-	if s["trmnl_api_token"] != "secret-token-123" {
-		t.Errorf("trmnl_api_token should round-trip: got %v", s["trmnl_api_token"])
+	if s["trmnl_api_token"] != "****" {
+		t.Errorf("trmnl_api_token should be masked: got %v", s["trmnl_api_token"])
+	}
+	if got := app.database.GetSettings(db.Settings{}).TrmnlApiToken; got != "secret-token-123" {
+		t.Errorf("trmnl_api_token should round-trip in storage: got %v", got)
 	}
 	if s["compose_path"] != "/docker/compose.yml" {
 		t.Errorf("compose_path should be preserved: expected %q, got %v", "/docker/compose.yml", s["compose_path"])
+	}
+}
+
+func TestSettingsMasksAllSecrets(t *testing.T) {
+	app, r := setupTest(t)
+	sessionID := createTestSession(t, app)
+
+	channelsDoc := `[{"type":"ntfy","enabled":true,"url":"https://ntfy.example.com","token":"ntfy-secret"}]`
+	if err := app.database.SaveSettingsMap(map[string]string{
+		"npm_pass":        "npm-secret",
+		"kuma_pass":       "kuma-secret",
+		"gotify_token":    "gotify-secret",
+		"trmnl_api_token": "trmnl-secret",
+		"notify_channels": channelsDoc,
+	}); err != nil {
+		t.Fatalf("seed secrets: %v", err)
+	}
+
+	req := authRequest(t, "GET", "/api/settings", "", sessionID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get settings: %d", w.Code)
+	}
+	var s map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&s); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	for _, key := range []string{"npm_pass", "trmnl_api_token", "gotify_token"} {
+		if s[key] != "****" {
+			t.Errorf("%s should be masked, got %v", key, s[key])
+		}
+	}
+	notifyDoc, _ := s["notify_channels"].(string)
+	if strings.Contains(notifyDoc, "ntfy-secret") {
+		t.Errorf("notify_channels leaked a token: %s", notifyDoc)
+	}
+	if !strings.Contains(notifyDoc, "****") {
+		t.Errorf("notify_channels token should be masked: %s", notifyDoc)
+	}
+
+	// Masked values submitted back must not overwrite the stored secrets.
+	body := `{"gotify_token":"****","notify_channels":` + strconv.Quote(notifyDoc) + `}`
+	req2 := authRequest(t, "POST", "/api/settings", body, sessionID)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("save settings: %d: %s", w2.Code, w2.Body.String())
+	}
+	stored := app.database.GetSettings(db.Settings{})
+	if stored.GotifyToken != "gotify-secret" {
+		t.Errorf("masked gotify_token overwrote stored value: %q", stored.GotifyToken)
+	}
+	if !strings.Contains(stored.NotifyChannels, "ntfy-secret") {
+		t.Errorf("masked notify_channels overwrote stored token: %s", stored.NotifyChannels)
+	}
+}
+
+func TestSessionCookieFlags(t *testing.T) {
+	app, r := setupTest(t)
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct-horse"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	if _, err := app.database.CreateAdminUser("cookieuser", string(hash)); err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+
+	login := func(headers map[string]string) *http.Cookie {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/api/login",
+			strings.NewReader(`{"username":"cookieuser","password":"correct-horse"}`))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("login: %d: %s", w.Code, w.Body.String())
+		}
+		for _, c := range w.Result().Cookies() {
+			if c.Name == "session" {
+				return c
+			}
+		}
+		t.Fatal("login did not set a session cookie")
+		return nil
+	}
+
+	plain := login(nil)
+	if !plain.HttpOnly {
+		t.Error("session cookie must be HttpOnly")
+	}
+	if plain.SameSite != http.SameSiteStrictMode {
+		t.Errorf("session cookie SameSite = %v, want Strict", plain.SameSite)
+	}
+	if plain.Secure {
+		t.Error("session cookie should not be Secure over plain HTTP")
+	}
+
+	https := login(map[string]string{"X-Forwarded-Proto": "https"})
+	if !https.Secure {
+		t.Error("session cookie behind HTTPS proxy must be Secure")
+	}
+	if !https.HttpOnly {
+		t.Error("Secure session cookie must stay HttpOnly")
 	}
 }
 

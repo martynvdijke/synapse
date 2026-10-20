@@ -18,10 +18,21 @@ import (
 	"synapse/ent/servicelink"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
+	"synapse/internal/secrets"
 
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// secretSettingKeys are stored encrypted at rest. notify_channels contains
+// per-channel tokens in its JSON document, so the whole value is encrypted.
+var secretSettingKeys = map[string]bool{
+	"npm_pass":        true,
+	"kuma_pass":       true,
+	"trmnl_api_token": true,
+	"gotify_token":    true,
+	"notify_channels": true,
+}
 
 type SyncRun struct {
 	ID            int64      `json:"id"`
@@ -219,9 +230,20 @@ type Settings struct {
 type DB struct {
 	client *ent.Client
 	rawDB  *sql.DB
+	enc    *secrets.Cipher
 }
 
 func Open(path string) (*DB, error) {
+	cipher, err := secrets.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return OpenWithCipher(path, cipher)
+}
+
+// OpenWithCipher opens a database with an explicit encryption cipher. Used by
+// tests and by callers that resolve the key themselves.
+func OpenWithCipher(path string, cipher *secrets.Cipher) (*DB, error) {
 	drv, err := entsql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000&_fk=1")
 	if err != nil {
 		return nil, err
@@ -234,7 +256,7 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 
-	db := &DB{client: client, rawDB: sqlDB}
+	db := &DB{client: client, rawDB: sqlDB, enc: cipher}
 	if err := db.createAdminUsersTable(); err != nil {
 		return nil, err
 	}
@@ -245,6 +267,12 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	if err := db.createAPITokensTable(); err != nil {
+		return nil, err
+	}
+	if err := db.createSessionsTable(); err != nil {
+		return nil, err
+	}
+	if err := db.EncryptLegacySecrets(); err != nil {
 		return nil, err
 	}
 	return db, nil
@@ -558,28 +586,42 @@ func toMonitor(e *ent.Monitor) Monitor {
 	}
 }
 
-func toKumaInstance(e *ent.KumaInstance) KumaInstance {
+func (db *DB) toKumaInstance(e *ent.KumaInstance) KumaInstance {
 	return KumaInstance{
 		ID:        int64(e.ID),
 		Name:      e.Name,
 		URL:       e.URL,
 		Username:  e.Username,
-		Password:  e.Password,
+		Password:  db.decryptSecret(e.Password),
 		Enabled:   e.Enabled,
 		CreatedAt: e.CreatedAt,
 	}
 }
 
-func toNPMInstance(e *ent.NPMInstance) NPMInstance {
+func (db *DB) toNPMInstance(e *ent.NPMInstance) NPMInstance {
 	return NPMInstance{
 		ID:        int64(e.ID),
 		Name:      e.Name,
 		URL:       e.URL,
 		Username:  e.Username,
-		Password:  e.Password,
+		Password:  db.decryptSecret(e.Password),
 		Enabled:   e.Enabled,
 		CreatedAt: e.CreatedAt,
 	}
+}
+
+// decryptSecret returns legacy plaintext unchanged and decrypts values written
+// by this build. A decryption failure yields an empty secret rather than the
+// ciphertext, so a wrong key can never be used as a credential.
+func (db *DB) decryptSecret(value string) string {
+	if value == "" || db.enc == nil || !secrets.IsEncrypted(value) {
+		return value
+	}
+	plain, err := db.enc.Decrypt(value)
+	if err != nil {
+		return ""
+	}
+	return plain
 }
 
 func toAutheliaInstance(e *ent.AutheliaInstance) AutheliaInstance {
@@ -938,18 +980,22 @@ func (db *DB) PurgeDockerEvents(before time.Time) (int, error) {
 
 // CreateKumaInstance inserts a new Kuma instance row and returns it.
 func (db *DB) CreateKumaInstance(k *KumaInstance) (*KumaInstance, error) {
+	encPass, err := db.enc.Encrypt(k.Password)
+	if err != nil {
+		return nil, err
+	}
 	e, err := db.client.KumaInstance.Create().
 		SetName(k.Name).
 		SetURL(k.URL).
 		SetUsername(k.Username).
-		SetPassword(k.Password).
+		SetPassword(encPass).
 		SetEnabled(k.Enabled).
 		SetCreatedAt(time.Now()).
 		Save(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	r := toKumaInstance(e)
+	r := db.toKumaInstance(e)
 	return &r, nil
 }
 
@@ -963,7 +1009,7 @@ func (db *DB) GetKumaInstances() ([]KumaInstance, error) {
 	}
 	result := make([]KumaInstance, len(entries))
 	for i, e := range entries {
-		result[i] = toKumaInstance(e)
+		result[i] = db.toKumaInstance(e)
 	}
 	return result, nil
 }
@@ -979,7 +1025,7 @@ func (db *DB) GetKumaInstance(id int64) (*KumaInstance, error) {
 		}
 		return nil, err
 	}
-	r := toKumaInstance(e)
+	r := db.toKumaInstance(e)
 	return &r, nil
 }
 
@@ -994,7 +1040,7 @@ func (db *DB) GetEnabledKumaInstances() ([]KumaInstance, error) {
 	}
 	result := make([]KumaInstance, len(entries))
 	for i, e := range entries {
-		result[i] = toKumaInstance(e)
+		result[i] = db.toKumaInstance(e)
 	}
 	return result, nil
 }
@@ -1008,7 +1054,11 @@ func (db *DB) UpdateKumaInstance(id int64, k *KumaInstance) error {
 		SetUsername(k.Username).
 		SetEnabled(k.Enabled)
 	if k.Password != "" {
-		q.SetPassword(k.Password)
+		encPass, err := db.enc.Encrypt(k.Password)
+		if err != nil {
+			return err
+		}
+		q.SetPassword(encPass)
 	}
 	_, err := q.Save(context.Background())
 	return err
@@ -1069,18 +1119,22 @@ func (db *DB) MigrateKumaInstances(legacy Settings) error {
 
 // CreateNPMInstance inserts a new NPM instance row and returns it.
 func (db *DB) CreateNPMInstance(n *NPMInstance) (*NPMInstance, error) {
+	encPass, err := db.enc.Encrypt(n.Password)
+	if err != nil {
+		return nil, err
+	}
 	e, err := db.client.NPMInstance.Create().
 		SetName(n.Name).
 		SetURL(n.URL).
 		SetUsername(n.Username).
-		SetPassword(n.Password).
+		SetPassword(encPass).
 		SetEnabled(n.Enabled).
 		SetCreatedAt(time.Now()).
 		Save(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	r := toNPMInstance(e)
+	r := db.toNPMInstance(e)
 	return &r, nil
 }
 
@@ -1094,7 +1148,7 @@ func (db *DB) GetNPMInstances() ([]NPMInstance, error) {
 	}
 	result := make([]NPMInstance, len(entries))
 	for i, e := range entries {
-		result[i] = toNPMInstance(e)
+		result[i] = db.toNPMInstance(e)
 	}
 	return result, nil
 }
@@ -1110,7 +1164,7 @@ func (db *DB) GetNPMInstance(id int64) (*NPMInstance, error) {
 		}
 		return nil, err
 	}
-	r := toNPMInstance(e)
+	r := db.toNPMInstance(e)
 	return &r, nil
 }
 
@@ -1125,7 +1179,7 @@ func (db *DB) GetEnabledNPMInstances() ([]NPMInstance, error) {
 	}
 	result := make([]NPMInstance, len(entries))
 	for i, e := range entries {
-		result[i] = toNPMInstance(e)
+		result[i] = db.toNPMInstance(e)
 	}
 	return result, nil
 }
@@ -1139,7 +1193,11 @@ func (db *DB) UpdateNPMInstance(id int64, n *NPMInstance) error {
 		SetUsername(n.Username).
 		SetEnabled(n.Enabled)
 	if n.Password != "" {
-		q.SetPassword(n.Password)
+		encPass, err := db.enc.Encrypt(n.Password)
+		if err != nil {
+			return err
+		}
+		q.SetPassword(encPass)
 	}
 	_, err := q.Save(context.Background())
 	return err
@@ -1319,7 +1377,23 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 	if err != nil {
 		return s
 	}
+	toEncrypt := make(map[string]string)
 	for _, row := range rows {
+		value := row.Value
+		if secretSettingKeys[row.Key] && value != "" {
+			if secrets.IsEncrypted(value) {
+				plain, derr := db.enc.Decrypt(value)
+				if derr != nil {
+					// A wrong key must never be used as a credential.
+					value = ""
+				} else {
+					value = plain
+				}
+			} else {
+				// Legacy plaintext: transparently migrate it after the read.
+				toEncrypt[row.Key] = value
+			}
+		}
 		switch row.Key {
 		case "compose_path":
 			s.ComposePath = row.Value
@@ -1328,13 +1402,13 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 		case "npm_user":
 			s.NPMUser = row.Value
 		case "npm_pass":
-			s.NPMPass = row.Value
+			s.NPMPass = value
 		case "kuma_url":
 			s.KumaURL = row.Value
 		case "kuma_user":
 			s.KumaUser = row.Value
 		case "kuma_pass":
-			s.KumaPass = row.Value
+			s.KumaPass = value
 		case "authelia_config_path":
 			s.AutheliaConfigPath = row.Value
 		case "authelia_db_path":
@@ -1352,7 +1426,7 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 		case "eink_enabled":
 			s.EinkEnabled = row.Value == "true"
 		case "trmnl_api_token":
-			s.TrmnlApiToken = row.Value
+			s.TrmnlApiToken = value
 		case "notify_enabled":
 			s.NotifyEnabled, _ = strconv.ParseBool(row.Value)
 		case "notify_interval_minutes":
@@ -1362,13 +1436,13 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 		case "gotify_url":
 			s.GotifyURL = row.Value
 		case "gotify_token":
-			s.GotifyToken = row.Value
+			s.GotifyToken = value
 		case "gotify_priority":
 			if v, err := strconv.Atoi(row.Value); err == nil {
 				s.GotifyPriority = v
 			}
 		case "notify_channels":
-			s.NotifyChannels = row.Value
+			s.NotifyChannels = value
 		case "docker_socket":
 			s.DockerSocket = row.Value
 		case "docker_events_enabled":
@@ -1415,11 +1489,22 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.NotifyPersistent = row.Value == "true"
 		}
 	}
+	if len(toEncrypt) > 0 {
+		// Transparent migration: persist legacy plaintext as ciphertext.
+		_ = db.SaveSettingsMap(toEncrypt)
+	}
 	return s
 }
 
 func (db *DB) SaveSettingsMap(pairs map[string]string) error {
 	for k, v := range pairs {
+		if secretSettingKeys[k] && v != "" && !secrets.IsEncrypted(v) {
+			enc, err := db.enc.Encrypt(v)
+			if err != nil {
+				return err
+			}
+			v = enc
+		}
 		created, err := db.client.Settings.Create().
 			SetKey(k).
 			SetValue(v).
@@ -1438,6 +1523,76 @@ func (db *DB) SaveSettingsMap(pairs map[string]string) error {
 			return err
 		}
 		_ = created
+	}
+	return nil
+}
+
+// EncryptLegacySecrets re-encrypts plaintext secrets written by older builds.
+// It runs at startup so existing installs are hardened without user action;
+// values that already carry the encryption prefix are left untouched, which
+// makes the migration safe to run on every boot.
+func (db *DB) EncryptLegacySecrets() error {
+	if db.enc == nil {
+		return nil
+	}
+	for key := range secretSettingKeys {
+		if err := db.encryptColumnValue("settings", "key", "value", "key", key); err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"kuma_instances", "npm_instances"} {
+		if err := db.encryptColumnValue(table, "id", "password", "", ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// encryptColumnValue encrypts every non-empty, not-yet-encrypted value in a
+// column. When matchColumn is set only that row is considered.
+func (db *DB) encryptColumnValue(table, idColumn, valueColumn, matchColumn, matchValue string) error {
+	query := `SELECT ` + idColumn + `, ` + valueColumn + ` FROM ` + table + ` WHERE ` + valueColumn + ` <> ''`
+	args := []any{}
+	if matchColumn != "" {
+		query += ` AND ` + matchColumn + ` = ?`
+		args = append(args, matchValue)
+	}
+	rows, err := db.rawDB.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id    string
+		value string
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.value); err != nil {
+			rows.Close()
+			return err
+		}
+		if !secrets.IsEncrypted(r.value) {
+			pending = append(pending, r)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	// MaxOpenConns is 1, so updates must wait until the cursor is closed.
+	for _, r := range pending {
+		enc, err := db.enc.Encrypt(r.value)
+		if err != nil {
+			return err
+		}
+		if _, err := db.rawDB.Exec(
+			`UPDATE `+table+` SET `+valueColumn+` = ? WHERE `+idColumn+` = ?`, enc, r.id,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -117,14 +117,10 @@ func createOIDCSession(t *testing.T, app *App, email string) string {
 		t.Fatalf("provision: %v", err)
 	}
 	sid := generateSessionID()
-	sessionStoreMu.Lock()
-	sessionStore[sid] = sessionInfo{Expiry: time.Now().Add(time.Hour), UserID: uid, OIDC: true, Email: email, Groups: []string{"admins"}}
-	sessionStoreMu.Unlock()
-	t.Cleanup(func() {
-		sessionStoreMu.Lock()
-		delete(sessionStore, sid)
-		sessionStoreMu.Unlock()
-	})
+	if _, err := app.database.CreateSession(sid, uid, true, email, []string{"admins"}, time.Hour); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() { _ = app.database.DeleteSession(sid) })
 	return sid
 }
 

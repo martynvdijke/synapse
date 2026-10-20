@@ -44,58 +44,53 @@ import (
 
 var version = "1.31.8"
 
-type sessionInfo struct {
-	Expiry time.Time
-	UserID int64
-	// OIDC marks sessions created via Authelia OIDC login (vs local password).
-	// Mutation auth accepts a valid OIDC session alone; local sessions still
-	// require a bearer token on top. Email/Groups come from verified ID claims.
-	// ponytail: subject/groups live in the session, not new DB columns.
-	OIDC   bool
-	Email  string
-	Groups []string
-}
-
-var (
-	sessionStore   = make(map[string]sessionInfo)
-	sessionStoreMu sync.RWMutex
-)
-
 func generateSessionID() string {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	id, err := db.GenerateSessionToken()
+	if err != nil {
 		return ""
 	}
-	return hex.EncodeToString(b)
+	return id
+}
+
+// secureCookie decides whether cookies carry the Secure flag. It honours an
+// explicit COOKIE_SECURE override, direct TLS, and the common reverse-proxy
+// header so HTTPS deployments get Secure cookies without extra config.
+func secureCookie(c *gin.Context) bool {
+	if v := strings.TrimSpace(os.Getenv("COOKIE_SECURE")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	if c.Request.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https")
 }
 
 func setSessionCookie(c *gin.Context, id string) {
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie("session", id, 86400, "/", "", false, true)
+	c.SetCookie("session", id, int(db.SessionTTL.Seconds()), "/", "", secureCookie(c), true)
 }
 
-func cleanupSessions() {
-	sessionStoreMu.Lock()
-	defer sessionStoreMu.Unlock()
-	now := time.Now()
-	for id, s := range sessionStore {
-		if now.After(s.Expiry) {
-			delete(sessionStore, id)
-		}
+// createSession persists a server-side session and sets the cookie.
+func (app *App) createSession(c *gin.Context, userID int64, oidc bool, email string, groups []string) bool {
+	id := generateSessionID()
+	if id == "" {
+		return false
 	}
+	if _, err := app.database.CreateSession(id, userID, oidc, email, groups, db.SessionTTL); err != nil {
+		slog.Error("failed to persist session", "error", err)
+		return false
+	}
+	setSessionCookie(c, id)
+	return true
 }
 
 func (app *App) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if sessionID, err := c.Cookie("session"); err == nil && sessionID != "" {
-			sessionStoreMu.Lock()
-			s, ok := sessionStore[sessionID]
-			if ok && time.Now().After(s.Expiry) {
-				delete(sessionStore, sessionID)
-				ok = false
-			}
-			sessionStoreMu.Unlock()
-			if ok {
+			s, err := app.database.GetSession(sessionID)
+			if err == nil && s != nil {
 				c.Set("user_id", s.UserID)
 				c.Next()
 				return
@@ -233,14 +228,8 @@ func (app *App) mutationAuthMiddleware() gin.HandlerFunc {
 		}
 		var sessionUser int64
 		if sid, err := c.Cookie("session"); err == nil && sid != "" {
-			sessionStoreMu.Lock()
-			s, ok := sessionStore[sid]
-			if ok && time.Now().After(s.Expiry) {
-				delete(sessionStore, sid)
-				ok = false
-			}
-			sessionStoreMu.Unlock()
-			if ok {
+			s, err := app.database.GetSession(sid)
+			if err == nil && s != nil {
 				sessionUser = s.UserID
 				c.Set("user_id", s.UserID)
 				if s.OIDC {
@@ -348,10 +337,10 @@ type App struct {
 	running       bool
 	progressChans []chan synclib.Progress
 
-	snapshot           atomic.Pointer[DashboardSnapshot]
-	snapshotMu         sync.Mutex
-	snapshotRefreshCh  chan struct{}
-	snapshotVersion    uint64
+	snapshot          atomic.Pointer[DashboardSnapshot]
+	snapshotMu        sync.Mutex
+	snapshotRefreshCh chan struct{}
+	snapshotVersion   uint64
 }
 
 func (app *App) settings() db.Settings {
@@ -514,9 +503,9 @@ func main() {
 	}
 
 	app := &App{
-		database:           database,
-		kumaRegistry:       kuma.NewRegistry(database),
-		npmRegistry:        npm.NewRegistry(database),
+		database:          database,
+		kumaRegistry:      kuma.NewRegistry(database),
+		npmRegistry:       npm.NewRegistry(database),
 		snapshotRefreshCh: make(chan struct{}, 1),
 	}
 
@@ -585,10 +574,7 @@ func main() {
 	r.GET("/login", func(c *gin.Context) {
 		sessionID, err := c.Cookie("session")
 		if err == nil && sessionID != "" {
-			sessionStoreMu.RLock()
-			s, ok := sessionStore[sessionID]
-			sessionStoreMu.RUnlock()
-			if ok && time.Now().Before(s.Expiry) {
+			if s, serr := app.database.GetSession(sessionID); serr == nil && s != nil {
 				c.Redirect(http.StatusFound, "/")
 				return
 			}
@@ -745,7 +731,11 @@ func main() {
 	go func() {
 		for {
 			time.Sleep(15 * time.Minute)
-			cleanupSessions()
+			if n, err := app.database.CleanupSessions(); err != nil {
+				logging.LogError("app", "failed to clean up expired sessions", slog.String("error", err.Error()))
+			} else if n > 0 {
+				logging.LogDebug("app", "removed expired sessions", slog.Int64("count", n))
+			}
 		}
 	}()
 
@@ -813,11 +803,10 @@ func (app *App) HandleLogin(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
 			return
 		}
-		sessionID := generateSessionID()
-		sessionStoreMu.Lock()
-		sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour), UserID: userID}
-		sessionStoreMu.Unlock()
-		setSessionCookie(c, sessionID)
+		if !app.createSession(c, userID, false, "", nil) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		return
 	}
@@ -832,22 +821,20 @@ func (app *App) HandleLogin(c *gin.Context) {
 		return
 	}
 
-	sessionID := generateSessionID()
-	sessionStoreMu.Lock()
-	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour), UserID: user.ID}
-	sessionStoreMu.Unlock()
-	setSessionCookie(c, sessionID)
+	if !app.createSession(c, user.ID, false, "", nil) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (app *App) HandleLogout(c *gin.Context) {
 	sessionID, err := c.Cookie("session")
 	if err == nil && sessionID != "" {
-		sessionStoreMu.Lock()
-		delete(sessionStore, sessionID)
-		sessionStoreMu.Unlock()
+		_ = app.database.DeleteSession(sessionID)
 	}
-	c.SetCookie("session", "", -1, "/", "", false, true)
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("session", "", -1, "/", "", secureCookie(c), true)
 	for _, n := range []string{"oidc_state", "oidc_nonce", "oidc_verifier"} {
 		c.SetCookie(n, "", -1, "/", "", false, true)
 	}
@@ -961,15 +948,10 @@ func (app *App) HandleOIDCCallback(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to provision user"})
 		return
 	}
-	sessionID := generateSessionID()
-	if sessionID == "" {
+	if !app.createSession(c, userID, true, claims.Email, claims.Groups) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
 	}
-	sessionStoreMu.Lock()
-	sessionStore[sessionID] = sessionInfo{Expiry: time.Now().Add(24 * time.Hour), UserID: userID, OIDC: true, Email: claims.Email, Groups: claims.Groups}
-	sessionStoreMu.Unlock()
-	setSessionCookie(c, sessionID)
 	for _, n := range []string{"oidc_state", "oidc_nonce", "oidc_verifier"} {
 		c.SetCookie(n, "", -1, "/", "", false, true)
 	}
@@ -1136,7 +1118,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"otel_endpoint":                s.OTelEndpoint,
 		"otel_enabled":                 s.OTelEnabled,
 		"eink_enabled":                 s.EinkEnabled,
-		"trmnl_api_token":              s.TrmnlApiToken,
+		"trmnl_api_token":              mask(s.TrmnlApiToken),
 		"notify_enabled":               s.NotifyEnabled,
 		"notify_interval_minutes":      s.NotifyIntervalMinutes,
 		"gotify_url":                   s.GotifyURL,
@@ -1223,7 +1205,11 @@ func (app *App) SaveSettings(c *gin.Context) {
 	if v, ok := raw["trmnl_api_token"]; ok {
 		var val string
 		json.Unmarshal(v, &val)
-		pairs["trmnl_api_token"] = val
+		// Blank or masked input means "keep current"; the token is write-only
+		// from the settings API and never returned in clear text.
+		if val != "" && val != "****" {
+			pairs["trmnl_api_token"] = val
+		}
 	}
 	if v, ok := raw["notify_enabled"]; ok {
 		var val bool
