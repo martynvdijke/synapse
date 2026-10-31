@@ -1,3 +1,10 @@
+## [1.31.9](https://github.com/martynvdijke/synapse/compare/v1.31.8...v1.31.9) (2026-10-31)
+
+
+### Bug Fixes
+
+* **kuma:** buffer socket.io events until handler is installed ([f19b909](https://github.com/martynvdijke/synapse/commit/f19b909a28cea5ef0551b9668fc6561ea96f6b25))
+
 ## [1.31.8](https://github.com/martynvdijke/synapse/compare/v1.31.7...v1.31.8) (2026-10-12)
 
 
