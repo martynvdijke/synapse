@@ -76,13 +76,21 @@ type eioTransport interface {
 	Close() error
 }
 
+// maxBufferedEvents bounds the events retained between dialSIO and the
+// caller installing its handler via setOnEvent.
+const maxBufferedEvents = 256
+
 type sioClient struct {
 	conn        eioTransport
 	mu          sync.Mutex
 	ackID       int
 	pendingAcks map[int]chan []json.RawMessage
 	onEvent     func(rawEvent)
-	done        chan struct{}
+	// bufferedEvents holds events that arrived after dialSIO started the
+	// readLoop but before the caller installed onEvent. Without it an event
+	// sent immediately after connect (Kuma's loginRequired) can be dropped.
+	bufferedEvents []rawEvent
+	done           chan struct{}
 }
 
 // wsTransport implements eioTransport over a gorilla/websocket connection.
@@ -453,11 +461,18 @@ func (c *sioClient) handleSIO(payload []byte) {
 }
 
 // setOnEvent installs the event handler under the lock. Safe to call after
-// dialSIO has already started the readLoop goroutine.
+// dialSIO has already started the readLoop goroutine; any events that arrived
+// in the meantime are replayed to the handler in order.
 func (c *sioClient) setOnEvent(fn func(rawEvent)) {
 	c.mu.Lock()
 	c.onEvent = fn
+	buffered := c.bufferedEvents
+	c.bufferedEvents = nil
 	c.mu.Unlock()
+
+	for _, ev := range buffered {
+		fn(ev)
+	}
 }
 
 func (c *sioClient) handleEvent(data []byte) {
@@ -471,15 +486,23 @@ func (c *sioClient) handleEvent(data []byte) {
 		return
 	}
 
+	ev := rawEvent{Name: name, Args: raw[1:]}
+
 	// Read the handler under the lock: readLoop starts dispatching events as
 	// soon as dialSIO returns, potentially before the caller has installed
-	// onEvent. The mutex makes that handoff race-free.
+	// onEvent. The mutex makes that handoff race-free, and events seen before
+	// the handler exists are buffered so the caller still receives them.
 	c.mu.Lock()
 	onEvent := c.onEvent
+	if onEvent == nil {
+		if len(c.bufferedEvents) < maxBufferedEvents {
+			c.bufferedEvents = append(c.bufferedEvents, ev)
+		}
+	}
 	c.mu.Unlock()
 
 	if onEvent != nil {
-		onEvent(rawEvent{Name: name, Args: raw[1:]})
+		onEvent(ev)
 	}
 }
 
