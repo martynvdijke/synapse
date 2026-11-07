@@ -1,6 +1,6 @@
 {
   "name": "synapse",
-  "version": "1.31.13",
+  "version": "1.31.14",
   "private": true,
   "scripts": {
     "test": "go test ./...",
