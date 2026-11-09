@@ -1,3 +1,11 @@
+## [1.31.15](https://github.com/martynvdijke/synapse/compare/v1.31.14...v1.31.15) (2026-11-09)
+
+
+### Bug Fixes
+
+* **deps:** update all non-major dependencies ([#84](https://github.com/martynvdijke/synapse/issues/84)) ([6812586](https://github.com/martynvdijke/synapse/commit/68125865a05d3949c0f8e667b6bce6e252e07447))
+* **deps:** update module github.com/gin-contrib/gzip to v1.2.10 ([#83](https://github.com/martynvdijke/synapse/issues/83)) ([d622d13](https://github.com/martynvdijke/synapse/commit/d622d130d9cf8b672ad1b09e3c56e62650416b8d))
+
 ## [1.31.14](https://github.com/martynvdijke/synapse/compare/v1.31.13...v1.31.14) (2026-11-07)
 
 ## [1.31.13](https://github.com/martynvdijke/synapse/compare/v1.31.12...v1.31.13) (2026-11-06)
