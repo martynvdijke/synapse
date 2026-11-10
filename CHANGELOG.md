@@ -1,3 +1,10 @@
+## [1.31.16](https://github.com/martynvdijke/synapse/compare/v1.31.15...v1.31.16) (2026-11-10)
+
+
+### Bug Fixes
+
+* **renovate:** disable platform automerge so Renovate merges green PRs itself ([8f719ab](https://github.com/martynvdijke/synapse/commit/8f719abf208a6197fc391ccea21fc2351e3cdc59))
+
 ## [1.31.15](https://github.com/martynvdijke/synapse/compare/v1.31.14...v1.31.15) (2026-11-09)
 
 
