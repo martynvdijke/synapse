@@ -1,3 +1,10 @@
+## [1.31.18](https://github.com/martynvdijke/synapse/compare/v1.31.17...v1.31.18) (2026-11-11)
+
+
+### Bug Fixes
+
+* **deps:** update all non-major dependencies ([#86](https://github.com/martynvdijke/synapse/issues/86)) ([b88f664](https://github.com/martynvdijke/synapse/commit/b88f6648da75e46d721d111204358f020af7c234))
+
 ## [1.31.17](https://github.com/martynvdijke/synapse/compare/v1.31.16...v1.31.17) (2026-11-10)
 
 ## [1.31.16](https://github.com/martynvdijke/synapse/compare/v1.31.15...v1.31.16) (2026-11-10)
