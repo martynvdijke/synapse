@@ -1,3 +1,10 @@
+# [1.32.0](https://github.com/martynvdijke/synapse/compare/v1.31.18...v1.32.0) (2026-11-12)
+
+
+### Features
+
+* **notifications:** add realtime, web push and FCM notifications ([1cf4892](https://github.com/martynvdijke/synapse/commit/1cf48926738173c3b56c7a06d2c035d9efe1dc8a))
+
 ## [1.31.18](https://github.com/martynvdijke/synapse/compare/v1.31.17...v1.31.18) (2026-11-11)
 
 
