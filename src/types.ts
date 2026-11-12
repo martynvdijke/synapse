@@ -252,6 +252,38 @@ export interface StatusResponse {
   };
 }
 
+export interface NotificationPreferences {
+  enabled: boolean;
+  web_push: boolean;
+  fcm: boolean;
+  new_item: boolean;
+}
+
+export interface NotificationCapabilities {
+  push_enabled: boolean;
+  notify_new_item: boolean;
+  web_push_enabled: boolean;
+  fcm_enabled: boolean;
+  vapid_public_key: string;
+  fcm_project_id: string;
+  fcm_android_channel_id: string;
+}
+
+export interface NotificationsResponse {
+  preferences: NotificationPreferences;
+  capabilities: NotificationCapabilities;
+}
+
+export interface NotificationStreamEvent {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  url: string;
+  category: string;
+  at: string;
+}
+
 export interface SettingsResponse {
   compose_path: string;
   authelia_config_path: string;
@@ -279,6 +311,16 @@ export interface SettingsResponse {
   notify_reconcile?: boolean;
   notify_cooldown_minutes?: number;
   notify_persistent?: boolean;
+  push_enabled?: boolean;
+  notify_new_item?: boolean;
+  web_push_enabled?: boolean;
+  web_push_vapid_public_key?: string;
+  web_push_vapid_private_key?: string;
+  web_push_subject?: string;
+  fcm_enabled?: boolean;
+  fcm_project_id?: string;
+  fcm_service_account_json?: string;
+  fcm_android_channel_id?: string;
   [key: string]: unknown;
 }
 

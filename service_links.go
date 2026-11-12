@@ -373,6 +373,7 @@ func (app *App) CreateServiceLink(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	app.pushNotifier().NotifyNewItemAsync(c.Request.Context(), app.actorName(c), "service link", created.ServiceName)
 	npmNames, kumaNames := app.instanceNameMaps()
 	c.JSON(http.StatusOK, gin.H{
 		"link":             toServiceLinkView(*created, npmNames, kumaNames),

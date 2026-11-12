@@ -46,7 +46,57 @@ export function loadSettings(): void {
         var notifyPersistent = document.getElementById('s-notify-persistent') as HTMLInputElement | null;
         if (notifyPersistent) notifyPersistent.checked = !!(s.notify_persistent);
         loadNotifyMissing();
+        loadPushSettings(s);
     });
+}
+
+// loadPushSettings fills the "Push notifications" card. Secret fields are never
+// populated from the server: they keep their placeholder and are only sent when
+// the admin types a new value.
+function loadPushSettings(s: SettingsResponse): void {
+    setCheckboxValue('s-push-enabled', s.push_enabled);
+    setCheckboxValue('s-push-notify-new-item', s.notify_new_item !== false);
+    setCheckboxValue('s-push-webpush-enabled', s.web_push_enabled);
+    setCheckboxValue('s-push-fcm-enabled', s.fcm_enabled);
+
+    setTextValue('s-push-vapid-public', s.web_push_vapid_public_key);
+    setTextValue('s-push-subject', s.web_push_subject);
+    setTextValue('s-push-fcm-project', s.fcm_project_id);
+    setTextValue('s-push-fcm-channel', s.fcm_android_channel_id);
+
+    var privateKey = (s.web_push_vapid_private_key as string) || '';
+    var privateEl = document.getElementById('s-push-vapid-private') as HTMLInputElement | null;
+    if (privateEl) {
+        privateEl.value = '';
+        privateEl.placeholder = privateKey ? 'Leave blank to keep current (configured)' : 'Leave blank to keep current';
+    }
+    var privateHint = document.getElementById('s-push-vapid-private-hint');
+    if (privateHint) {
+        privateHint.textContent = privateKey ? 'A private key is already configured.' : '';
+    }
+
+    var accountJson = (s.fcm_service_account_json as string) || '';
+    var jsonEl = document.getElementById('s-push-fcm-json') as HTMLTextAreaElement | null;
+    if (jsonEl) {
+        jsonEl.value = '';
+        jsonEl.placeholder = accountJson ? 'Leave blank to keep current (configured)' : 'Leave blank to keep current';
+    }
+    var jsonHint = document.getElementById('s-push-fcm-json-hint');
+    if (jsonHint) {
+        jsonHint.textContent = accountJson
+            ? 'A service account is already configured. Leave blank to keep it.'
+            : 'Paste the service account key JSON from Firebase.';
+    }
+}
+
+function setCheckboxValue(id: string, value: unknown): void {
+    var el = document.getElementById(id) as HTMLInputElement | null;
+    if (el) el.checked = !!value;
+}
+
+function setTextValue(id: string, value: unknown): void {
+    var el = document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null;
+    if (el) el.value = value === undefined || value === null ? '' : String(value);
 }
 
 function renderTrmnlUrls(): void {
@@ -266,11 +316,25 @@ export function saveSettings(e: Event): void {
         notify_docker_image: (document.getElementById('s-notify-docker-image') as HTMLInputElement)?.checked || false,
         notify_reconcile: (document.getElementById('s-notify-reconcile') as HTMLInputElement)?.checked || false,
         notify_cooldown_minutes: parseInt((document.getElementById('s-notify-cooldown') as HTMLInputElement)?.value || '5', 10) || 5,
-        notify_persistent: (document.getElementById('s-notify-persistent') as HTMLInputElement)?.checked || false
+        notify_persistent: (document.getElementById('s-notify-persistent') as HTMLInputElement)?.checked || false,
+        push_enabled: (document.getElementById('s-push-enabled') as HTMLInputElement)?.checked || false,
+        notify_new_item: (document.getElementById('s-push-notify-new-item') as HTMLInputElement)?.checked || false,
+        web_push_enabled: (document.getElementById('s-push-webpush-enabled') as HTMLInputElement)?.checked || false,
+        web_push_vapid_public_key: (document.getElementById('s-push-vapid-public') as HTMLInputElement)?.value || '',
+        web_push_subject: (document.getElementById('s-push-subject') as HTMLInputElement)?.value || '',
+        fcm_enabled: (document.getElementById('s-push-fcm-enabled') as HTMLInputElement)?.checked || false,
+        fcm_project_id: (document.getElementById('s-push-fcm-project') as HTMLInputElement)?.value || '',
+        fcm_android_channel_id: (document.getElementById('s-push-fcm-channel') as HTMLInputElement)?.value || ''
     };
     // Only send the Gotify token when it has a value ("Leave blank to keep current").
     var gotifyToken = (document.getElementById('s-gotify-token') as HTMLInputElement)?.value || '';
     if (gotifyToken) payload.gotify_token = gotifyToken;
+    // Push secrets follow the same rule: blank or the masked "****" keeps the
+    // stored value, so the server never receives a placeholder.
+    var vapidPrivate = (document.getElementById('s-push-vapid-private') as HTMLInputElement)?.value || '';
+    if (vapidPrivate && vapidPrivate !== '****') payload.web_push_vapid_private_key = vapidPrivate;
+    var fcmJson = (document.getElementById('s-push-fcm-json') as HTMLTextAreaElement)?.value || '';
+    if (fcmJson.trim() && fcmJson.trim() !== '****') payload.fcm_service_account_json = fcmJson.trim();
     // Channels document: always sent so removals persist; empty string clears
     // the doc and re-activates the legacy Gotify fallback.
     payload.notify_channels = collectNotifyChannels();

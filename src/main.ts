@@ -17,6 +17,7 @@ import { loadAlertRules, loadIncidents, saveAlertRule, resetAlertRuleForm } from
 import { setupLogFilters, loadLogs, connectLogSSE, toggleLogMeta, isLogsLoaded } from './logs';
 import { getVisibleTabButtons } from './tabVisibility';
 import './tabVisibility';
+import { initNotifications } from './notifications';
 
 // Wire SSE refreshAll reference
 setRefreshAll(refreshAll);
@@ -223,6 +224,9 @@ refreshAll();
 
 // Start SSE
 connectSSE();
+
+// Notifications: bell menu, live stream, browser push
+initNotifications();
 
 // Helper: startSync (used by button handlers)
 function startSync(source: string): void {

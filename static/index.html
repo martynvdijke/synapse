@@ -16,6 +16,15 @@
     <a href="/overview" class="navbar-brand mb-0 h1 text-decoration-none">Synapse</a>
     <span class="text-light opacity-75 small">v{{ .Version }}</span>
     <div class="ms-auto d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-outline-light btn-sm position-relative" id="btn-notifications"
+                aria-label="Notifications" aria-haspopup="dialog" aria-controls="notifications-modal" title="Notifications">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <span id="notification-badge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none">0</span>
+        </button>
         <a href="/overview" class="btn btn-outline-warning btn-sm">Board</a>
         <button class="btn btn-outline-light btn-sm" id="btn-eink" title="Toggle e-ink mode">E-ink: Off</button>
         <button class="btn btn-outline-light btn-sm" id="btn-logout">Logout</button>
@@ -819,6 +828,87 @@
                             </div>
                         </div>
                         <div class="col-12">
+                            <h6 class="mb-3">Push notifications</h6>
+                            <div class="border rounded p-3 bg-light" id="push-settings-card">
+                                <div class="form-text mb-3">In-app toasts and the bell menu work without any setup. Web Push reaches browsers with the tab closed; Android push reaches the Synapse app through Firebase Cloud Messaging.</div>
+
+                                <div class="row g-2 mb-3">
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="s-push-enabled">
+                                            <label class="form-check-label" for="s-push-enabled">Enable push notifications</label>
+                                        </div>
+                                        <div class="form-text">Master switch. When off, no push is sent to browsers or phones.</div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="s-push-notify-new-item">
+                                            <label class="form-check-label" for="s-push-notify-new-item">Notify when a new item is added</label>
+                                        </div>
+                                        <div class="form-text">Sends a notification when a service link or alert rule is added.</div>
+                                    </div>
+                                </div>
+
+                                <hr class="my-3">
+
+                                <h6 class="mb-2">Web Push</h6>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="s-push-webpush-enabled">
+                                    <label class="form-check-label" for="s-push-webpush-enabled">Enable Web Push for browsers</label>
+                                </div>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="s-push-vapid-public">VAPID public key</label>
+                                        <input class="form-control form-control-sm" id="s-push-vapid-public" placeholder="Generate a key pair to fill this in" readonly autocomplete="off">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="s-push-vapid-private">VAPID private key</label>
+                                        <input class="form-control form-control-sm" type="password" id="s-push-vapid-private" placeholder="Leave blank to keep current" autocomplete="new-password">
+                                        <div class="form-text" id="s-push-vapid-private-hint"></div>
+                                    </div>
+                                </div>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="s-push-subject">VAPID subject</label>
+                                        <input class="form-control form-control-sm" id="s-push-subject" placeholder="mailto:admin@example.com" autocomplete="off">
+                                        <div class="form-text">Contact address sent to push services. Use a mailto: or https: URL.</div>
+                                    </div>
+                                    <div class="col-md-6 d-flex align-items-end">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-action="generate-vapid">Generate VAPID keys</button>
+                                    </div>
+                                </div>
+                                <div class="form-text mb-3">Web Push requires HTTPS (localhost is exempt). Browsers refuse new subscriptions on plain HTTP origins.</div>
+
+                                <hr class="my-3">
+
+                                <h6 class="mb-2">Android push (Firebase Cloud Messaging)</h6>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="s-push-fcm-enabled">
+                                    <label class="form-check-label" for="s-push-fcm-enabled">Enable FCM for Android devices</label>
+                                </div>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="s-push-fcm-project">Firebase project ID</label>
+                                        <input class="form-control form-control-sm" id="s-push-fcm-project" placeholder="my-firebase-project" autocomplete="off">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="s-push-fcm-channel">Android notification channel ID</label>
+                                        <input class="form-control form-control-sm" id="s-push-fcm-channel" placeholder="synapse_general" autocomplete="off">
+                                    </div>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label" for="s-push-fcm-json">Service account JSON</label>
+                                    <textarea class="form-control form-control-sm" id="s-push-fcm-json" rows="3" placeholder="Leave blank to keep current" spellcheck="false" autocomplete="off"></textarea>
+                                    <div class="form-text" id="s-push-fcm-json-hint">Paste the service account key JSON from Firebase.</div>
+                                </div>
+                                <div class="form-text mb-3">Create a service account in the <a href="https://console.firebase.google.com/project/_/settings/serviceaccounts/adminsdk" target="_blank" rel="noopener noreferrer">Firebase console</a>, download its JSON key, and paste it above. Android devices register themselves from the app; this page does not manage device tokens.</div>
+
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-outline-info btn-sm" data-action="push-test">Send test notification to me</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12">
                             <h6 class="mb-3">Docker Events &amp; Reconcile</h6>
                             <div class="mb-2">
                                 <label class="form-label">Docker Socket</label>
@@ -1093,6 +1183,50 @@
                 <button class="btn btn-outline-danger btn-sm me-auto" id="monitor-edit-delete">Delete Monitor</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
                 <button class="btn btn-primary btn-sm" id="monitor-edit-save">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Notifications Modal -->
+<div class="modal fade" id="notifications-modal" tabindex="-1" aria-labelledby="notifications-modal-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="notifications-modal-title">Notifications</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="fw-semibold mb-2">Your settings</div>
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" id="np-enabled">
+                    <label class="form-check-label" for="np-enabled">Enable notifications for this account</label>
+                </div>
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" id="np-web-push">
+                    <label class="form-check-label" for="np-web-push">Web Push</label>
+                </div>
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" id="np-fcm">
+                    <label class="form-check-label" for="np-fcm">Android push (FCM)</label>
+                </div>
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" id="np-new-item">
+                    <label class="form-check-label" for="np-new-item">New items</label>
+                </div>
+                <div class="form-text mb-3">Changes save immediately.</div>
+
+                <hr>
+
+                <div class="fw-semibold mb-1">Browser push</div>
+                <div class="small text-muted mb-2" id="np-browser-status" role="status" aria-live="polite">Checking browser support…</div>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-primary btn-sm" id="btn-push-enable">Enable browser notifications</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-push-test">Send test</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="btn-push-off">Turn off</button>
+                </div>
+
+                <div class="form-text mt-3">Android push is delivered by the Synapse Android app through Firebase Cloud Messaging. Register the device in the app; the toggle above only controls whether this account receives it.</div>
             </div>
         </div>
     </div>

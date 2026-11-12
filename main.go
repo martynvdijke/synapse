@@ -38,6 +38,7 @@ import (
 	"synapse/internal/notify"
 	"synapse/internal/notify/channels"
 	"synapse/internal/npm"
+	"synapse/internal/push"
 	synclib "synapse/internal/sync"
 	"synapse/internal/telemetry"
 )
@@ -341,6 +342,19 @@ type App struct {
 	snapshotMu        sync.Mutex
 	snapshotRefreshCh chan struct{}
 	snapshotVersion   uint64
+
+	// pushOnce guards the lazily created push notifier (and its SSE hub).
+	pushOnce sync.Once
+	push     *push.Notifier
+}
+
+// pushNotifier returns the process-wide push notifier. Created on first use so
+// tests that never touch push do not allocate its hub.
+func (app *App) pushNotifier() *push.Notifier {
+	app.pushOnce.Do(func() {
+		app.push = push.NewNotifier(app.database, app.settings)
+	})
+	return app.push
 }
 
 func (app *App) settings() db.Settings {
@@ -382,6 +396,16 @@ func (app *App) settings() db.Settings {
 		AlertEvalIntervalSeconds:  getEnvInt("ALERT_EVAL_INTERVAL_SECONDS", 60),
 		AlertReminderMinutes:      getEnvInt("ALERT_REMINDER_MINUTES", 0),
 		KumaDefaultTags:           getEnv("KUMA_DEFAULT_TAGS", ""),
+		PushEnabled:               getEnv("PUSH_ENABLED", "") == "true",
+		NotifyNewItem:             getEnv("NOTIFY_NEW_ITEM", "true") == "true",
+		WebPushEnabled:            getEnv("WEB_PUSH_ENABLED", "") == "true",
+		WebPushVAPIDPublicKey:     getEnv("WEB_PUSH_VAPID_PUBLIC_KEY", ""),
+		WebPushVAPIDPrivateKey:    getEnv("WEB_PUSH_VAPID_PRIVATE_KEY", ""),
+		WebPushSubject:            getEnv("WEB_PUSH_SUBJECT", "mailto:admin@localhost"),
+		FCMEnabled:                getEnv("FCM_ENABLED", "") == "true",
+		FCMProjectID:              getEnv("FCM_PROJECT_ID", ""),
+		FCMServiceAccountJSON:     getEnv("FCM_SERVICE_ACCOUNT_JSON", ""),
+		FCMAndroidChannelID:       getEnv("FCM_ANDROID_CHANNEL_ID", "synapse_general"),
 	})
 }
 
@@ -589,6 +613,9 @@ func main() {
 	r.GET("/static/*filepath", func(c *gin.Context) {
 		c.File("static/" + c.Param("filepath"))
 	})
+	// Service worker must be served from the origin root to control the app
+	// scope. Unauthenticated by design (browsers fetch it without cookies).
+	r.StaticFile("/sw.js", "./static/sw.js")
 
 	// Public board — Homer-like overview of all running services (no auth)
 	r.GET("/overview", app.OverviewPage)
@@ -641,6 +668,8 @@ func main() {
 		api.GET("/npm-instances", app.ListNPMInstances)
 		api.GET("/alert-rules", app.AlertRules)
 		api.GET("/incidents", app.Incidents)
+		api.GET("/notifications", app.ListNotifications)
+		api.GET("/notifications/stream", app.NotificationsStream)
 
 		// Token lifecycle (session-only, owner-scoped)
 		api.POST("/tokens", app.CreateToken)
@@ -695,6 +724,13 @@ func main() {
 			mut.PUT("/authelia-instances/:id", app.UpdateAutheliaInstance)
 			mut.DELETE("/authelia-instances/:id", app.DeleteAutheliaInstance)
 			mut.POST("/authelia-instances/:id/test", app.TestAutheliaInstance)
+			mut.PUT("/notifications/preferences", app.UpdateNotificationPreferences)
+			mut.POST("/notifications/subscriptions", app.CreatePushSubscription)
+			mut.DELETE("/notifications/subscriptions", app.DeletePushSubscription)
+			mut.POST("/notifications/devices", app.RegisterPushDevice)
+			mut.DELETE("/notifications/devices/:id", app.DeletePushDevice)
+			mut.POST("/notifications/test", app.TestPushNotification)
+			mut.POST("/notifications/vapid", app.GenerateVAPIDKeysHandler)
 		}
 	}
 
@@ -1104,44 +1140,56 @@ func (app *App) GetSettings(c *gin.Context) {
 	autheliaInstances, _ := app.database.GetAutheliaInstances()
 	autheliaMigrated := len(autheliaInstances) > 0
 	c.JSON(http.StatusOK, gin.H{
-		"compose_path":                 s.ComposePath,
-		"npm_host":                     s.NPMHost,
-		"npm_user":                     s.NPMUser,
-		"npm_pass":                     mask(s.NPMPass),
-		"npm_migrated":                 npmMigrated,
-		"authelia_config_path":         s.AutheliaConfigPath,
-		"authelia_db_path":             s.AutheliaDBPath,
-		"authelia_sync_enabled":        s.AutheliaSyncEnabled,
-		"authelia_default_policy":      s.AutheliaDefaultPolicy,
-		"authelia_sync_overrides":      s.AutheliaSyncOverrides,
-		"authelia_migrated":            autheliaMigrated,
-		"otel_endpoint":                s.OTelEndpoint,
-		"otel_enabled":                 s.OTelEnabled,
-		"eink_enabled":                 s.EinkEnabled,
-		"trmnl_api_token":              mask(s.TrmnlApiToken),
-		"notify_enabled":               s.NotifyEnabled,
-		"notify_interval_minutes":      s.NotifyIntervalMinutes,
-		"gotify_url":                   s.GotifyURL,
-		"gotify_token":                 mask(s.GotifyToken),
-		"gotify_priority":              s.GotifyPriority,
-		"notify_channels":              maskChannelsDoc(s.NotifyChannels),
-		"docker_socket":                s.DockerSocket,
-		"docker_events_enabled":        s.DockerEventsEnabled,
-		"docker_events_retention_days": s.DockerEventsRetentionDays,
-		"reconcile_enabled":            s.ReconcileEnabled,
-		"reconcile_interval_minutes":   s.ReconcileIntervalMinutes,
-		"reconcile_dry_run_default":    s.ReconcileDryRunDefault,
-		"notify_docker_die":            s.NotifyDockerDie,
-		"notify_docker_health":         s.NotifyDockerHealth,
-		"notify_docker_image":          s.NotifyDockerImage,
-		"notify_reconcile":             s.NotifyReconcile,
-		"notify_alerts":                s.NotifyAlerts,
-		"notify_cooldown_minutes":      s.NotifyCooldownMinutes,
-		"notify_persistent":            s.NotifyPersistent,
-		"alerts_enabled":               s.AlertsEnabled,
-		"alert_eval_interval_seconds":  s.AlertEvalIntervalSeconds,
-		"alert_reminder_minutes":       s.AlertReminderMinutes,
-		"kuma_default_tags":            s.KumaDefaultTags,
+		"compose_path":                   s.ComposePath,
+		"npm_host":                       s.NPMHost,
+		"npm_user":                       s.NPMUser,
+		"npm_pass":                       mask(s.NPMPass),
+		"npm_migrated":                   npmMigrated,
+		"authelia_config_path":           s.AutheliaConfigPath,
+		"authelia_db_path":               s.AutheliaDBPath,
+		"authelia_sync_enabled":          s.AutheliaSyncEnabled,
+		"authelia_default_policy":        s.AutheliaDefaultPolicy,
+		"authelia_sync_overrides":        s.AutheliaSyncOverrides,
+		"authelia_migrated":              autheliaMigrated,
+		"otel_endpoint":                  s.OTelEndpoint,
+		"otel_enabled":                   s.OTelEnabled,
+		"eink_enabled":                   s.EinkEnabled,
+		"trmnl_api_token":                mask(s.TrmnlApiToken),
+		"notify_enabled":                 s.NotifyEnabled,
+		"notify_interval_minutes":        s.NotifyIntervalMinutes,
+		"gotify_url":                     s.GotifyURL,
+		"gotify_token":                   mask(s.GotifyToken),
+		"gotify_priority":                s.GotifyPriority,
+		"notify_channels":                maskChannelsDoc(s.NotifyChannels),
+		"docker_socket":                  s.DockerSocket,
+		"docker_events_enabled":          s.DockerEventsEnabled,
+		"docker_events_retention_days":   s.DockerEventsRetentionDays,
+		"reconcile_enabled":              s.ReconcileEnabled,
+		"reconcile_interval_minutes":     s.ReconcileIntervalMinutes,
+		"reconcile_dry_run_default":      s.ReconcileDryRunDefault,
+		"notify_docker_die":              s.NotifyDockerDie,
+		"notify_docker_health":           s.NotifyDockerHealth,
+		"notify_docker_image":            s.NotifyDockerImage,
+		"notify_reconcile":               s.NotifyReconcile,
+		"notify_alerts":                  s.NotifyAlerts,
+		"notify_cooldown_minutes":        s.NotifyCooldownMinutes,
+		"notify_persistent":              s.NotifyPersistent,
+		"alerts_enabled":                 s.AlertsEnabled,
+		"alert_eval_interval_seconds":    s.AlertEvalIntervalSeconds,
+		"alert_reminder_minutes":         s.AlertReminderMinutes,
+		"kuma_default_tags":              s.KumaDefaultTags,
+		"push_enabled":                   s.PushEnabled,
+		"notify_new_item":                s.NotifyNewItem,
+		"web_push_enabled":               s.WebPushEnabled,
+		"web_push_vapid_public_key":      s.WebPushVAPIDPublicKey,
+		"web_push_vapid_private_key":     mask(s.WebPushVAPIDPrivateKey),
+		"web_push_vapid_private_key_set": s.WebPushVAPIDPrivateKey != "",
+		"web_push_subject":               s.WebPushSubject,
+		"fcm_enabled":                    s.FCMEnabled,
+		"fcm_project_id":                 s.FCMProjectID,
+		"fcm_service_account_json":       mask(s.FCMServiceAccountJSON),
+		"fcm_service_account_json_set":   s.FCMServiceAccountJSON != "",
+		"fcm_android_channel_id":         s.FCMAndroidChannelID,
 	})
 }
 
@@ -1393,6 +1441,66 @@ func (app *App) SaveSettings(c *gin.Context) {
 		var val string
 		json.Unmarshal(v, &val)
 		pairs["kuma_default_tags"] = val
+	}
+
+	// Push notifications (Web Push + FCM). Secrets follow the existing
+	// write-only contract: "****" or blank means "keep the stored value".
+	if v, ok := raw["push_enabled"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["push_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["notify_new_item"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["notify_new_item"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["web_push_enabled"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["web_push_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["web_push_vapid_public_key"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		pairs["web_push_vapid_public_key"] = val
+	}
+	if v, ok := raw["web_push_vapid_private_key"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		if val != "" && val != "****" {
+			pairs["web_push_vapid_private_key"] = val
+		}
+	}
+	if v, ok := raw["web_push_subject"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		pairs["web_push_subject"] = val
+	}
+	if v, ok := raw["fcm_enabled"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["fcm_enabled"] = strconv.FormatBool(val)
+	}
+	if v, ok := raw["fcm_project_id"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		pairs["fcm_project_id"] = val
+	}
+	if v, ok := raw["fcm_service_account_json"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		if val != "" && val != "****" {
+			pairs["fcm_service_account_json"] = val
+		}
+	}
+	if v, ok := raw["fcm_android_channel_id"]; ok {
+		var val string
+		json.Unmarshal(v, &val)
+		if strings.TrimSpace(val) == "" {
+			val = "synapse_general"
+		}
+		pairs["fcm_android_channel_id"] = val
 	}
 
 	if err := app.database.SaveSettingsMap(pairs); err != nil {

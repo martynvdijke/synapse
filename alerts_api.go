@@ -150,6 +150,7 @@ func (app *App) CreateAlertRule(c *gin.Context) {
 		return
 	}
 	rule.ID = id
+	app.pushNotifier().NotifyNewItemAsync(c.Request.Context(), app.actorName(c), "alert rule", rule.Name)
 	c.JSON(http.StatusCreated, rule)
 }
 

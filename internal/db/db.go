@@ -27,11 +27,13 @@ import (
 // secretSettingKeys are stored encrypted at rest. notify_channels contains
 // per-channel tokens in its JSON document, so the whole value is encrypted.
 var secretSettingKeys = map[string]bool{
-	"npm_pass":        true,
-	"kuma_pass":       true,
-	"trmnl_api_token": true,
-	"gotify_token":    true,
-	"notify_channels": true,
+	"npm_pass":                   true,
+	"kuma_pass":                  true,
+	"trmnl_api_token":            true,
+	"gotify_token":               true,
+	"notify_channels":            true,
+	"web_push_vapid_private_key": true,
+	"fcm_service_account_json":   true,
 }
 
 type SyncRun struct {
@@ -225,6 +227,51 @@ type Settings struct {
 	AlertEvalIntervalSeconds  int    `json:"alert_eval_interval_seconds"`
 	AlertReminderMinutes      int    `json:"alert_reminder_minutes"`
 	KumaDefaultTags           string `json:"kuma_default_tags"`
+
+	// Push notifications (Web Push + FCM). PushEnabled is the global master
+	// switch; NotifyNewItem is the general "new item created" toggle.
+	PushEnabled            bool   `json:"push_enabled"`
+	NotifyNewItem          bool   `json:"notify_new_item"`
+	WebPushEnabled         bool   `json:"web_push_enabled"`
+	WebPushVAPIDPublicKey  string `json:"web_push_vapid_public_key"`
+	WebPushVAPIDPrivateKey string `json:"web_push_vapid_private_key"`
+	WebPushSubject         string `json:"web_push_subject"`
+	FCMEnabled             bool   `json:"fcm_enabled"`
+	FCMProjectID           string `json:"fcm_project_id"`
+	FCMServiceAccountJSON  string `json:"fcm_service_account_json"`
+	FCMAndroidChannelID    string `json:"fcm_android_channel_id"`
+}
+
+// PushPreferences holds a user's per-channel notification opt-ins.
+type PushPreferences struct {
+	UserID    int64     `json:"user_id"`
+	Enabled   bool      `json:"enabled"`
+	WebPush   bool      `json:"web_push"`
+	FCM       bool      `json:"fcm"`
+	NewItem   bool      `json:"new_item"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PushSubscription is a browser Web Push subscription.
+type PushSubscription struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Endpoint  string    `json:"endpoint"`
+	P256DH    string    `json:"p256dh"`
+	Auth      string    `json:"auth"`
+	UserAgent string    `json:"user_agent"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PushDevice is an FCM registration token for a mobile device.
+type PushDevice struct {
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	Token      string    `json:"token"`
+	Platform   string    `json:"platform"`
+	DeviceName string    `json:"device_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastSeen   time.Time `json:"last_seen"`
 }
 
 type DB struct {
@@ -270,6 +317,9 @@ func OpenWithCipher(path string, cipher *secrets.Cipher) (*DB, error) {
 		return nil, err
 	}
 	if err := db.createSessionsTable(); err != nil {
+		return nil, err
+	}
+	if err := db.createPushTables(); err != nil {
 		return nil, err
 	}
 	if err := db.EncryptLegacySecrets(); err != nil {
@@ -337,6 +387,47 @@ func (db *DB) createAPITokensTable() error {
 	return err
 }
 
+// createPushTables creates the per-user push preference, Web Push subscription
+// and FCM device stores.
+func (db *DB) createPushTables() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS push_preferences (
+			user_id INTEGER PRIMARY KEY,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			web_push INTEGER NOT NULL DEFAULT 1,
+			fcm INTEGER NOT NULL DEFAULT 1,
+			new_item INTEGER NOT NULL DEFAULT 1,
+			updated_at DATETIME NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS push_subscriptions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			endpoint TEXT NOT NULL UNIQUE,
+			p256dh TEXT NOT NULL,
+			auth TEXT NOT NULL,
+			user_agent TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)`,
+		`CREATE TABLE IF NOT EXISTS push_devices (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			token TEXT NOT NULL UNIQUE,
+			platform TEXT NOT NULL DEFAULT 'android',
+			device_name TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			last_seen DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_push_devices_user ON push_devices(user_id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.rawDB.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (db *DB) CreateAdminUser(username, passwordHash string) (int64, error) {
 	res, err := db.rawDB.Exec("INSERT INTO admin_users (username, password) VALUES (?, ?)", username, passwordHash)
 	if err != nil {
@@ -348,6 +439,16 @@ func (db *DB) CreateAdminUser(username, passwordHash string) (int64, error) {
 func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
 	var u AdminUser
 	err := db.rawDB.QueryRow("SELECT id, username, password FROM admin_users WHERE username = ?", username).Scan(&u.ID, &u.Username, &u.Password)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// GetAdminUserByID returns an admin user by its primary key.
+func (db *DB) GetAdminUserByID(id int64) (*AdminUser, error) {
+	var u AdminUser
+	err := db.rawDB.QueryRow("SELECT id, username, password FROM admin_users WHERE id = ?", id).Scan(&u.ID, &u.Username, &u.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -1487,6 +1588,26 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			s.KumaDefaultTags = row.Value
 		case "notify_persistent":
 			s.NotifyPersistent = row.Value == "true"
+		case "push_enabled":
+			s.PushEnabled = row.Value == "true"
+		case "notify_new_item":
+			s.NotifyNewItem = row.Value == "true"
+		case "web_push_enabled":
+			s.WebPushEnabled = row.Value == "true"
+		case "web_push_vapid_public_key":
+			s.WebPushVAPIDPublicKey = row.Value
+		case "web_push_vapid_private_key":
+			s.WebPushVAPIDPrivateKey = value
+		case "web_push_subject":
+			s.WebPushSubject = row.Value
+		case "fcm_enabled":
+			s.FCMEnabled = row.Value == "true"
+		case "fcm_project_id":
+			s.FCMProjectID = row.Value
+		case "fcm_service_account_json":
+			s.FCMServiceAccountJSON = value
+		case "fcm_android_channel_id":
+			s.FCMAndroidChannelID = row.Value
 		}
 	}
 	if len(toEncrypt) > 0 {
@@ -1639,6 +1760,16 @@ func (db *DB) SaveSettings(s Settings) error {
 		"alert_eval_interval_seconds":  strconv.Itoa(s.AlertEvalIntervalSeconds),
 		"alert_reminder_minutes":       strconv.Itoa(s.AlertReminderMinutes),
 		"kuma_default_tags":            s.KumaDefaultTags,
+		"push_enabled":                 strconv.FormatBool(s.PushEnabled),
+		"notify_new_item":              strconv.FormatBool(s.NotifyNewItem),
+		"web_push_enabled":             strconv.FormatBool(s.WebPushEnabled),
+		"web_push_vapid_public_key":    s.WebPushVAPIDPublicKey,
+		"web_push_vapid_private_key":   s.WebPushVAPIDPrivateKey,
+		"web_push_subject":             s.WebPushSubject,
+		"fcm_enabled":                  strconv.FormatBool(s.FCMEnabled),
+		"fcm_project_id":               s.FCMProjectID,
+		"fcm_service_account_json":     s.FCMServiceAccountJSON,
+		"fcm_android_channel_id":       s.FCMAndroidChannelID,
 	})
 }
 
@@ -1791,5 +1922,220 @@ func (db *DB) RevokeTempAccess(id int64) error {
 func (db *DB) CleanupExpiredTempAccess() error {
 	now := time.Now()
 	_, err := db.rawDB.Exec("UPDATE temp_access SET status = 'expired' WHERE status = 'active' AND expires_at <= ?", now)
+	return err
+}
+
+// --- Push notification store ---
+
+// GetPushPreferences returns the user's push preferences. A user without a
+// stored row gets all-true defaults so behavior is opt-out per user.
+func (db *DB) GetPushPreferences(userID int64) (PushPreferences, error) {
+	p := PushPreferences{UserID: userID, Enabled: true, WebPush: true, FCM: true, NewItem: true}
+	var enabled, webPush, fcm, newItem int
+	var updated time.Time
+	err := db.rawDB.QueryRow(
+		`SELECT enabled, web_push, fcm, new_item, updated_at FROM push_preferences WHERE user_id = ?`,
+		userID,
+	).Scan(&enabled, &webPush, &fcm, &newItem, &updated)
+	if err == sql.ErrNoRows {
+		return p, nil
+	}
+	if err != nil {
+		return p, err
+	}
+	p.Enabled = enabled != 0
+	p.WebPush = webPush != 0
+	p.FCM = fcm != 0
+	p.NewItem = newItem != 0
+	p.UpdatedAt = updated
+	return p, nil
+}
+
+// SavePushPreferences upserts a user's push preferences.
+func (db *DB) SavePushPreferences(p PushPreferences) error {
+	now := time.Now()
+	_, err := db.rawDB.Exec(
+		`INSERT INTO push_preferences (user_id, enabled, web_push, fcm, new_item, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id) DO UPDATE SET
+		   enabled=excluded.enabled, web_push=excluded.web_push, fcm=excluded.fcm,
+		   new_item=excluded.new_item, updated_at=excluded.updated_at`,
+		p.UserID, boolInt(p.Enabled), boolInt(p.WebPush), boolInt(p.FCM), boolInt(p.NewItem), now,
+	)
+	return err
+}
+
+// UpsertPushSubscription inserts or refreshes a Web Push subscription. The
+// endpoint is globally unique; a repeat registration moves it to the current
+// user and updates its keys.
+func (db *DB) UpsertPushSubscription(s *PushSubscription) (int64, error) {
+	now := time.Now()
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = now
+	}
+	_, err := db.rawDB.Exec(
+		`INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(endpoint) DO UPDATE SET
+		   user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth,
+		   user_agent=excluded.user_agent`,
+		s.UserID, s.Endpoint, s.P256DH, s.Auth, s.UserAgent, s.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	if err := db.rawDB.QueryRow(`SELECT id FROM push_subscriptions WHERE endpoint = ?`, s.Endpoint).Scan(&id); err != nil {
+		return 0, err
+	}
+	s.ID = id
+	return id, nil
+}
+
+func scanPushSubscription(scanner interface{ Scan(...any) error }) (PushSubscription, error) {
+	var s PushSubscription
+	err := scanner.Scan(&s.ID, &s.UserID, &s.Endpoint, &s.P256DH, &s.Auth, &s.UserAgent, &s.CreatedAt)
+	return s, err
+}
+
+const pushSubscriptionCols = `id, user_id, endpoint, p256dh, auth, user_agent, created_at`
+
+// ListPushSubscriptions returns the Web Push subscriptions for one user.
+func (db *DB) ListPushSubscriptions(userID int64) ([]PushSubscription, error) {
+	rows, err := db.rawDB.Query(`SELECT `+pushSubscriptionCols+` FROM push_subscriptions WHERE user_id = ? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushSubscription
+	for rows.Next() {
+		s, err := scanPushSubscription(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListAllPushSubscriptions returns every Web Push subscription.
+func (db *DB) ListAllPushSubscriptions() ([]PushSubscription, error) {
+	rows, err := db.rawDB.Query(`SELECT ` + pushSubscriptionCols + ` FROM push_subscriptions ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushSubscription
+	for rows.Next() {
+		s, err := scanPushSubscription(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// DeletePushSubscriptionByEndpoint removes one user's subscription by endpoint.
+func (db *DB) DeletePushSubscriptionByEndpoint(userID int64, endpoint string) error {
+	_, err := db.rawDB.Exec(`DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?`, userID, endpoint)
+	return err
+}
+
+// DeletePushSubscriptionByID removes a subscription by id (used to prune gone
+// endpoints).
+func (db *DB) DeletePushSubscriptionByID(id int64) error {
+	_, err := db.rawDB.Exec(`DELETE FROM push_subscriptions WHERE id = ?`, id)
+	return err
+}
+
+// UpsertPushDevice registers or refreshes an FCM token.
+func (db *DB) UpsertPushDevice(d *PushDevice) (int64, error) {
+	now := time.Now()
+	if d.CreatedAt.IsZero() {
+		d.CreatedAt = now
+	}
+	if d.LastSeen.IsZero() {
+		d.LastSeen = now
+	}
+	_, err := db.rawDB.Exec(
+		`INSERT INTO push_devices (user_id, token, platform, device_name, created_at, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(token) DO UPDATE SET
+		   user_id=excluded.user_id, platform=excluded.platform,
+		   device_name=excluded.device_name, last_seen=excluded.last_seen`,
+		d.UserID, d.Token, d.Platform, d.DeviceName, d.CreatedAt, d.LastSeen,
+	)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	if err := db.rawDB.QueryRow(`SELECT id FROM push_devices WHERE token = ?`, d.Token).Scan(&id); err != nil {
+		return 0, err
+	}
+	d.ID = id
+	return id, nil
+}
+
+func scanPushDevice(scanner interface{ Scan(...any) error }) (PushDevice, error) {
+	var d PushDevice
+	err := scanner.Scan(&d.ID, &d.UserID, &d.Token, &d.Platform, &d.DeviceName, &d.CreatedAt, &d.LastSeen)
+	return d, err
+}
+
+const pushDeviceCols = `id, user_id, token, platform, device_name, created_at, last_seen`
+
+// ListPushDevices returns a user's registered FCM devices.
+func (db *DB) ListPushDevices(userID int64) ([]PushDevice, error) {
+	rows, err := db.rawDB.Query(`SELECT `+pushDeviceCols+` FROM push_devices WHERE user_id = ? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushDevice
+	for rows.Next() {
+		d, err := scanPushDevice(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ListAllPushDevices returns every registered FCM device.
+func (db *DB) ListAllPushDevices() ([]PushDevice, error) {
+	rows, err := db.rawDB.Query(`SELECT ` + pushDeviceCols + ` FROM push_devices ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushDevice
+	for rows.Next() {
+		d, err := scanPushDevice(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DeletePushDevice removes one user's device by id.
+func (db *DB) DeletePushDevice(userID, id int64) error {
+	_, err := db.rawDB.Exec(`DELETE FROM push_devices WHERE user_id = ? AND id = ?`, userID, id)
+	return err
+}
+
+// DeletePushDeviceByToken removes a device by its FCM token (used to prune
+// tokens FCM reports as unregistered).
+func (db *DB) DeletePushDeviceByToken(token string) error {
+	_, err := db.rawDB.Exec(`DELETE FROM push_devices WHERE token = ?`, token)
+	return err
+}
+
+// TouchPushDevice updates the last-seen timestamp for a token.
+func (db *DB) TouchPushDevice(token string) error {
+	_, err := db.rawDB.Exec(`UPDATE push_devices SET last_seen = ? WHERE token = ?`, time.Now(), token)
 	return err
 }

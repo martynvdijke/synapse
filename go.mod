@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	entgo.io/ent v0.14.6
+	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/gin-contrib/gzip v1.2.10
 	github.com/gin-gonic/gin v1.12.0
@@ -54,6 +55,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.5 // indirect
 	github.com/goccy/go-json v0.11.2 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect

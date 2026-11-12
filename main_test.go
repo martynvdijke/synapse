@@ -1044,6 +1044,8 @@ func setupRouter(app *App) *gin.Engine {
 		api.GET("/npm-instances", app.ListNPMInstances)
 		api.GET("/alert-rules", app.AlertRules)
 		api.GET("/incidents", app.Incidents)
+		api.GET("/notifications", app.ListNotifications)
+		api.GET("/notifications/stream", app.NotificationsStream)
 
 		// Token lifecycle (session-only, owner-scoped)
 		api.POST("/tokens", app.CreateToken)
@@ -1094,6 +1096,13 @@ func setupRouter(app *App) *gin.Engine {
 			mut.PUT("/authelia-instances/:id", app.UpdateAutheliaInstance)
 			mut.DELETE("/authelia-instances/:id", app.DeleteAutheliaInstance)
 			mut.POST("/authelia-instances/:id/test", app.TestAutheliaInstance)
+			mut.PUT("/notifications/preferences", app.UpdateNotificationPreferences)
+			mut.POST("/notifications/subscriptions", app.CreatePushSubscription)
+			mut.DELETE("/notifications/subscriptions", app.DeletePushSubscription)
+			mut.POST("/notifications/devices", app.RegisterPushDevice)
+			mut.DELETE("/notifications/devices/:id", app.DeletePushDevice)
+			mut.POST("/notifications/test", app.TestPushNotification)
+			mut.POST("/notifications/vapid", app.GenerateVAPIDKeysHandler)
 		}
 	}
 

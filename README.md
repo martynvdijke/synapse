@@ -227,6 +227,86 @@ Open **[http://localhost:6270](http://localhost:6270)** and complete the initial
 | `POST` | `/api/incidents/:id/ack` | Acknowledge an open incident |
 | `POST` | `/api/incidents/:id/resolve` | Resolve an open or acknowledged incident |
 
+## Push notifications
+
+Synapse can notify users when a new item (service link or alert rule) is
+created: in-app realtime over SSE, in the browser via Web Push, and on Android
+via Firebase Cloud Messaging (FCM). Configuration is admin-wide; each user
+controls their own opt-ins.
+
+### Admin settings
+
+All of these are stored through the normal settings API (`POST /api/settings`)
+and editable in **Settings → Push notifications**. Secret values
+(`web_push_vapid_private_key`, `fcm_service_account_json`) are write-only: the
+read API returns `****` plus a `*_set` flag, and posting `****` or an empty
+string keeps the stored value.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `push_enabled` | `false` | Global master switch for new-item push |
+| `notify_new_item` | `true` | General "new item created" toggle |
+| `web_push_enabled` | `false` | Enable browser Web Push delivery |
+| `web_push_vapid_public_key` | — | VAPID public key (base64url) |
+| `web_push_vapid_private_key` | — | VAPID private key (secret) |
+| `web_push_subject` | `mailto:admin@localhost` | VAPID `sub` claim (mailto or https URL) |
+| `fcm_enabled` | `false` | Enable FCM (Android) delivery |
+| `fcm_project_id` | — | Firebase project id |
+| `fcm_service_account_json` | — | Google service-account JSON (secret) |
+| `fcm_android_channel_id` | `synapse_general` | Android notification channel id |
+
+### Web Push setup
+
+1. Generate a VAPID key pair with `POST /api/notifications/vapid` (returns
+   `public_key` / `private_key`; nothing is saved automatically).
+2. Save both keys and `web_push_enabled=true` in settings.
+3. The frontend registers the browser subscription with
+   `POST /api/notifications/subscriptions` using the public key, and serves the
+   service worker from `/sw.js` (root-scoped, unauthenticated).
+
+Browsers that report an endpoint as gone (404/410) are pruned automatically.
+
+### FCM (Android) setup
+
+1. Create a Firebase project and a service account with the
+   *Firebase Cloud Messaging API* enabled. Download its JSON key.
+2. Save the JSON in `fcm_service_account_json`, set `fcm_project_id`, and set
+   `fcm_enabled=true`.
+3. The server signs a JWT-bearer OAuth2 assertion (scope
+   `https://www.googleapis.com/auth/firebase.messaging`), caches the access
+   token, and sends to `POST /v1/projects/{project}/messages:send`.
+   Tokens FCM reports as `UNREGISTERED`/`NOT_FOUND` are pruned.
+
+### Per-user API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/notifications` | Current user's preferences + server capabilities |
+| `GET` | `/api/notifications/stream` | SSE stream of realtime events (`Event` JSON) |
+| `PUT` | `/api/notifications/preferences` | Save `{enabled, web_push, fcm, new_item}` |
+| `POST` | `/api/notifications/subscriptions` | Register Web Push `{endpoint, keys:{p256dh, auth}}` |
+| `DELETE` | `/api/notifications/subscriptions` | Remove `{endpoint}` |
+| `POST` | `/api/notifications/devices` | Register FCM `{token, platform, device_name}` |
+| `DELETE` | `/api/notifications/devices/:id` | Remove a device |
+| `POST` | `/api/notifications/test` | Send a test push to the current user |
+| `POST` | `/api/notifications/vapid` | Generate a new VAPID key pair (not saved) |
+
+Mutation routes live in the bearer-token-protected group, so automation can use
+the same contract with `Authorization: Bearer <token>`.
+
+### Android integration contract
+
+1. Obtain an FCM registration token and register it:
+   `POST /api/notifications/devices` with a bearer token and body
+   `{"token": "...", "platform": "android", "device_name": "Pixel"}`.
+2. The notification payload contains `notification.title`,
+   `notification.body`, and a `data` map with `type`, `kind`, `name`,
+   `event_id` and `channel_id`. The Android app must create a notification
+   channel with id `synapse_general` (or whatever `fcm_android_channel_id` is
+   set to) before displaying messages.
+3. Re-registering the same token refreshes `last_seen`; the token stays unique
+   per device.
+
 ## Project Structure
 
 ```
