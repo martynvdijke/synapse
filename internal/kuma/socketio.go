@@ -1591,10 +1591,45 @@ func DeleteMonitorViaSocketIO(kumaURL, username, password string, monitorID int)
 	}
 }
 
-// EditMonitorViaSocketIO updates a monitor in Kuma via Socket.IO. payload is
-// the full monitor object (name, type, url, docker_container, docker_host,
-// interval, retryInterval, maxretries, conditions, ...) as Kuma's editMonitor
-// expects. Type change is an edit with a different "type" field.
+// getMonitorViaSocketIO fetches the complete monitor object for monitorID.
+// Kuma's editMonitor replaces the stored row with the object it is given, so
+// the fields we are not changing must come from the current monitor.
+func getMonitorViaSocketIO(cli *sioClient, monitorID int) (map[string]any, error) {
+	ackCh := cli.emitWithAck("getMonitor", monitorID)
+	select {
+	case resp := <-ackCh:
+		if len(resp) == 0 {
+			return nil, fmt.Errorf("get monitor: empty response")
+		}
+		var r struct {
+			Ok      bool           `json:"ok"`
+			Msg     string         `json:"msg"`
+			Monitor map[string]any `json:"monitor"`
+		}
+		if err := json.Unmarshal(resp[0], &r); err != nil {
+			return nil, fmt.Errorf("get monitor: %w", err)
+		}
+		if !r.Ok || r.Monitor == nil {
+			if r.Msg == "" {
+				r.Msg = "monitor not found"
+			}
+			return nil, fmt.Errorf("get monitor %d: %s", monitorID, r.Msg)
+		}
+		return r.Monitor, nil
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("get monitor response timeout")
+	}
+}
+
+// EditMonitorViaSocketIO updates a monitor in Kuma via Socket.IO. payload holds
+// only the fields to change (type, url, docker_container, docker_host,
+// interval, ...); it is merged over the monitor's current definition.
+//
+// Kuma's "editMonitor" handler takes ONE argument - the complete monitor
+// object - and reads the id from monitor.id. Emitting [monitorID, payload]
+// (the old behaviour) made Kuma read monitor.id as undefined and reject the
+// edit with "Undefined binding(s) detected for keys [0] when compiling RAW
+// query: id = ?".
 func EditMonitorViaSocketIO(kumaURL, username, password string, monitorID int, payload map[string]any) error {
 	cli, _, err := sioCommandSession(kumaURL, username, password)
 	if err != nil {
@@ -1602,7 +1637,19 @@ func EditMonitorViaSocketIO(kumaURL, username, password string, monitorID int, p
 	}
 	defer cli.close()
 
-	ackCh := cli.emitWithAck("editMonitor", []any{monitorID, payload})
+	monitor, err := getMonitorViaSocketIO(cli, monitorID)
+	if err != nil {
+		return err
+	}
+	for k, v := range payload {
+		monitor[k] = v
+	}
+	monitor["id"] = monitorID
+	if _, ok := monitor["accepted_statuscodes"]; !ok {
+		monitor["accepted_statuscodes"] = []string{"200-299"}
+	}
+
+	ackCh := cli.emitWithAck("editMonitor", monitor)
 	select {
 	case resp := <-ackCh:
 		ok, msg := parseOKAck(resp)
