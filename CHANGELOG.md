@@ -1,3 +1,10 @@
+## [1.32.2](https://github.com/martynvdijke/synapse/compare/v1.32.1...v1.32.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **sync:** guard nil progress reporter in reconcile ([2051494](https://github.com/martynvdijke/synapse/commit/2051494f17543c772173b29123d9b8911cc0d6dd))
+
 ## [1.32.1](https://github.com/martynvdijke/synapse/compare/v1.32.0...v1.32.1) (2026-11-14)
 
 # [1.32.0](https://github.com/martynvdijke/synapse/compare/v1.31.18...v1.32.0) (2026-11-12)
