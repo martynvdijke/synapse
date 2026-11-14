@@ -230,6 +230,34 @@ func TestRunReconcileCreatesMissing(t *testing.T) {
 	}
 }
 
+func TestRunReconcileNilProgressDoesNotPanic(t *testing.T) {
+	d := setupTestDB(t)
+	if _, err := d.CreateServiceLink(&db.ServiceLink{ServiceName: "web", NPMInstanceID: 1, KumaInstanceID: 1}); err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+
+	npmIC, _ := mockNpmReconcile(t, 1, nil)
+	kumaIC, _ := mockKumaReconcile(t, 1, nil)
+
+	// The HTTP and scheduled callers pass a nil ProgressFn. RunReconcile must
+	// tolerate that instead of dereferencing a nil function value.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("RunReconcile panicked with nil onProgress: %v", r)
+		}
+	}()
+	result := RunReconcile(context.Background(), writeReconcileCompose(t),
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		ReconcileOptions{DryRun: false}, nil)
+
+	if result.Run.Status != "completed" {
+		t.Fatalf("expected completed, got %q (err=%q)", result.Run.Status, result.Run.ErrorMessage)
+	}
+	if result.Run.Added != 2 {
+		t.Errorf("expected 2 added (npm+kuma), got %d", result.Run.Added)
+	}
+}
+
 func TestRunReconcileDryRun(t *testing.T) {
 	d := setupTestDB(t)
 	if _, err := d.CreateServiceLink(&db.ServiceLink{ServiceName: "web", NPMInstanceID: 1, KumaInstanceID: 1}); err != nil {

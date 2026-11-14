@@ -76,6 +76,12 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 	result := ReconcileResult{Run: run, DryRun: opts.DryRun}
 	var added, updated, skipped, failed int
 	var changes []ReconcileChange
+	// Progress reporting is optional: the HTTP and scheduled callers pass nil.
+	emit := func(p Progress) {
+		if onProgress != nil {
+			onProgress(p)
+		}
+	}
 	addChange := func(service, target, action, detail string) {
 		changes = append(changes, ReconcileChange{Service: service, Target: target, Action: action, Detail: detail})
 	}
@@ -128,7 +134,7 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 		return result
 	}
 
-	onProgress(Progress{RunID: id, Source: "reconcile", Total: len(linked), Status: "fetching", Message: "Fetching live NPM hosts and Kuma monitors..."})
+	emit(Progress{RunID: id, Source: "reconcile", Total: len(linked), Status: "fetching", Message: "Fetching live NPM hosts and Kuma monitors..."})
 
 	// Fetch live state once per instance, tolerating per-instance failures.
 	npmByInst := map[int]*npm.Client{}
@@ -165,7 +171,7 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 		if !ok {
 			skipped++
 			addChange(link.ServiceName, "npm", "skipped", "service not in compose file")
-			onProgress(Progress{RunID: id, Source: "reconcile", Total: len(linked), Current: i + 1, Status: "skipped", Message: link.ServiceName, Skipped: skipped})
+			emit(Progress{RunID: id, Source: "reconcile", Total: len(linked), Current: i + 1, Status: "skipped", Message: link.ServiceName, Skipped: skipped})
 			continue
 		}
 
@@ -296,7 +302,7 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 			}
 		}
 
-		onProgress(Progress{RunID: id, Source: "reconcile", Total: len(linked), Current: i + 1, Status: "processing", Message: link.ServiceName, Added: added, Skipped: skipped, Failed: failed})
+		emit(Progress{RunID: id, Source: "reconcile", Total: len(linked), Current: i + 1, Status: "processing", Message: link.ServiceName, Added: added, Skipped: skipped, Failed: failed})
 	}
 
 	status := "completed"
