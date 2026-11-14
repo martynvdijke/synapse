@@ -1,3 +1,10 @@
+## [1.32.3](https://github.com/martynvdijke/synapse/compare/v1.32.2...v1.32.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **kuma:** send full monitor object to editMonitor ([bd990ba](https://github.com/martynvdijke/synapse/commit/bd990bacef5aa951a493ec8cda0c7045389723c0))
+
 ## [1.32.2](https://github.com/martynvdijke/synapse/compare/v1.32.1...v1.32.2) (2026-11-14)
 
 
