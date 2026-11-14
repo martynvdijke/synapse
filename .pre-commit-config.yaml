@@ -1,0 +1,17 @@
+# Managed centrally: lightweight, language-agnostic hygiene hooks.
+# Runner: prek (https://github.com/j178/prek) - drop-in pre-commit replacement.
+default_stages: [pre-commit]
+fail_fast: false
+exclude: ^(node_modules/|vendor/|dist/|build/|\.venv/)
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: detect-private-key
