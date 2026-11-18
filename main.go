@@ -43,7 +43,7 @@ import (
 	"synapse/internal/telemetry"
 )
 
-var version = "1.32.5"
+var version = "1.32.6"
 
 func generateSessionID() string {
 	id, err := db.GenerateSessionToken()
