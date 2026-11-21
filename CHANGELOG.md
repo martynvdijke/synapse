@@ -1,3 +1,10 @@
+# [1.33.0](https://github.com/martynvdijke/synapse/compare/v1.32.7...v1.33.0) (2026-11-21)
+
+
+### Features
+
+* **kuma:** reliable sync toward remote Uptime Kuma ([4a02758](https://github.com/martynvdijke/synapse/commit/4a027580ac71a859e9c38321dc681738130c02c4))
+
 ## [1.32.8](https://github.com/martynvdijke/synapse/compare/v1.32.7...v1.32.8) (2026-11-20)
 
 ## [1.32.7](https://github.com/martynvdijke/synapse/compare/v1.32.6...v1.32.7) (2026-11-19)
