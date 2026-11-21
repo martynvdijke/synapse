@@ -45,7 +45,7 @@ services:
       interval: 30s
 
   db:
-    image: postgres:18
+    image: postgres:19
     environment:
       POSTGRES_PASSWORD: secret
       POSTGRES_DB: myapp
