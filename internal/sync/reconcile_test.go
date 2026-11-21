@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/kuma/kumatest"
 	"synapse/internal/npm"
 )
 
@@ -118,36 +120,45 @@ type npmReconcileRecorder struct {
 	lastUpdate        npm.ProxyHostCreate
 }
 
-// mockKumaReconcile sets hooks for Query, Add and Edit monitor calls.
-func mockKumaReconcile(t *testing.T, instanceID int, existing []kuma.KumaMonitor) (kuma.InstanceClient, *kumaReconcileRecorder) {
+// mockKumaReconcile scripts a kumatest.Fake for monitor list/add/edit and
+// returns the Registry.Snapshot row the reconcile path consumes.
+func mockKumaReconcile(t *testing.T, instanceID int, existing []kuma.KumaMonitor) (kuma.InstanceResult, *kumaReconcileRecorder) {
 	t.Helper()
 	rec := &kumaReconcileRecorder{}
-	c := kuma.NewClient("http://kuma-mock.invalid")
-	c.SetTestHooks(&kuma.ClientTestHooks{
-		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
-			return existing, nil
-		},
-		AddMonitor: func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
-			rec.adds++
-			rec.lastAdd = kumaAddCall{MonitorType: monitorType, Name: name, URL: url, Container: dockerContainer}
-			return 1, nil
-		},
-		EditMonitor: func(monitorID int, payload map[string]any) error {
-			rec.edits++
-			rec.lastEdit = kumaEditCall{MonitorID: monitorID, Payload: payload}
-			return nil
-		},
-	})
-	return kuma.InstanceClient{InstanceID: instanceID, Client: c}, rec
+	fake := kumatest.New()
+	fake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		return existing, nil
+	}
+	fake.AddMonitorFn = func(_ context.Context, spec kuma.MonitorSpec) (int, error) {
+		rec.adds++
+		rec.lastAdd = kumaAddCall{
+			MonitorType: spec.Type,
+			Name:        spec.Name,
+			URL:         spec.URL,
+			Container:   spec.DockerContainer,
+			Description: spec.Description,
+		}
+		return 1, nil
+	}
+	fake.EditMonitorFn = func(_ context.Context, monitorID int, spec kuma.MonitorSpec) error {
+		rec.edits++
+		rec.lastEdit = kumaEditCall{MonitorID: monitorID, Spec: spec}
+		return nil
+	}
+	return kuma.InstanceResult{
+		InstanceID: instanceID,
+		Name:       fmt.Sprintf("kuma-%d", instanceID),
+		Client:     fake,
+	}, rec
 }
 
 type kumaAddCall struct {
-	MonitorType, Name, URL, Container string
+	MonitorType, Name, URL, Container, Description string
 }
 
 type kumaEditCall struct {
 	MonitorID int
-	Payload   map[string]any
+	Spec      kuma.MonitorSpec
 }
 
 type kumaReconcileRecorder struct {
@@ -167,7 +178,7 @@ func TestRunReconcileCreatesMissing(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, nil)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false}, func(p Progress) {})
 
 	run := result.Run
@@ -247,7 +258,7 @@ func TestRunReconcileNilProgressDoesNotPanic(t *testing.T) {
 		}
 	}()
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false}, nil)
 
 	if result.Run.Status != "completed" {
@@ -267,7 +278,7 @@ func TestRunReconcileDryRun(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, nil)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: true}, func(p Progress) {})
 
 	if !result.Run.DryRun {
@@ -313,7 +324,7 @@ func TestRunReconcileUpdatesDrift(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false}, func(p Progress) {})
 
 	if result.Run.Status != "completed" {
@@ -334,8 +345,8 @@ func TestRunReconcileUpdatesDrift(t *testing.T) {
 	if kumaRec.lastEdit.MonitorID != 5 {
 		t.Errorf("expected edit monitor 5, got %d", kumaRec.lastEdit.MonitorID)
 	}
-	if kumaRec.lastEdit.Payload["interval"] != 30 {
-		t.Errorf("expected interval 30 in payload, got %v", kumaRec.lastEdit.Payload["interval"])
+	if kumaRec.lastEdit.Spec.Interval != 30 {
+		t.Errorf("expected interval 30 in spec, got %v", kumaRec.lastEdit.Spec.Interval)
 	}
 	// Actions recorded as updated.
 	actions := map[string]bool{}
@@ -363,7 +374,7 @@ func TestRunReconcileNoDrift(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false}, func(p Progress) {})
 
 	if result.Run.Status != "completed" {
@@ -395,7 +406,7 @@ func TestRunReconcileOnlyServiceFilter(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, nil)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false, OnlyService: "web"}, func(p Progress) {})
 
 	if result.Run.Status != "completed" {
@@ -431,7 +442,7 @@ func TestRunReconcileUnlinkedServiceUntouched(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, nil)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false}, func(p Progress) {})
 
 	if result.Run.Status != "completed" {
@@ -522,7 +533,7 @@ func TestRunReconcileOnlyServiceNotLinked(t *testing.T) {
 	kumaIC, _ := mockKumaReconcile(t, 1, nil)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false, OnlyService: "nosuch"}, func(p Progress) {})
 
 	if result.Run.Status != "completed" {
@@ -693,7 +704,7 @@ func TestRunReconcileSkipsPausedMonitor(t *testing.T) {
 	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
 
 	result := RunReconcile(context.Background(), writeReconcileCompose(t),
-		[]npm.InstanceClient{npmIC}, []kuma.InstanceClient{kumaIC}, d,
+		[]npm.InstanceClient{npmIC}, []kuma.InstanceResult{kumaIC}, d,
 		ReconcileOptions{DryRun: false}, func(p Progress) {})
 
 	if result.Run.Skipped != 1 {
@@ -716,5 +727,69 @@ func TestRunReconcileSkipsPausedMonitor(t *testing.T) {
 	}
 	if result.Run.Updated != 0 || result.Run.Added != 0 {
 		t.Errorf("expected no added/updated for paused, got added=%d updated=%d", result.Run.Added, result.Run.Updated)
+	}
+}
+
+// --- external-id matching + empty-read guard (W2/W3) ---
+
+func TestRunReconcileMatchesByExternalID(t *testing.T) {
+	d := setupTestDB(t)
+	if _, err := d.CreateServiceLink(&db.ServiceLink{ServiceName: "web", KumaInstanceID: 1}); err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+
+	// The live monitor was renamed but carries the Synapse marker for "web".
+	monitors := []kuma.KumaMonitor{{
+		ID: 5, Name: "nginx-web-renamed", Type: "http",
+		URL: "http://nginx-web:80/health", Interval: 30, Active: true,
+		Tags: []kuma.MonitorTag{{Name: SynapseTagName, Value: Marker("http", "web")}},
+	}}
+	kumaIC, kumaRec := mockKumaReconcile(t, 1, monitors)
+
+	result := RunReconcile(context.Background(), writeReconcileCompose(t),
+		nil, []kuma.InstanceResult{kumaIC}, d,
+		ReconcileOptions{DryRun: false}, func(p Progress) {})
+
+	if result.Run.Status != "completed" {
+		t.Fatalf("expected completed, got %q (%+v)", result.Run.Status, result.Changes)
+	}
+	if kumaRec.adds != 0 || kumaRec.edits != 0 {
+		t.Errorf("external-id match must not create or edit, got adds=%d edits=%d", kumaRec.adds, kumaRec.edits)
+	}
+	if len(result.Changes) != 0 {
+		t.Errorf("expected no changes for a matching monitor, got %+v", result.Changes)
+	}
+}
+
+func TestRunReconcileEmptyReadDoesNotCreate(t *testing.T) {
+	d := setupTestDB(t)
+	if _, err := d.CreateServiceLink(&db.ServiceLink{ServiceName: "web", KumaInstanceID: 1}); err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+	if err := d.AddMonitor(&db.Monitor{
+		Name: "nginx-web", ServiceName: "web", MonitorType: "http",
+		KumaInstanceID: 1, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed monitor: %v", err)
+	}
+
+	// The instance reports an empty monitor list while the DB says one exists.
+	kumaIC, kumaRec := mockKumaReconcile(t, 1, nil)
+
+	result := RunReconcile(context.Background(), writeReconcileCompose(t),
+		nil, []kuma.InstanceResult{kumaIC}, d,
+		ReconcileOptions{DryRun: false}, func(p Progress) {})
+
+	if kumaRec.adds != 0 {
+		t.Errorf("empty read must not create monitors, got %d adds", kumaRec.adds)
+	}
+	if result.Run.Status != "completed_with_errors" {
+		t.Errorf("expected completed_with_errors, got %q", result.Run.Status)
+	}
+	if result.Run.Failed != 1 {
+		t.Errorf("expected the target marked failed, got %d", result.Run.Failed)
+	}
+	if len(result.Run.InstanceErrors) != 1 {
+		t.Errorf("expected one instance error, got %+v", result.Run.InstanceErrors)
 	}
 }

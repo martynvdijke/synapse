@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"synapse/ent/schema"
 	"synapse/internal/db"
 	"synapse/internal/kuma"
 	"synapse/internal/logging"
@@ -46,7 +48,7 @@ type ReconcileResult struct {
 // the live NPM proxy hosts and Kuma monitors of linked services, creating and
 // updating targets that drift. Only services with a ServiceLink reconcile —
 // unlinked services keep the existing coverage-based alerting.
-func RunReconcile(ctx context.Context, composePath string, npmClients []npm.InstanceClient, kumaClients []kuma.InstanceClient, database *db.DB, opts ReconcileOptions, onProgress ProgressFn) ReconcileResult {
+func RunReconcile(ctx context.Context, composePath string, npmClients []npm.InstanceClient, kumaInstances []kuma.InstanceResult, database *db.DB, opts ReconcileOptions, onProgress ProgressFn) ReconcileResult {
 	_, span := tracer.Start(ctx, "RunReconcile",
 		trace.WithAttributes(attribute.String("compose_path", composePath)),
 	)
@@ -76,6 +78,7 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 	result := ReconcileResult{Run: run, DryRun: opts.DryRun}
 	var added, updated, skipped, failed int
 	var changes []ReconcileChange
+	var kumaInstanceErrors []schema.SyncInstanceError
 	// Progress reporting is optional: the HTTP and scheduled callers pass nil.
 	emit := func(p Progress) {
 		if onProgress != nil {
@@ -86,7 +89,7 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 		changes = append(changes, ReconcileChange{Service: service, Target: target, Action: action, Detail: detail})
 	}
 	finish := func(status, msg string) {
-		if err := database.FinishReconcileRun(id, status, added, updated, skipped, failed, msg); err != nil {
+		if err := database.FinishReconcileRunWithErrors(id, status, added, updated, skipped, failed, msg, kumaInstanceErrors); err != nil {
 			logging.LogWarn("sync", "Failed to finish reconcile run",
 				slog.String("error", err.Error()),
 			)
@@ -99,6 +102,7 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 		result.Run.Updated = updated
 		result.Run.Skipped = skipped
 		result.Run.Failed = failed
+		result.Run.InstanceErrors = kumaInstanceErrors
 		result.Changes = changes
 	}
 
@@ -151,19 +155,59 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 		}
 		npmLive[ic.InstanceID] = hosts
 	}
-	kumaByInst := map[int]*kuma.Client{}
-	kumaLive := map[int][]kuma.KumaMonitor{}
-	for _, ic := range kumaClients {
-		kumaByInst[ic.InstanceID] = ic.Client
-		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
-		if err != nil {
-			logging.LogWarn("sync", "Failed to fetch Kuma monitors",
-				slog.Int("instance_id", ic.InstanceID),
-				slog.String("error", err.Error()),
-			)
+	kumaAPI := map[int]kuma.API{}
+	kumaIndex := map[int]*MonitorIndex{}
+	kumaErr := map[int]string{}
+	kumaName := map[int]string{}
+	kumaExpected := monitorCountByInstance(database)
+	for _, res := range kumaInstances {
+		kumaName[res.InstanceID] = res.Name
+		if res.Err != nil {
+			kumaErr[res.InstanceID] = res.Err.Error()
 			continue
 		}
-		kumaLive[ic.InstanceID] = monitors
+		if res.Client == nil {
+			kumaErr[res.InstanceID] = "no API handle returned"
+			continue
+		}
+		monitors, err := res.Client.Monitors(ctx)
+		if err != nil {
+			logging.LogWarn("sync", "Failed to fetch Kuma monitors",
+				slog.Int("instance_id", res.InstanceID),
+				slog.String("error", err.Error()),
+			)
+			kumaErr[res.InstanceID] = err.Error()
+			continue
+		}
+		if len(monitors) == 0 && kumaExpected[res.InstanceID] > 0 {
+			// A partial/failed read must not be mistaken for a clean slate, or
+			// reconcile would recreate every monitor on the instance.
+			msg := fmt.Sprintf("monitor list came back empty but %d monitor(s) are recorded", kumaExpected[res.InstanceID])
+			logging.LogWarn("sync", "Suspicious empty Kuma monitor list",
+				slog.Int("instance_id", res.InstanceID),
+				slog.String("detail", msg),
+			)
+			kumaErr[res.InstanceID] = msg
+			continue
+		}
+		kumaAPI[res.InstanceID] = res.Client
+		kumaIndex[res.InstanceID] = BuildMonitorIndex(monitors)
+	}
+	reportedKumaErr := map[int]bool{}
+	noteKumaUnavailable := func(instanceID int) string {
+		msg := kumaErr[instanceID]
+		if msg == "" {
+			msg = "instance not configured"
+		}
+		if !reportedKumaErr[instanceID] {
+			reportedKumaErr[instanceID] = true
+			kumaInstanceErrors = append(kumaInstanceErrors, schema.SyncInstanceError{
+				InstanceID: instanceID,
+				Name:       kumaName[instanceID],
+				Error:      msg,
+			})
+		}
+		return msg
 	}
 
 	for i, link := range linked {
@@ -234,69 +278,105 @@ func RunReconcile(ctx context.Context, composePath string, npmClients []npm.Inst
 			if display == "" {
 				display = link.ServiceName
 			}
-			live := findKumaMonitor(kumaLive[link.KumaInstanceID], link, display)
-			if live != nil && !live.Active {
-				skipped++
-				addChange(link.ServiceName, "kuma", "skipped", "paused")
-				continue
-			}
-			switch {
-			case live == nil:
-				addChange(link.ServiceName, "kuma", "created", display)
-				if !opts.DryRun {
-					c := kumaByInst[link.KumaInstanceID]
-					if c == nil {
-						failed++
-						changes[len(changes)-1].Action = "error"
-						changes[len(changes)-1].Detail = "kuma instance not configured"
-					} else if newID, err := c.AddMonitorViaSocketIO(monitorType, display, url, container, 0); err != nil {
-						failed++
-						changes[len(changes)-1].Action = "error"
-						changes[len(changes)-1].Detail = err.Error()
-					} else {
-						added++
-						if tagIDs := parseKumaDefaultTags(database.GetSettings(db.Settings{}).KumaDefaultTags); len(tagIDs) > 0 && newID > 0 {
-							for _, tagID := range tagIDs {
-								if err := c.AddMonitorTagViaSocketIO(newID, tagID); err != nil {
-									logging.LogWarn("sync", "Failed to add default tag to monitor",
-										slog.Int("monitor_id", newID),
-										slog.Int("tag_id", tagID),
-										slog.String("error", err.Error()),
-									)
-								}
-							}
-						}
-					}
-				} else {
-					added++
+			ix, available := kumaIndex[link.KumaInstanceID]
+			if !available {
+				// No trustworthy monitor list for this instance: never create
+				// (that is exactly how a partial read becomes a duplicate storm).
+				failed++
+				addChange(link.ServiceName, "kuma", "error", "kuma instance unavailable: "+noteKumaUnavailable(link.KumaInstanceID))
+			} else {
+				eid := ExternalID{Type: monitorType, Service: link.ServiceName}
+				live := findKumaMonitor(ix, eid, link, display)
+				if live != nil && !live.Active {
+					skipped++
+					addChange(link.ServiceName, "kuma", "skipped", "paused")
+					continue
 				}
-			default:
-				drift := monitorDrift(*live, monitorType, url, container, interval)
-				if len(drift) > 0 {
-					addChange(link.ServiceName, "kuma", "updated", strings.Join(drift, ", "))
+				switch {
+				case live == nil:
+					addChange(link.ServiceName, "kuma", "created", display)
 					if !opts.DryRun {
-						c := kumaByInst[link.KumaInstanceID]
-						if c == nil {
+						c := kumaAPI[link.KumaInstanceID]
+						spec := kuma.MonitorSpec{
+							Type:        monitorType,
+							Name:        display,
+							Interval:    interval,
+							Description: Marker(monitorType, link.ServiceName),
+							Tags:        []string{SynapseTagName},
+						}
+						if monitorType == "http" {
+							spec.URL = url
+						} else {
+							spec.DockerContainer = container
+						}
+						newID, err := c.AddMonitor(ctx, spec)
+						if err != nil {
 							failed++
 							changes[len(changes)-1].Action = "error"
-							changes[len(changes)-1].Detail = "kuma instance not configured"
+							changes[len(changes)-1].Detail = err.Error()
 						} else {
-							payload := map[string]any{"type": monitorType, "interval": interval}
-							if monitorType == "http" {
-								payload["url"] = url
-							} else {
-								payload["docker_container"] = container
+							added++
+							if uerr := database.UpsertMonitor(&db.Monitor{
+								Name:            display,
+								ServiceName:     link.ServiceName,
+								MonitorType:     monitorType,
+								URL:             url,
+								DockerContainer: container,
+								KumaID:          newID,
+								KumaInstanceID:  link.KumaInstanceID,
+								CreatedAt:       time.Now(),
+							}); uerr != nil {
+								logging.LogWarn("sync", "Failed to persist reconciled monitor",
+									slog.String("service", link.ServiceName),
+									slog.String("error", uerr.Error()),
+								)
 							}
-							if err := c.EditMonitorViaSocketIO(live.ID, payload); err != nil {
+							applyDefaultKumaTags(database, link.KumaInstanceID, newID)
+						}
+					} else {
+						added++
+					}
+				default:
+					drift := monitorDrift(*live, monitorType, url, container, interval)
+					if len(drift) > 0 {
+						addChange(link.ServiceName, "kuma", "updated", strings.Join(drift, ", "))
+						if !opts.DryRun {
+							c := kumaAPI[link.KumaInstanceID]
+							spec := kuma.MonitorSpec{
+								Type:        monitorType,
+								Interval:    interval,
+								Description: Marker(monitorType, link.ServiceName),
+							}
+							if monitorType == "http" {
+								spec.URL = url
+							} else {
+								spec.DockerContainer = container
+							}
+							if err := c.EditMonitor(ctx, live.ID, spec); err != nil {
 								failed++
 								changes[len(changes)-1].Action = "error"
 								changes[len(changes)-1].Detail = err.Error()
 							} else {
 								updated++
+								if uerr := database.UpsertMonitor(&db.Monitor{
+									Name:            display,
+									ServiceName:     link.ServiceName,
+									MonitorType:     monitorType,
+									URL:             url,
+									DockerContainer: container,
+									KumaID:          live.ID,
+									KumaInstanceID:  link.KumaInstanceID,
+									CreatedAt:       time.Now(),
+								}); uerr != nil {
+									logging.LogWarn("sync", "Failed to persist reconciled monitor",
+										slog.String("service", link.ServiceName),
+										slog.String("error", uerr.Error()),
+									)
+								}
 							}
+						} else {
+							updated++
 						}
-					} else {
-						updated++
 					}
 				}
 			}
@@ -544,24 +624,47 @@ func parseKumaDefaultTags(raw string) []int {
 	return out
 }
 
-// findKumaMonitor locates the live Kuma monitor matching a link. Pinned
-// KumaMonitorID wins, then KumaMonitorName, then the derived display name.
-func findKumaMonitor(monitors []kuma.KumaMonitor, link db.ServiceLink, displayName string) *kuma.KumaMonitor {
-	for i := range monitors {
-		m := &monitors[i]
-		if link.KumaMonitorID > 0 && m.ID == link.KumaMonitorID {
-			return m
-		}
-		if link.KumaMonitorName != "" && m.Name == link.KumaMonitorName {
-			return m
-		}
+// findKumaMonitor locates the live Kuma monitor matching a link. An explicit
+// KumaMonitorID wins, then a pinned name, then the external-id index (with the
+// derived display name as the final fallback).
+func findKumaMonitor(ix *MonitorIndex, id ExternalID, link db.ServiceLink, displayName string) *kuma.KumaMonitor {
+	if ix == nil {
+		return nil
 	}
-	if link.KumaMonitorID == 0 && link.KumaMonitorName == "" {
-		for i := range monitors {
-			if monitors[i].Name == displayName {
-				return &monitors[i]
+	if link.KumaMonitorID > 0 {
+		return ix.ByID(link.KumaMonitorID)
+	}
+	if link.KumaMonitorName != "" {
+		for i := range ix.monitors {
+			if ix.monitors[i].Name == link.KumaMonitorName {
+				return &ix.monitors[i]
 			}
 		}
+		return nil
 	}
-	return nil
+	return ix.Find(id, displayName)
+}
+
+// applyDefaultKumaTags applies the kuma_default_tags setting (tag ids) to a
+// freshly created monitor. The API seam exposes tag names, not ids, so this
+// compatibility shim keeps the existing setting working by reading the
+// instance credentials and using the tag-id command path. Best-effort.
+func applyDefaultKumaTags(database *db.DB, instanceID, monitorID int) {
+	tagIDs := parseKumaDefaultTags(database.GetSettings(db.Settings{}).KumaDefaultTags)
+	if len(tagIDs) == 0 || monitorID <= 0 {
+		return
+	}
+	inst, err := database.GetKumaInstance(int64(instanceID))
+	if err != nil || inst == nil {
+		return
+	}
+	for _, tagID := range tagIDs {
+		if err := kuma.AddMonitorTagViaSocketIO(inst.URL, inst.Username, inst.Password, monitorID, tagID); err != nil {
+			logging.LogWarn("sync", "Failed to add default tag to monitor",
+				slog.Int("monitor_id", monitorID),
+				slog.Int("tag_id", tagID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 }

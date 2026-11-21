@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"synapse/internal/kuma"
 	synclib "synapse/internal/sync"
 )
 
@@ -18,14 +19,18 @@ type DashboardSnapshot struct {
 	Version     uint64            `json:"version"`
 	LastError   map[string]string `json:"last_error,omitempty"`
 
-	DockerCount    int     `json:"-"`
-	DockerErr      string  `json:"-"`
-	NPMCount       int     `json:"-"`
-	NPMErr         string  `json:"-"`
-	KumaErr        string  `json:"-"`
-	MonitorCount   int     `json:"-"`
-	NPMHealthList  []gin.H `json:"-"`
-	KumaHealthList []gin.H `json:"-"`
+	DockerCount int    `json:"-"`
+	DockerErr   string `json:"-"`
+	NPMCount    int    `json:"-"`
+	NPMErr      string `json:"-"`
+	KumaErr     string `json:"-"`
+	// KumaInstanceErrors records per-instance monitor read/connect failures
+	// from the most recent build. It is diagnostic (status payload), never a
+	// reason to freeze the whole snapshot the way LastError is.
+	KumaInstanceErrors map[string]string `json:"-"`
+	MonitorCount       int               `json:"-"`
+	NPMHealthList      []gin.H           `json:"-"`
+	KumaHealthList     []gin.H           `json:"-"`
 
 	Services []synclib.ServiceInfo `json:"-"`
 	Proxies  []synclib.ProxyInfo   `json:"-"`
@@ -78,22 +83,35 @@ func setSnapshotHeaders(c *gin.Context, snap *DashboardSnapshot) {
 	}
 }
 
-func (app *App) queryKumaMonitors(ctx context.Context) ([]KumaMonitorSummary, bool) {
-	clients, _ := app.kumaRegistry.All()
+func (app *App) queryKumaMonitors(ctx context.Context) ([]KumaMonitorSummary, bool, map[string]string) {
 	instances, _ := app.database.GetKumaInstances()
 	nameMap := make(map[int]string)
 	for _, inst := range instances {
 		nameMap[int(inst.ID)] = inst.Name
 	}
-	ok := len(clients) == 0 // no instances is a valid empty result, not a failure
+	results := app.kumaSnapshot(ctx)
+	ok := len(results) == 0 // no instances is a valid empty result, not a failure
 	result := make([]KumaMonitorSummary, 0)
-	for _, ic := range clients {
-		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
+	instanceErrors := make(map[string]string)
+	for _, res := range results {
+		instanceName := nameMap[res.InstanceID]
+		if instanceName == "" {
+			instanceName = strconv.Itoa(res.InstanceID)
+		}
+		if res.Err != nil {
+			instanceErrors[instanceName] = res.Err.Error()
+			continue
+		}
+		if res.Client == nil {
+			instanceErrors[instanceName] = "no API handle"
+			continue
+		}
+		monitors, err := res.Client.Monitors(ctx)
 		if err != nil {
+			instanceErrors[instanceName] = err.Error()
 			continue
 		}
 		ok = true
-		instanceName := nameMap[ic.InstanceID]
 		for _, m := range monitors {
 			result = append(result, KumaMonitorSummary{
 				ID:              m.ID,
@@ -112,7 +130,7 @@ func (app *App) queryKumaMonitors(ctx context.Context) ([]KumaMonitorSummary, bo
 				MaxRetries:      m.MaxRetries,
 				Active:          m.Active,
 				Tags:            m.Tags,
-				InstanceID:      ic.InstanceID,
+				InstanceID:      res.InstanceID,
 				InstanceName:    instanceName,
 			})
 		}
@@ -120,7 +138,7 @@ func (app *App) queryKumaMonitors(ctx context.Context) ([]KumaMonitorSummary, bo
 	if result == nil {
 		result = []KumaMonitorSummary{}
 	}
-	return result, ok
+	return result, ok, instanceErrors
 }
 
 // snapshotSectionTimeout bounds each snapshot section independently. Sections
@@ -142,6 +160,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		snap.NPMCount = prev.NPMCount
 		snap.NPMErr = prev.NPMErr
 		snap.KumaErr = prev.KumaErr
+		snap.KumaInstanceErrors = prev.KumaInstanceErrors
 		snap.MonitorCount = prev.MonitorCount
 		snap.NPMHealthList = prev.NPMHealthList
 		snap.KumaHealthList = prev.KumaHealthList
@@ -149,7 +168,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	snap.LastError = make(map[string]string)
 
 	s := app.settings()
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(ctx)
 	npmClients, _ := app.npmRegistry.All()
 	kumaInstances, _ := app.database.GetEnabledKumaInstances()
 	npmInstances, _ := app.database.GetEnabledNPMInstances()
@@ -177,7 +196,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		defer wg.Done()
 		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
 		defer cancel()
-		proxies, err := synclib.GetNPMProxiesWithStatus(sctx, npmClients, clients)
+		proxies, err := synclib.GetNPMProxiesWithStatus(sctx, npmClients, instances)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil && len(proxies) == 0 {
@@ -203,15 +222,28 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		byID := make(map[int]kuma.InstanceResult, len(instances))
+		for _, res := range instances {
+			byID[res.InstanceID] = res
+		}
 		list := make([]gin.H, 0, len(kumaInstances))
 		errStr := ""
+		instanceErrors := make(map[string]string, len(kumaInstances))
 		for _, inst := range kumaInstances {
 			instErr := ""
-			if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
-				instErr = err.Error()
+			if res, ok := byID[int(inst.ID)]; ok {
+				switch {
+				case res.Err != nil:
+					instErr = res.Err.Error()
+				case res.Client == nil:
+					instErr = "no API handle"
+				}
+			} else {
+				instErr = "not connected"
 			}
 			list = append(list, gin.H{"id": inst.ID, "name": inst.Name, "ok": instErr == "", "last_error": instErr})
 			if instErr != "" {
+				instanceErrors[inst.Name] = instErr
 				if errStr == "" {
 					errStr = instErr
 				} else {
@@ -225,6 +257,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		mu.Lock()
 		snap.KumaHealthList = list
 		snap.KumaErr = errStr
+		snap.KumaInstanceErrors = instanceErrors
 		mu.Unlock()
 	}()
 
@@ -233,7 +266,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		defer wg.Done()
 		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
 		defer cancel()
-		total, _ := app.kumaMonitorCountWithContext(sctx, clients)
+		total, _ := app.kumaMonitorCountWithContext(sctx, instances)
 		mu.Lock()
 		snap.MonitorCount = total
 		mu.Unlock()
@@ -265,7 +298,7 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		defer wg.Done()
 		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
 		defer cancel()
-		result, err := synclib.GetDockerServicesWithStatus(sctx, s.ComposePath, clients)
+		result, err := synclib.GetDockerServicesWithStatus(sctx, s.ComposePath, instances)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
@@ -285,9 +318,10 @@ func (app *App) buildSnapshot(ctx context.Context) *DashboardSnapshot {
 		defer wg.Done()
 		sctx, cancel := context.WithTimeout(ctx, snapshotSectionTimeout)
 		defer cancel()
-		monitors, ok := app.queryKumaMonitors(sctx)
+		monitors, ok, instanceErrors := app.queryKumaMonitors(sctx)
 		mu.Lock()
 		defer mu.Unlock()
+		snap.KumaInstanceErrors = instanceErrors
 		if ok {
 			snap.Monitors = monitors
 			delete(snap.LastError, "monitors")

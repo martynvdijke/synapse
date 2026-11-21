@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -82,7 +83,8 @@ const maxBufferedEvents = 256
 
 type sioClient struct {
 	conn        eioTransport
-	mu          sync.Mutex
+	mu          sync.Mutex // guards the fields below
+	writeMu     sync.Mutex // serializes transport writes (gorilla allows one writer)
 	ackID       int
 	pendingAcks map[int]chan []json.RawMessage
 	onEvent     func(rawEvent)
@@ -91,6 +93,8 @@ type sioClient struct {
 	// sent immediately after connect (Kuma's loginRequired) can be dropped.
 	bufferedEvents []rawEvent
 	done           chan struct{}
+	closed         bool
+	closeOnce      sync.Once
 }
 
 // wsTransport implements eioTransport over a gorilla/websocket connection.
@@ -134,7 +138,7 @@ type pollingTransport struct {
 }
 
 func (p *pollingTransport) endpoint() string {
-	u := fmt.Sprintf("%s/socket.io/?EIO=4&transport=polling", p.baseURL)
+	u := p.baseURL + "/socket.io/?EIO=4&transport=polling"
 	if p.sid != "" {
 		u += "&sid=" + url.QueryEscape(p.sid)
 	}
@@ -207,13 +211,63 @@ func (p *pollingTransport) Close() error {
 	return nil
 }
 
-// dialSIO connects to a Kuma instance over Socket.IO. It tries the WebSocket
-// transport first; if the WebSocket handshake fails (common behind reverse
-// proxies without WS upgrade forwarding), it falls back to Engine.IO HTTP
-// long-polling, which works through plain HTTP.
+// parseKumaURL validates a configured Kuma server URL and returns it parsed.
+// Accepts http/https and explicit ws/wss, path prefixes and trailing slashes.
+// Returns an error (never panics) for empty, malformed or host-less URLs.
+func parseKumaURL(raw string) (*url.URL, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return nil, errors.New("empty kuma url")
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("parse kuma url %q: %w", s, err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "ws", "wss":
+	default:
+		return nil, fmt.Errorf("kuma url %q: unsupported scheme %q", s, u.Scheme)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("kuma url %q: missing host", s)
+	}
+	return u, nil
+}
+
+// pathPrefix returns the configured path prefix with any trailing slashes
+// removed, so "/kuma/" and "/kuma" both become "/kuma".
+func pathPrefix(u *url.URL) string {
+	return strings.TrimRight(u.Path, "/")
+}
+
+func wsEndpoint(u *url.URL) string {
+	scheme := "ws"
+	if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
+		scheme = "wss"
+	}
+	return scheme + "://" + u.Host + pathPrefix(u) + "/socket.io/?EIO=4&transport=websocket"
+}
+
+func pollingBase(u *url.URL) string {
+	scheme := "http"
+	if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
+		scheme = "https"
+	}
+	return (&url.URL{Scheme: scheme, Host: u.Host, Path: pathPrefix(u)}).String()
+}
+
+// dialSIO connects to a Kuma instance over Socket.IO with a background ctx.
 func dialSIO(serverURL string) (*sioClient, error) {
+	return dialSIOContext(context.Background(), serverURL)
+}
+
+// dialSIOContext connects to a Kuma instance over Socket.IO. It tries the
+// WebSocket transport first; if the WebSocket handshake fails (common behind
+// reverse proxies without WS upgrade forwarding), it falls back to Engine.IO
+// HTTP long-polling, which works through plain HTTP.
+func dialSIOContext(ctx context.Context, serverURL string) (*sioClient, error) {
 	start := time.Now()
-	conn, open, err := dialTransport(serverURL)
+	conn, open, err := dialTransport(ctx, serverURL)
 	if err != nil {
 		logging.LogError("kuma", "Socket.IO dial failed",
 			slog.String("error", err.Error()),
@@ -242,65 +296,78 @@ func dialSIO(serverURL string) (*sioClient, error) {
 // dialTransport establishes the Engine.IO connection (OPEN handshake + SIO
 // CONNECT) over WebSocket, falling back to HTTP long-polling if the WebSocket
 // dial is rejected.
-func dialTransport(serverURL string) (eioTransport, eioOpenInfo, error) {
-	wsConn, wsOpen, wsErr := dialWebSocket(serverURL)
+func dialTransport(ctx context.Context, serverURL string) (eioTransport, eioOpenInfo, error) {
+	wsConn, wsOpen, wsErr := dialWebSocket(ctx, serverURL)
 	if wsErr == nil {
 		return wsConn, wsOpen, nil
+	}
+	if ctx.Err() != nil {
+		return nil, eioOpenInfo{}, ctx.Err()
 	}
 	logging.LogWarn("kuma", "Socket.IO WebSocket dial failed, falling back to HTTP long-polling",
 		slog.String("url", serverURL),
 		slog.String("error", wsErr.Error()),
 	)
-	pollConn, pollOpen, pollErr := dialPolling(serverURL)
+	pollConn, pollOpen, pollErr := dialPolling(ctx, serverURL)
 	if pollErr != nil {
 		return nil, eioOpenInfo{}, fmt.Errorf("websocket: %w; polling: %w", wsErr, pollErr)
 	}
 	return pollConn, pollOpen, nil
 }
 
-func dialWebSocket(serverURL string) (eioTransport, eioOpenInfo, error) {
+func dialWebSocket(ctx context.Context, serverURL string) (eioTransport, eioOpenInfo, error) {
 	start := time.Now()
-	u := fmt.Sprintf("ws://%s/socket.io/?EIO=4&transport=websocket", serverURL[7:])
-	if len(serverURL) > 8 && serverURL[:8] == "https://" {
-		u = fmt.Sprintf("wss://%s/socket.io/?EIO=4&transport=websocket", serverURL[8:])
+	u, err := parseKumaURL(serverURL)
+	if err != nil {
+		return nil, eioOpenInfo{}, err
 	}
+	endpoint := wsEndpoint(u)
 
 	logging.LogDebug("kuma", "Dialing Socket.IO",
 		slog.String("url", serverURL),
-		slog.String("ws_url", u),
+		slog.String("ws_url", endpoint),
 	)
 
 	dialer := &websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	c, _, err := dialer.Dial(u, nil)
+	c, _, err := dialer.DialContext(ctx, endpoint, nil)
 	if err != nil {
 		return nil, eioOpenInfo{}, fmt.Errorf("ws dial: %w", err)
 	}
+	// Bound the OPEN/CONNECT exchange: ReadMessage otherwise has no deadline
+	// and a half-open peer would hang the login forever.
+	_ = c.SetReadDeadline(time.Now().Add(20 * time.Second))
 
 	t := &wsTransport{conn: c}
-	open, err := completeHandshake(t, serverURL, start)
+	open, err := completeHandshake(ctx, t, start)
 	if err != nil {
 		c.Close()
 		return nil, eioOpenInfo{}, err
 	}
+	_ = c.SetReadDeadline(time.Time{})
 	return t, open, nil
 }
 
-func dialPolling(serverURL string) (eioTransport, eioOpenInfo, error) {
+func dialPolling(ctx context.Context, serverURL string) (eioTransport, eioOpenInfo, error) {
 	logging.LogDebug("kuma", "Dialing Socket.IO over HTTP long-polling",
 		slog.String("url", serverURL),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	u, err := parseKumaURL(serverURL)
+	if err != nil {
+		return nil, eioOpenInfo{}, err
+	}
+
+	pctx, cancel := context.WithCancel(ctx)
 	p := &pollingTransport{
-		baseURL: strings.TrimRight(serverURL, "/"),
+		baseURL: pollingBase(u),
 		http:    &http.Client{Timeout: 60 * time.Second},
-		ctx:     ctx,
+		ctx:     pctx,
 		cancel:  cancel,
 	}
 
 	// Engine.IO handshake: the OPEN packet arrives as the first GET response
 	// before any sid is assigned.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+	req, err := http.NewRequestWithContext(pctx, http.MethodGet,
 		p.endpoint()+"&t="+strconv.FormatInt(time.Now().UnixMilli(), 10), nil)
 	if err != nil {
 		cancel()
@@ -340,10 +407,14 @@ func dialPolling(serverURL string) (eioTransport, eioOpenInfo, error) {
 		cancel()
 		return nil, eioOpenInfo{}, fmt.Errorf("send sio connect: %w", err)
 	}
-	deadline := time.After(15 * time.Second)
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
 	for len(p.pending) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
+			cancel()
+			return nil, eioOpenInfo{}, ctx.Err()
+		case <-deadline.C:
 			cancel()
 			return nil, eioOpenInfo{}, fmt.Errorf("polling connect: timeout waiting for sio connect")
 		default:
@@ -362,10 +433,34 @@ func dialPolling(serverURL string) (eioTransport, eioOpenInfo, error) {
 	return p, open, nil
 }
 
+// readPacketCtx reads one Engine.IO packet, aborting (and closing the
+// transport) when ctx is cancelled.
+func readPacketCtx(ctx context.Context, t eioTransport) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type result struct {
+		packet []byte
+		err    error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		p, err := t.ReadPacket()
+		ch <- result{packet: p, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		t.Close()
+		return nil, ctx.Err()
+	case r := <-ch:
+		return r.packet, r.err
+	}
+}
+
 // completeHandshake performs the Engine.IO OPEN read + SIO CONNECT exchange
 // shared by transports that deliver the OPEN packet synchronously.
-func completeHandshake(t eioTransport, serverURL string, start time.Time) (eioOpenInfo, error) {
-	msg, err := t.ReadPacket()
+func completeHandshake(ctx context.Context, t eioTransport, start time.Time) (eioOpenInfo, error) {
+	msg, err := readPacketCtx(ctx, t)
 	if err != nil {
 		logging.LogError("kuma", "Socket.IO read open failed",
 			slog.String("error", err.Error()),
@@ -400,7 +495,7 @@ func completeHandshake(t eioTransport, serverURL string, start time.Time) (eioOp
 	}
 
 	// Read SIO CONNECT response
-	msg, err = t.ReadPacket()
+	msg, err = readPacketCtx(ctx, t)
 	if err != nil {
 		logging.LogError("kuma", "Socket.IO read connect response failed",
 			slog.String("error", err.Error()),
@@ -438,7 +533,7 @@ func (c *sioClient) readLoop() {
 		}
 		switch eioType(msg[0]) {
 		case eioPing:
-			c.conn.WritePacket([]byte("3"))
+			_ = c.writePacket([]byte("3"))
 		case eioMessage:
 			c.handleSIO(msg[1:])
 		case eioClose:
@@ -533,7 +628,11 @@ func (c *sioClient) handleAck(data []byte) {
 	c.mu.Unlock()
 
 	if ok {
-		ch <- raw
+		// Non-blocking: a slow/failed consumer must never stall readLoop.
+		select {
+		case ch <- raw:
+		default:
+		}
 	}
 }
 
@@ -548,1227 +647,96 @@ func (c *sioClient) pingLoop(intervalMs int) {
 		case <-c.done:
 			return
 		case <-ticker.C:
-			c.mu.Lock()
-			c.conn.WritePacket([]byte("2"))
-			c.mu.Unlock()
+			if err := c.writePacket([]byte("2")); err != nil {
+				logging.LogDebug("kuma", "Socket.IO ping write failed",
+					slog.String("error", err.Error()),
+				)
+				c.conn.Close()
+				return
+			}
 		}
 	}
 }
 
-func (c *sioClient) emit(event string, data any) {
+// writePacket serializes writes to the underlying transport.
+func (c *sioClient) writePacket(p []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.conn.WritePacket(p)
+}
+
+// emit sends an event without waiting for an ack. A write failure is returned
+// to the caller so a dead socket is never mistaken for a successful command.
+func (c *sioClient) emit(event string, data any) error {
 	arr := []any{event}
 	if data != nil {
 		arr = append(arr, data)
 	}
-	b, _ := json.Marshal(arr)
-	c.mu.Lock()
-	c.conn.WritePacket(append([]byte("42"), b...))
-	c.mu.Unlock()
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return err
+	}
+	return c.writePacket(append([]byte("42"), b...))
 }
 
-func (c *sioClient) emitWithAck(event string, data any) <-chan []json.RawMessage {
+// emitWithAck sends an event and returns the channel that receives its ack.
+// A write failure is returned immediately (and the pending ack removed).
+func (c *sioClient) emitWithAck(event string, data any) (<-chan []json.RawMessage, error) {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, errors.New("socket.io connection closed")
+	}
 	c.ackID++
 	id := c.ackID
 	ch := make(chan []json.RawMessage, 1)
 	c.pendingAcks[id] = ch
+	c.mu.Unlock()
 
 	arr := []any{event}
 	if data != nil {
 		arr = append(arr, data)
 	}
-	b, _ := json.Marshal(arr)
+	b, err := json.Marshal(arr)
+	if err != nil {
+		c.dropAck(id)
+		return nil, err
+	}
 	// Socket.IO protocol v5: ack id goes in the packet header as digits
 	// between "42" and the JSON args array, e.g. "421["login",{...}]".
-	// (Protocol v4 put the id as the first element of the JSON array,
-	// which modern servers decode as an event named after the number.)
 	packet := append([]byte("42"), []byte(strconv.Itoa(id))...)
 	packet = append(packet, b...)
-	c.conn.WritePacket(packet)
+	if err := c.writePacket(packet); err != nil {
+		c.dropAck(id)
+		return nil, err
+	}
+	return ch, nil
+}
+
+func (c *sioClient) dropAck(id int) {
+	c.mu.Lock()
+	delete(c.pendingAcks, id)
 	c.mu.Unlock()
-
-	return ch
 }
 
+// close tears the connection down, waits for readLoop to exit and fails any
+// outstanding acks so no caller is left waiting on a dead socket. Safe to
+// call more than once.
 func (c *sioClient) close() {
-	logging.LogDebug("kuma", "Closing Socket.IO connection")
-	c.conn.Close()
-	<-c.done
-	logging.LogDebug("kuma", "Socket.IO connection closed")
-}
-
-// --- Kuma-specific query ---
-
-type MonitorStats struct {
-	ID        int     `json:"id"`
-	Status    int     `json:"status"`
-	Uptime24h float64 `json:"uptime_24h"`
-	Uptime7d  float64 `json:"uptime_7d"`
-	Uptime1y  float64 `json:"uptime_1y"`
-	AvgPing   float64 `json:"avg_ping"`
-	LastMsg   string  `json:"last_msg,omitempty"`
-	CertInfo  string  `json:"cert_info,omitempty"`
-}
-
-type MonitorTag struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Value string `json:"value"`
-	Color string `json:"color,omitempty"`
-}
-
-type KumaMonitor struct {
-	ID              int          `json:"id"`
-	Name            string       `json:"name"`
-	URL             string       `json:"url,omitempty"`
-	Type            string       `json:"type"`
-	DockerContainer string       `json:"docker_container,omitempty"`
-	DockerHost      int          `json:"docker_host,omitempty"`
-	Status          int          `json:"status"`
-	Uptime24h       float64      `json:"uptime_24h"`
-	Uptime7d        float64      `json:"uptime_7d"`
-	Uptime1y        float64      `json:"uptime_1y"`
-	Ping            float64      `json:"ping"`
-	LastMsg         string       `json:"last_msg,omitempty"`
-	Interval        int          `json:"interval,omitempty"`
-	RetryInterval   int          `json:"retryInterval,omitempty"`
-	MaxRetries      int          `json:"maxretries,omitempty"`
-	Active          bool         `json:"active"`
-	Tags            []MonitorTag `json:"tags,omitempty"`
-}
-
-// dataCollectionWindow bounds how long a Socket.IO query collects events
-// after login. Empirically the full monitor list and the complete set of
-// uptime/avgPing events arrive within ~2s of login (61 monitors → 183
-// uptime events = 61 × 3 durations in the first 2s); a 5s window captures
-// everything with a 4x speedup over the historical 20s.
-// Kept as a var (not const) so tests can shorten the window.
-var dataCollectionWindow = 5 * time.Second
-
-func parseID(raw json.RawMessage) (int, bool) {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		var n int
-		if _, err := fmt.Sscanf(s, "%d", &n); err == nil {
-			return n, true
+	c.closeOnce.Do(func() {
+		logging.LogDebug("kuma", "Closing Socket.IO connection")
+		c.conn.Close()
+		<-c.done
+		c.mu.Lock()
+		c.closed = true
+		for id, ch := range c.pendingAcks {
+			delete(c.pendingAcks, id)
+			select {
+			case ch <- nil:
+			default:
+			}
 		}
-	}
-	var n int
-	if json.Unmarshal(raw, &n) == nil {
-		return n, true
-	}
-	return 0, false
-}
-
-// parseDuration normalizes a Kuma uptime duration arg to its canonical
-// string form ("24", "720", "1y"). Kuma 2.5.0 sends durations as JSON
-// numbers (24, 720, 8760) in the "uptime" event, but some versions/history
-// events use strings ("24", "1y"). Accept both.
-func parseDuration(raw json.RawMessage) (string, bool) {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s, true
-	}
-	var n float64
-	if json.Unmarshal(raw, &n) == nil {
-		switch n {
-		case 24:
-			return "24", true
-		case 720:
-			return "720", true
-		case 8760:
-			return "1y", true
-		default:
-			return fmt.Sprintf("%g", n), true
-		}
-	}
-	return "", false
-}
-
-// sioCommandSession dials Kuma over Socket.IO, performs the JWT login
-// handshake, and returns the connected client plus the event channel. Used by
-// one-shot command flows (add/delete/edit monitor).
-func sioCommandSession(kumaURL, username, password string) (*sioClient, <-chan rawEvent, error) {
-	events := make(chan rawEvent, 256)
-	cli, err := dialSIO(kumaURL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("socket.io dial: %w", err)
-	}
-	cli.setOnEvent(func(ev rawEvent) {
-		events <- ev
+		c.mu.Unlock()
+		logging.LogDebug("kuma", "Socket.IO connection closed")
 	})
-
-	loginErr := make(chan error, 1)
-	loginSent := false
-	loginTimer := time.After(10 * time.Second)
-
-loop:
-	for {
-		select {
-		case ev := <-events:
-			if ev.Name == "loginRequired" && !loginSent {
-				loginSent = true
-				ackCh := cli.emitWithAck("login", map[string]string{
-					"username": username,
-					"password": password,
-				})
-				go func() {
-					select {
-					case resp := <-ackCh:
-						if len(resp) > 0 {
-							var r struct {
-								Ok bool `json:"ok"`
-							}
-							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
-								loginErr <- nil
-								return
-							}
-						}
-						loginErr <- fmt.Errorf("login rejected")
-					case <-time.After(10 * time.Second):
-						loginErr <- fmt.Errorf("login timeout")
-					}
-				}()
-			}
-		case err := <-loginErr:
-			if err != nil {
-				cli.close()
-				return nil, nil, fmt.Errorf("login: %w", err)
-			}
-			break loop
-		case <-loginTimer:
-			cli.close()
-			return nil, nil, fmt.Errorf("login timeout")
-		}
-	}
-	return cli, events, nil
-}
-
-// parseOKAck decodes a Socket.IO ack of the shape {ok: bool, msg: string}.
-func parseOKAck(resp []json.RawMessage) (bool, string) {
-	if len(resp) == 0 {
-		return false, ""
-	}
-	var r struct {
-		Ok  bool   `json:"ok"`
-		Msg string `json:"msg"`
-	}
-	if json.Unmarshal(resp[0], &r) == nil {
-		return r.Ok, r.Msg
-	}
-	return false, ""
-}
-
-// QueryDockerHostsViaSocketIO fetches the docker host list from Kuma via
-// Socket.IO. Kuma pushes a "dockerHostList" event shortly after login (from
-// afterLogin in server.js), so we scan the event stream for it. The list is
-// used to resolve a valid monitor.docker_host FK id (id must exist in the
-// docker_host table, otherwise SQLite rejects the insert with
-// "FOREIGN KEY constraint failed").
-func QueryDockerHostsViaSocketIO(kumaURL, username, password string) ([]DockerHost, error) {
-	logging.LogInfo("kuma", "Querying docker hosts via Socket.IO",
-		slog.String("kuma_url", kumaURL),
-	)
-
-	type hostEntry struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
-	}
-
-	// Kuma emits "dockerHostList" inside afterLogin, i.e. BEFORE the login
-	// ack callback is delivered. We must therefore process ALL events while
-	// waiting for login (not just loginRequired), otherwise the list is
-	// dropped before we ever see it.
-	events := make(chan rawEvent, 256)
-	cli, err := dialSIO(kumaURL)
-	if err != nil {
-		return nil, fmt.Errorf("socket.io dial: %w", err)
-	}
-	defer cli.close()
-
-	cli.setOnEvent(func(ev rawEvent) {
-		events <- ev
-	})
-
-	loginSent := false
-	loginErr := make(chan error, 1)
-
-	collectHosts := func(ev rawEvent) ([]DockerHost, bool) {
-		if ev.Name != "dockerHostList" || len(ev.Args) < 1 {
-			return nil, false
-		}
-		var entries []hostEntry
-		if json.Unmarshal(ev.Args[0], &entries) != nil {
-			logging.LogWarn("kuma", "Socket.IO dockerHostList parse error",
-				slog.String("parse_error", "failed to parse host list"),
-			)
-			return nil, false
-		}
-		hosts := make([]DockerHost, 0, len(entries))
-		for _, e := range entries {
-			hosts = append(hosts, DockerHost{ID: e.ID, Name: e.Name})
-		}
-		return hosts, true
-	}
-
-	// Phase 1: wait for login while capturing dockerHostList (arrives pre-ack).
-	loginTimer := time.After(15 * time.Second)
-	for {
-		select {
-		case ev := <-events:
-			if hosts, ok := collectHosts(ev); ok {
-				logging.LogInfo("kuma", "Socket.IO docker host list received",
-					slog.Int("host_count", len(hosts)),
-				)
-				return hosts, nil
-			}
-			if ev.Name == "loginRequired" && !loginSent {
-				loginSent = true
-				ackCh := cli.emitWithAck("login", map[string]string{
-					"username": username,
-					"password": password,
-				})
-				go func() {
-					select {
-					case resp := <-ackCh:
-						if len(resp) > 0 {
-							var r struct {
-								Ok bool `json:"ok"`
-							}
-							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
-								loginErr <- nil
-								return
-							}
-						}
-						loginErr <- fmt.Errorf("login rejected")
-					case <-time.After(15 * time.Second):
-						loginErr <- fmt.Errorf("login timeout")
-					}
-				}()
-			}
-		case err := <-loginErr:
-			if err != nil {
-				logging.LogError("kuma", "Socket.IO login failed",
-					slog.String("error", err.Error()),
-				)
-				return nil, fmt.Errorf("login: %w", err)
-			}
-			goto collect
-		case <-loginTimer:
-			logging.LogWarn("kuma", "Socket.IO docker host login timeout")
-			return []DockerHost{}, nil
-		}
-	}
-
-	// Phase 2: post-login fallback collection window in case the list did not
-	// arrive during login (ordering variance on the wire).
-collect:
-	dataTimer := time.After(dataCollectionWindow)
-	for {
-		select {
-		case ev := <-events:
-			if hosts, ok := collectHosts(ev); ok {
-				logging.LogInfo("kuma", "Socket.IO docker host list received",
-					slog.Int("host_count", len(hosts)),
-				)
-				return hosts, nil
-			}
-		case <-dataTimer:
-			logging.LogWarn("kuma", "Socket.IO docker host list timeout")
-			return []DockerHost{}, nil
-		}
-	}
-}
-
-func QueryMonitorsViaSocketIO(kumaURL, username, password string) ([]KumaMonitor, error) {
-	return QueryMonitorsViaSocketIOContext(context.Background(), kumaURL, username, password)
-}
-
-func QueryMonitorsViaSocketIOContext(ctx context.Context, kumaURL, username, password string) ([]KumaMonitor, error) {
-	queryStart := time.Now()
-	logging.LogInfo("kuma", "Querying monitors via Socket.IO",
-		slog.String("kuma_url", kumaURL),
-	)
-
-	type named struct {
-		name, url, mtype, dockerContainer   string
-		dockerHost                          int
-		interval, retryInterval, maxRetries int
-		active                              bool
-		activeSet                           bool
-		tags                                []MonitorTag
-	}
-
-	var (
-		names    = make(map[int]named)
-		upt24    = make(map[int]float64)
-		upt7d    = make(map[int]float64)
-		upt1y    = make(map[int]float64)
-		pings    = make(map[int]float64)
-		statuses = make(map[int]int)
-		msgs     = make(map[int]string)
-		seen     = make(map[int]bool)
-		loginErr = make(chan error, 1)
-	)
-
-	events := make(chan rawEvent, 256)
-	cli, err := dialSIO(kumaURL)
-	if err != nil {
-		return nil, fmt.Errorf("socket.io dial: %w", err)
-	}
-	defer cli.close()
-
-	cli.setOnEvent(func(ev rawEvent) {
-		events <- ev
-	})
-
-	// Wait for loginRequired and respond
-	loginSent := false
-	loginTimer := time.After(20 * time.Second)
-
-	handleEvent := func(ev rawEvent) bool {
-		snippet := func(raw json.RawMessage) string {
-			s := string(raw)
-			if len(s) > 100 {
-				s = s[:100] + "..."
-			}
-			return s
-		}
-		switch ev.Name {
-		case "loginRequired":
-			if !loginSent {
-				loginSent = true
-				ackCh := cli.emitWithAck("login", map[string]string{
-					"username": username,
-					"password": password,
-				})
-				go func() {
-					select {
-					case resp := <-ackCh:
-						if len(resp) > 0 {
-							var r struct {
-								Ok bool `json:"ok"`
-							}
-							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
-								loginErr <- nil
-								return
-							}
-						}
-						loginErr <- fmt.Errorf("login rejected")
-					case <-time.After(15 * time.Second):
-						loginErr <- fmt.Errorf("login timeout")
-					}
-				}()
-			}
-		case "monitorList":
-			if len(ev.Args) >= 1 {
-				// Payload is a map keyed by monitor id string, e.g.
-				// {"1": {id:1, name:"vandijke.xyz", url:"http://vandijke.xyz",
-				//        type:"docker", docker_container:"vandijke",
-				//        docker_host:1, active:true, ...}}.
-				// It arrives ~130ms after login with the authoritative
-				// names/urls/types — far earlier than certInfo events.
-				var list map[string]struct {
-					ID              int          `json:"id"`
-					Name            string       `json:"name"`
-					URL             string       `json:"url"`
-					Type            string       `json:"type"`
-					DockerContainer string       `json:"docker_container"`
-					DockerHost      int          `json:"docker_host"`
-					Interval        int          `json:"interval"`
-					RetryInterval   int          `json:"retryInterval"`
-					MaxRetries      int          `json:"maxretries"`
-					Active          *bool        `json:"active"`
-					Tags            []MonitorTag `json:"tags"`
-				}
-				if json.Unmarshal(ev.Args[0], &list) == nil {
-					for _, m := range list {
-						seen[m.ID] = true
-						active := true
-						activeSet := false
-						if m.Active != nil {
-							active = *m.Active
-							activeSet = true
-						}
-						names[m.ID] = named{
-							name:            m.Name,
-							url:             m.URL,
-							mtype:           m.Type,
-							dockerContainer: m.DockerContainer,
-							dockerHost:      m.DockerHost,
-							interval:        m.Interval,
-							retryInterval:   m.RetryInterval,
-							maxRetries:      m.MaxRetries,
-							active:          active,
-							activeSet:       activeSet,
-							tags:            m.Tags,
-						}
-					}
-				} else {
-					logging.LogWarn("kuma", "Socket.IO monitorList parse error",
-						slog.String("event_type", "monitorList"),
-						slog.String("parse_error", "failed to parse monitor map"),
-						slog.String("raw_snippet", snippet(ev.Args[0])),
-					)
-				}
-			}
-		case "uptime":
-			if len(ev.Args) >= 3 {
-				if id, ok := parseID(ev.Args[0]); ok {
-					var dur string
-					var val float64
-					if d, ok := parseDuration(ev.Args[1]); ok && json.Unmarshal(ev.Args[2], &val) == nil {
-						dur = d
-						seen[id] = true
-						switch dur {
-						case "24":
-							upt24[id] = val
-							if val > 0.5 {
-								statuses[id] = 1
-							} else if val == 0 {
-								statuses[id] = 0
-							}
-						case "720":
-							upt7d[id] = val
-						case "1y":
-							upt1y[id] = val
-						}
-					} else {
-						logging.LogWarn("kuma", "Socket.IO uptime parse error",
-							slog.String("event_type", "uptime"),
-							slog.String("parse_error", "failed to parse duration or value"),
-							slog.String("raw_snippet", snippet(ev.Args[1])+","+snippet(ev.Args[2])),
-						)
-					}
-				}
-			}
-		case "avgPing":
-			if len(ev.Args) >= 2 {
-				if id, ok := parseID(ev.Args[0]); ok {
-					seen[id] = true
-					if string(ev.Args[1]) != "null" {
-						var v float64
-						if json.Unmarshal(ev.Args[1], &v) == nil {
-							pings[id] = v
-						} else {
-							logging.LogWarn("kuma", "Socket.IO avgPing parse error",
-								slog.String("event_type", "avgPing"),
-								slog.String("parse_error", "failed to parse ping value"),
-								slog.String("raw_snippet", snippet(ev.Args[1])),
-							)
-						}
-					}
-				}
-			}
-		case "certInfo":
-			if len(ev.Args) >= 2 {
-				if id, ok := parseID(ev.Args[0]); ok {
-					seen[id] = true
-					var certStr string
-					if json.Unmarshal(ev.Args[1], &certStr) == nil {
-						var p struct {
-							CertInfo struct {
-								Subject struct {
-									CN string `json:"CN"`
-								} `json:"subject"`
-							} `json:"certInfo"`
-						}
-						if json.Unmarshal([]byte(certStr), &p) == nil && p.CertInfo.Subject.CN != "" {
-							names[id] = named{name: p.CertInfo.Subject.CN, url: "https://" + p.CertInfo.Subject.CN, mtype: "http"}
-						}
-					} else {
-						logging.LogWarn("kuma", "Socket.IO certInfo parse error",
-							slog.String("event_type", "certInfo"),
-							slog.String("parse_error", "failed to parse cert string"),
-							slog.String("raw_snippet", snippet(ev.Args[1])),
-						)
-					}
-				}
-			}
-		case "heartbeat":
-			if len(ev.Args) >= 1 {
-				var hb struct {
-					MonitorID int    `json:"monitorID"`
-					Stat      int    `json:"status"`
-					Msg       string `json:"msg"`
-				}
-				if json.Unmarshal(ev.Args[0], &hb) == nil {
-					seen[hb.MonitorID] = true
-					statuses[hb.MonitorID] = hb.Stat
-					if hb.Msg != "" {
-						msgs[hb.MonitorID] = hb.Msg
-					}
-				} else {
-					logging.LogWarn("kuma", "Socket.IO heartbeat parse error",
-						slog.String("event_type", "heartbeat"),
-						slog.String("parse_error", "failed to parse heartbeat struct"),
-						slog.String("raw_snippet", snippet(ev.Args[0])),
-					)
-				}
-			}
-		case "domainInfo":
-			if len(ev.Args) >= 1 {
-				if id, ok := parseID(ev.Args[0]); ok {
-					seen[id] = true
-				}
-			}
-		}
-		return false
-	}
-
-	// Phase 1: wait for login
-	logging.LogDebug("kuma", "Socket.IO waiting for loginRequired event")
-loop:
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case ev := <-events:
-			handleEvent(ev)
-		case err := <-loginErr:
-			if err != nil {
-				logging.LogError("kuma", "Socket.IO login failed",
-					slog.String("error", err.Error()),
-					slog.Duration("duration", time.Since(queryStart)),
-				)
-				return nil, fmt.Errorf("login: %w", err)
-			}
-			logging.LogInfo("kuma", "Socket.IO login successful",
-				slog.Duration("duration", time.Since(queryStart)),
-			)
-			break loop
-		case <-loginTimer:
-			logging.LogError("kuma", "Socket.IO login timeout",
-				slog.Duration("duration", time.Since(queryStart)),
-			)
-			return nil, fmt.Errorf("login timeout")
-		}
-	}
-
-	// Phase 2: collect data for the collection window
-	logging.LogDebug("kuma", "Socket.IO collecting monitor data")
-	dataTimer := time.After(dataCollectionWindow)
-	eventCounts := make(map[string]int)
-collectLoop:
-	for {
-		select {
-		case <-ctx.Done():
-			// Deadline/cancel must not be reported as a successful (partial) result.
-			return nil, ctx.Err()
-		case ev := <-events:
-			eventCounts[ev.Name]++
-			handleEvent(ev)
-		case <-dataTimer:
-			break collectLoop
-		}
-	}
-
-	// Log event-type counts on completion
-	logging.LogInfo("kuma", "Socket.IO data collection complete",
-		slog.Int("event_count_uptime", eventCounts["uptime"]),
-		slog.Int("event_count_avgPing", eventCounts["avgPing"]),
-		slog.Int("event_count_heartbeat", eventCounts["heartbeat"]),
-		slog.Int("event_count_certInfo", eventCounts["certInfo"]),
-		slog.Int("event_count_domainInfo", eventCounts["domainInfo"]),
-		slog.Int("total_events_received", func() int {
-			total := 0
-			for _, c := range eventCounts {
-				total += c
-			}
-			return total
-		}()),
-		slog.Duration("duration", time.Since(queryStart)),
-	)
-
-	// Build result
-	var out []KumaMonitor
-	for id := range seen {
-		m := KumaMonitor{
-			ID:        id,
-			Uptime24h: upt24[id],
-			Uptime7d:  upt7d[id],
-			Uptime1y:  upt1y[id],
-			Ping:      pings[id],
-			Status:    statuses[id],
-			LastMsg:   msgs[id],
-		}
-		if n, ok := names[id]; ok {
-			m.Name = n.name
-			m.URL = n.url
-			m.Type = n.mtype
-			m.DockerContainer = n.dockerContainer
-			m.DockerHost = n.dockerHost
-			m.Interval = n.interval
-			m.RetryInterval = n.retryInterval
-			m.MaxRetries = n.maxRetries
-			if n.activeSet {
-				m.Active = n.active
-			} else {
-				m.Active = true
-			}
-			m.Tags = n.tags
-		} else {
-			m.Name = fmt.Sprintf("Monitor %d", id)
-			m.Type = "?"
-			m.Active = true
-		}
-		out = append(out, m)
-	}
-
-	// Sort by ID
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[i].ID > out[j].ID {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
-
-	logging.LogInfo("kuma", "Socket.IO monitor query complete",
-		slog.Int("monitor_count", len(out)),
-		slog.Duration("duration", time.Since(queryStart)),
-	)
-
-	return out, nil
-}
-
-func GetMonitorStats(client *Client, monitorID int) (*MonitorStats, error) {
-	queryStart := time.Now()
-	logging.LogInfo("kuma", "Getting monitor stats via Socket.IO",
-		slog.Int("monitor_id", monitorID),
-		slog.String("kuma_url", client.url),
-	)
-
-	var (
-		upt24     float64
-		upt7d     float64
-		upt1y     float64
-		ping      float64
-		status    int
-		lastMsg   string
-		certInfo  string
-		loginErr  = make(chan error, 1)
-		loginSent bool
-	)
-
-	events := make(chan rawEvent, 256)
-	cli, err := dialSIO(client.url)
-	if err != nil {
-		return nil, fmt.Errorf("socket.io dial: %w", err)
-	}
-	defer cli.close()
-
-	cli.setOnEvent(func(ev rawEvent) {
-		events <- ev
-	})
-
-	loginTimer := time.After(20 * time.Second)
-
-	handleEvent := func(ev rawEvent) {
-		switch ev.Name {
-		case "loginRequired":
-			if !loginSent {
-				loginSent = true
-				ackCh := cli.emitWithAck("login", map[string]string{
-					"username": client.username,
-					"password": client.password,
-				})
-				go func() {
-					select {
-					case resp := <-ackCh:
-						if len(resp) > 0 {
-							var r struct {
-								Ok bool `json:"ok"`
-							}
-							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
-								loginErr <- nil
-								return
-							}
-						}
-						loginErr <- fmt.Errorf("login rejected")
-					case <-time.After(15 * time.Second):
-						loginErr <- fmt.Errorf("login timeout")
-					}
-				}()
-			}
-		case "uptime":
-			if len(ev.Args) >= 3 {
-				if id, ok := parseID(ev.Args[0]); ok && id == monitorID {
-					var dur string
-					var val float64
-					if json.Unmarshal(ev.Args[1], &dur) == nil && json.Unmarshal(ev.Args[2], &val) == nil {
-						switch dur {
-						case "24":
-							upt24 = val
-							if val > 0.5 {
-								status = 1
-							} else if val == 0 {
-								status = 0
-							}
-						case "720":
-							upt7d = val
-						case "1y":
-							upt1y = val
-						}
-					}
-				}
-			}
-		case "avgPing":
-			if len(ev.Args) >= 2 {
-				if id, ok := parseID(ev.Args[0]); ok && id == monitorID {
-					if string(ev.Args[1]) != "null" {
-						var v float64
-						if json.Unmarshal(ev.Args[1], &v) == nil {
-							ping = v
-						}
-					}
-				}
-			}
-		case "certInfo":
-			if len(ev.Args) >= 2 {
-				if id, ok := parseID(ev.Args[0]); ok && id == monitorID {
-					var certStr string
-					if json.Unmarshal(ev.Args[1], &certStr) == nil {
-						var p struct {
-							CertInfo struct {
-								Subject struct {
-									CN string `json:"CN"`
-								} `json:"subject"`
-							} `json:"certInfo"`
-						}
-						if json.Unmarshal([]byte(certStr), &p) == nil && p.CertInfo.Subject.CN != "" {
-							certInfo = p.CertInfo.Subject.CN
-						}
-					}
-				}
-			}
-		case "heartbeat":
-			if len(ev.Args) >= 1 {
-				var hb struct {
-					MonitorID int    `json:"monitorID"`
-					Stat      int    `json:"status"`
-					Msg       string `json:"msg"`
-				}
-				if json.Unmarshal(ev.Args[0], &hb) == nil && hb.MonitorID == monitorID {
-					status = hb.Stat
-					if hb.Msg != "" {
-						lastMsg = hb.Msg
-					}
-				}
-			}
-		}
-	}
-
-	// Phase 1: wait for login
-	logging.LogDebug("kuma", "Socket.IO waiting for loginRequired event")
-loop:
-	for {
-		select {
-		case ev := <-events:
-			handleEvent(ev)
-		case err := <-loginErr:
-			if err != nil {
-				logging.LogError("kuma", "Socket.IO login failed",
-					slog.String("error", err.Error()),
-					slog.Duration("duration", time.Since(queryStart)),
-				)
-				return nil, fmt.Errorf("login: %w", err)
-			}
-			logging.LogInfo("kuma", "Socket.IO login successful",
-				slog.Duration("duration", time.Since(queryStart)),
-			)
-			break loop
-		case <-loginTimer:
-			logging.LogError("kuma", "Socket.IO login timeout",
-				slog.Duration("duration", time.Since(queryStart)),
-			)
-			return nil, fmt.Errorf("login timeout")
-		}
-	}
-
-	// Phase 2: collect data for the collection window
-	logging.LogDebug("kuma", "Socket.IO collecting monitor stats")
-	dataTimer := time.After(dataCollectionWindow)
-collectLoop:
-	for {
-		select {
-		case ev := <-events:
-			handleEvent(ev)
-		case <-dataTimer:
-			break collectLoop
-		}
-	}
-
-	logging.LogInfo("kuma", "Socket.IO monitor stats collection complete",
-		slog.Int("monitor_id", monitorID),
-		slog.Duration("duration", time.Since(queryStart)),
-	)
-
-	return &MonitorStats{
-		ID:        monitorID,
-		Status:    status,
-		Uptime24h: upt24,
-		Uptime7d:  upt7d,
-		Uptime1y:  upt1y,
-		AvgPing:   ping,
-		LastMsg:   lastMsg,
-		CertInfo:  certInfo,
-	}, nil
-}
-
-// AddMonitorViaSocketIO creates a monitor in Kuma via the Socket.IO "add" event.
-// It opens a fresh WebSocket connection, logs in, emits the add event with the
-// given monitor configuration, awaits the callback, and disconnects.
-func AddMonitorViaSocketIO(kumaURL, username, password string, monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
-	logging.LogInfo("kuma", "Adding monitor via Socket.IO",
-		slog.String("kuma_url", kumaURL),
-		slog.String("name", name),
-		slog.String("type", monitorType),
-	)
-
-	type addResponse struct {
-		Ok        bool   `json:"ok"`
-		Msg       string `json:"msg"`
-		MonitorID int    `json:"monitorID"`
-	}
-	var (
-		loginErr  = make(chan error, 1)
-		loginSent bool
-	)
-
-	events := make(chan rawEvent, 256)
-	cli, err := dialSIO(kumaURL)
-	if err != nil {
-		return 0, fmt.Errorf("socket.io dial: %w", err)
-	}
-	defer cli.close()
-
-	cli.setOnEvent(func(ev rawEvent) {
-		events <- ev
-	})
-
-	loginTimer := time.After(10 * time.Second)
-
-	// Phase 1: wait for loginRequired and respond
-	handleEvent := func(ev rawEvent) {
-		switch ev.Name {
-		case "loginRequired":
-			if !loginSent {
-				loginSent = true
-				ackCh := cli.emitWithAck("login", map[string]string{
-					"username": username,
-					"password": password,
-				})
-				go func() {
-					select {
-					case resp := <-ackCh:
-						if len(resp) > 0 {
-							var r struct {
-								Ok bool `json:"ok"`
-							}
-							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
-								loginErr <- nil
-								return
-							}
-						}
-						loginErr <- fmt.Errorf("login rejected")
-					case <-time.After(10 * time.Second):
-						loginErr <- fmt.Errorf("login timeout")
-					}
-				}()
-			}
-		}
-	}
-
-	logging.LogDebug("kuma", "Socket.IO waiting for loginRequired event")
-loop:
-	for {
-		select {
-		case ev := <-events:
-			handleEvent(ev)
-		case err := <-loginErr:
-			if err != nil {
-				logging.LogError("kuma", "Socket.IO login failed",
-					slog.String("error", err.Error()),
-				)
-				return 0, fmt.Errorf("login: %w", err)
-			}
-			logging.LogInfo("kuma", "Socket.IO login successful")
-			break loop
-		case <-loginTimer:
-			return 0, fmt.Errorf("login timeout")
-		}
-	}
-
-	// Phase 2: emit "add" event and wait for ack.
-	// accepted_statuscodes must always be present as an array of strings:
-	// Kuma's add handler unconditionally calls
-	// monitor.accepted_statuscodes.every(...) and rejects non-strings.
-	payload := map[string]any{
-		"name":                 name,
-		"type":                 monitorType,
-		"interval":             60,
-		"retryInterval":        60,
-		"maxretries":           3,
-		"conditions":           []any{},
-		"accepted_statuscodes": []string{"200-299"},
-	}
-	switch monitorType {
-	case "http":
-		payload["url"] = url
-		payload["method"] = "GET"
-		payload["accepted_statuscodes"] = []string{"200", "201", "204", "301", "302"}
-	case "docker":
-		payload["docker_container"] = dockerContainer
-		// Only include docker_host when it is a valid (>0) FK id. Kuma's
-		// monitor.docker_host references docker_host(id); sending 0 trips a
-		// SQLite "FOREIGN KEY constraint failed" because id 0 never exists.
-		if dockerHostID > 0 {
-			payload["docker_host"] = dockerHostID
-		}
-	}
-
-	ackCh := cli.emitWithAck("add", payload)
-	select {
-	case resp := <-ackCh:
-		if len(resp) > 0 {
-			var r addResponse
-			if json.Unmarshal(resp[0], &r) == nil {
-				if r.Ok {
-					// Modern Kuma returns the ID in the monitorID field;
-					// older versions embedded it at the start of msg.
-					monitorID := r.MonitorID
-					if monitorID == 0 {
-						fmt.Sscanf(r.Msg, "%d", &monitorID)
-					}
-					if monitorID > 0 {
-						logging.LogInfo("kuma", "Monitor added via Socket.IO",
-							slog.String("name", name),
-							slog.Int("monitor_id", monitorID),
-						)
-						return monitorID, nil
-					}
-					logging.LogWarn("kuma", "Could not parse monitor ID from add response",
-						slog.String("msg", r.Msg),
-					)
-					// Return 0 as ID success — caller can still proceed
-					return 0, nil
-				}
-				return 0, fmt.Errorf("add monitor rejected: %s", r.Msg)
-			}
-		}
-		return 0, fmt.Errorf("add monitor: unexpected response format")
-	case <-time.After(10 * time.Second):
-		return 0, fmt.Errorf("add monitor response timeout")
-	}
-}
-
-// DeleteMonitorViaSocketIO removes a monitor from Kuma via Socket.IO. The
-// deleteMonitor event takes the monitor id and answers with {ok, msg}.
-func DeleteMonitorViaSocketIO(kumaURL, username, password string, monitorID int) error {
-	cli, _, err := sioCommandSession(kumaURL, username, password)
-	if err != nil {
-		return err
-	}
-	defer cli.close()
-
-	ackCh := cli.emitWithAck("deleteMonitor", monitorID)
-	select {
-	case resp := <-ackCh:
-		ok, msg := parseOKAck(resp)
-		if !ok {
-			if msg == "" {
-				msg = "unexpected response format"
-			}
-			return fmt.Errorf("delete monitor rejected: %s", msg)
-		}
-		logging.LogInfo("kuma", "Monitor deleted via Socket.IO",
-			slog.Int("monitor_id", monitorID),
-		)
-		return nil
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("delete monitor response timeout")
-	}
-}
-
-// getMonitorViaSocketIO fetches the complete monitor object for monitorID.
-// Kuma's editMonitor replaces the stored row with the object it is given, so
-// the fields we are not changing must come from the current monitor.
-func getMonitorViaSocketIO(cli *sioClient, monitorID int) (map[string]any, error) {
-	ackCh := cli.emitWithAck("getMonitor", monitorID)
-	select {
-	case resp := <-ackCh:
-		if len(resp) == 0 {
-			return nil, fmt.Errorf("get monitor: empty response")
-		}
-		var r struct {
-			Ok      bool           `json:"ok"`
-			Msg     string         `json:"msg"`
-			Monitor map[string]any `json:"monitor"`
-		}
-		if err := json.Unmarshal(resp[0], &r); err != nil {
-			return nil, fmt.Errorf("get monitor: %w", err)
-		}
-		if !r.Ok || r.Monitor == nil {
-			if r.Msg == "" {
-				r.Msg = "monitor not found"
-			}
-			return nil, fmt.Errorf("get monitor %d: %s", monitorID, r.Msg)
-		}
-		return r.Monitor, nil
-	case <-time.After(10 * time.Second):
-		return nil, fmt.Errorf("get monitor response timeout")
-	}
-}
-
-// EditMonitorViaSocketIO updates a monitor in Kuma via Socket.IO. payload holds
-// only the fields to change (type, url, docker_container, docker_host,
-// interval, ...); it is merged over the monitor's current definition.
-//
-// Kuma's "editMonitor" handler takes ONE argument - the complete monitor
-// object - and reads the id from monitor.id. Emitting [monitorID, payload]
-// (the old behaviour) made Kuma read monitor.id as undefined and reject the
-// edit with "Undefined binding(s) detected for keys [0] when compiling RAW
-// query: id = ?".
-func EditMonitorViaSocketIO(kumaURL, username, password string, monitorID int, payload map[string]any) error {
-	cli, _, err := sioCommandSession(kumaURL, username, password)
-	if err != nil {
-		return err
-	}
-	defer cli.close()
-
-	monitor, err := getMonitorViaSocketIO(cli, monitorID)
-	if err != nil {
-		return err
-	}
-	for k, v := range payload {
-		monitor[k] = v
-	}
-	monitor["id"] = monitorID
-	if _, ok := monitor["accepted_statuscodes"]; !ok {
-		monitor["accepted_statuscodes"] = []string{"200-299"}
-	}
-
-	ackCh := cli.emitWithAck("editMonitor", monitor)
-	select {
-	case resp := <-ackCh:
-		ok, msg := parseOKAck(resp)
-		if !ok {
-			if msg == "" {
-				msg = "unexpected response format"
-			}
-			return fmt.Errorf("edit monitor rejected: %s", msg)
-		}
-		logging.LogInfo("kuma", "Monitor edited via Socket.IO",
-			slog.Int("monitor_id", monitorID),
-		)
-		return nil
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("edit monitor response timeout")
-	}
-}
-
-// PauseMonitorViaSocketIO pauses a monitor via Socket.IO "pauseMonitor".
-func PauseMonitorViaSocketIO(kumaURL, username, password string, monitorID int) error {
-	cli, _, err := sioCommandSession(kumaURL, username, password)
-	if err != nil {
-		return err
-	}
-	defer cli.close()
-	ackCh := cli.emitWithAck("pauseMonitor", monitorID)
-	select {
-	case resp := <-ackCh:
-		ok, msg := parseOKAck(resp)
-		if !ok {
-			if msg == "" {
-				msg = "unexpected response format"
-			}
-			return fmt.Errorf("pause monitor rejected: %s", msg)
-		}
-		logging.LogInfo("kuma", "Monitor paused via Socket.IO", slog.Int("monitor_id", monitorID))
-		return nil
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("pause monitor response timeout")
-	}
-}
-
-// ResumeMonitorViaSocketIO resumes a paused monitor via Socket.IO "resumeMonitor".
-func ResumeMonitorViaSocketIO(kumaURL, username, password string, monitorID int) error {
-	cli, _, err := sioCommandSession(kumaURL, username, password)
-	if err != nil {
-		return err
-	}
-	defer cli.close()
-	ackCh := cli.emitWithAck("resumeMonitor", monitorID)
-	select {
-	case resp := <-ackCh:
-		ok, msg := parseOKAck(resp)
-		if !ok {
-			if msg == "" {
-				msg = "unexpected response format"
-			}
-			return fmt.Errorf("resume monitor rejected: %s", msg)
-		}
-		logging.LogInfo("kuma", "Monitor resumed via Socket.IO", slog.Int("monitor_id", monitorID))
-		return nil
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("resume monitor response timeout")
-	}
-}
-
-// AddMonitorTagViaSocketIO applies a tag to a monitor via Socket.IO "addMonitorTag".
-func AddMonitorTagViaSocketIO(kumaURL, username, password string, monitorID, tagID int) error {
-	cli, _, err := sioCommandSession(kumaURL, username, password)
-	if err != nil {
-		return err
-	}
-	defer cli.close()
-	// Kuma expects {monitorID, tagID} — try object form first.
-	payload := map[string]any{"monitorID": monitorID, "tagID": tagID}
-	ackCh := cli.emitWithAck("addMonitorTag", payload)
-	select {
-	case resp := <-ackCh:
-		ok, msg := parseOKAck(resp)
-		if !ok {
-			if msg == "" {
-				msg = "unexpected response format"
-			}
-			return fmt.Errorf("add monitor tag rejected: %s", msg)
-		}
-		logging.LogInfo("kuma", "Monitor tag added via Socket.IO", slog.Int("monitor_id", monitorID), slog.Int("tag_id", tagID))
-		return nil
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("add monitor tag response timeout")
-	}
-}
-
-// DeleteMonitorTagViaSocketIO removes a tag from a monitor via Socket.IO "deleteMonitorTag".
-func DeleteMonitorTagViaSocketIO(kumaURL, username, password string, monitorID, tagID int) error {
-	cli, _, err := sioCommandSession(kumaURL, username, password)
-	if err != nil {
-		return err
-	}
-	defer cli.close()
-	payload := map[string]any{"monitorID": monitorID, "tagID": tagID}
-	ackCh := cli.emitWithAck("deleteMonitorTag", payload)
-	select {
-	case resp := <-ackCh:
-		ok, msg := parseOKAck(resp)
-		if !ok {
-			if msg == "" {
-				msg = "unexpected response format"
-			}
-			return fmt.Errorf("delete monitor tag rejected: %s", msg)
-		}
-		logging.LogInfo("kuma", "Monitor tag deleted via Socket.IO", slog.Int("monitor_id", monitorID), slog.Int("tag_id", tagID))
-		return nil
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("delete monitor tag response timeout")
-	}
-}
-
-func init() {
-	if queryMonitorsCtxFn == nil {
-		queryMonitorsCtxFn = QueryMonitorsViaSocketIOContext
-	}
 }

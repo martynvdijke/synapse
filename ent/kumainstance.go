@@ -25,6 +25,8 @@ type KumaInstance struct {
 	Username string `json:"username,omitempty"`
 	// Password holds the value of the "password" field.
 	Password string `json:"-"`
+	// SessionToken holds the value of the "session_token" field.
+	SessionToken string `json:"-"`
 	// Enabled holds the value of the "enabled" field.
 	Enabled bool `json:"enabled,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -41,7 +43,7 @@ func (*KumaInstance) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case kumainstance.FieldID:
 			values[i] = new(sql.NullInt64)
-		case kumainstance.FieldName, kumainstance.FieldURL, kumainstance.FieldUsername, kumainstance.FieldPassword:
+		case kumainstance.FieldName, kumainstance.FieldURL, kumainstance.FieldUsername, kumainstance.FieldPassword, kumainstance.FieldSessionToken:
 			values[i] = new(sql.NullString)
 		case kumainstance.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -89,6 +91,12 @@ func (_m *KumaInstance) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field password", values[i])
 			} else if value.Valid {
 				_m.Password = value.String
+			}
+		case kumainstance.FieldSessionToken:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field session_token", values[i])
+			} else if value.Valid {
+				_m.SessionToken = value.String
 			}
 		case kumainstance.FieldEnabled:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -148,6 +156,8 @@ func (_m *KumaInstance) String() string {
 	builder.WriteString(_m.Username)
 	builder.WriteString(", ")
 	builder.WriteString("password=<sensitive>")
+	builder.WriteString(", ")
+	builder.WriteString("session_token=<sensitive>")
 	builder.WriteString(", ")
 	builder.WriteString("enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Enabled))

@@ -187,17 +187,24 @@ func (app *App) resolveNPMTarget(link *db.ServiceLink, instanceID int, hostName,
 // resolveKumaTarget resolves a Kuma monitor by id and/or name and caches its
 // details on the link.
 func (app *App) resolveKumaTarget(link *db.ServiceLink, instanceID, monitorID int, monitorName, serviceName string, ensureMissing bool) error {
+	// Legacy client is retained only for tag-id writes (the API seam has no
+	// tag-id command); monitor reads/writes go through the API handle.
 	client, err := app.kumaRegistry.Get(instanceID)
+	if err != nil {
+		return &apiError{http.StatusBadRequest, err.Error()}
+	}
+	api, err := app.kumaAPIFor(context.Background(), instanceID)
 	if err != nil {
 		return &apiError{http.StatusBadRequest, err.Error()}
 	}
 	if monitorID <= 0 && strings.TrimSpace(monitorName) == "" && !ensureMissing {
 		return &apiError{http.StatusBadRequest, "kuma_monitor_id or kuma_monitor_name is required when linking to a Kuma instance"}
 	}
-	monitors, err := client.QueryMonitorsViaSocketIO()
+	monitors, err := api.Monitors(context.Background())
 	if err != nil {
 		return &apiError{http.StatusBadGateway, err.Error()}
 	}
+	ix := synclib.BuildMonitorIndex(monitors)
 	for i := range monitors {
 		m := &monitors[i]
 		if monitorID > 0 && m.ID == monitorID {
@@ -229,19 +236,28 @@ func (app *App) resolveKumaTarget(link *db.ServiceLink, instanceID, monitorID in
 			return &apiError{http.StatusBadRequest, fmt.Sprintf("could not derive a monitor for service %q", serviceName)}
 		}
 
-		// Prefer an existing monitor with the derived display name.
-		for i := range monitors {
-			if monitors[i].Name == serviceName {
-				link.KumaInstanceID = instanceID
-				link.KumaMonitorID = monitors[i].ID
-				link.KumaMonitorName = monitors[i].Name
-				details, _ := json.Marshal(&monitors[i])
-				link.KumaDetails = string(details)
-				return nil
-			}
+		// Read-before-create: adopt an existing monitor by external id/name.
+		if existing := ix.Find(synclib.ExternalID{Type: monitorType, Service: serviceName}, serviceName); existing != nil {
+			link.KumaInstanceID = instanceID
+			link.KumaMonitorID = existing.ID
+			link.KumaMonitorName = existing.Name
+			details, _ := json.Marshal(existing)
+			link.KumaDetails = string(details)
+			return nil
 		}
 
-		id, err := client.AddMonitorViaSocketIO(monitorType, serviceName, url, container, 0)
+		spec := kuma.MonitorSpec{
+			Type:        monitorType,
+			Name:        serviceName,
+			Description: synclib.Marker(monitorType, serviceName),
+			Tags:        []string{synclib.SynapseTagName},
+		}
+		if monitorType == "http" {
+			spec.URL = url
+		} else {
+			spec.DockerContainer = container
+		}
+		id, err := api.AddMonitor(context.Background(), spec)
 		if err != nil {
 			return &apiError{http.StatusBadGateway, fmt.Sprintf("failed to create Kuma monitor for %q: %v", serviceName, err)}
 		}
@@ -831,7 +847,13 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 		return
 	}
 
+	// Legacy client is retained only for tag-id writes.
 	client, err := app.kumaRegistry.Get(input.InstanceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	api, err := app.kumaAPIFor(c.Request.Context(), input.InstanceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -843,10 +865,26 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 	// one, resolve it from the instance's docker host list.
 	dockerHostID := input.DockerHost
 	if monitorType == "docker" && dockerHostID <= 0 {
-		dockerHostID = resolveDockerHost(client)
+		dockerHostID = resolveDockerHost(c.Request.Context(), api)
 	}
 
-	id, err := client.AddMonitorViaSocketIO(monitorType, input.Name, url, container, dockerHostID)
+	markerService := input.ServiceName
+	if markerService == "" {
+		markerService = input.Name
+	}
+	spec := kuma.MonitorSpec{
+		Type:         monitorType,
+		Name:         input.Name,
+		Description:  synclib.Marker(monitorType, markerService),
+		Tags:         []string{synclib.SynapseTagName},
+		DockerHostID: dockerHostID,
+	}
+	if monitorType == "http" {
+		spec.URL = url
+	} else {
+		spec.DockerContainer = container
+	}
+	id, err := api.AddMonitor(c.Request.Context(), spec)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -884,8 +922,8 @@ func (app *App) CreateKumaMonitor(c *gin.Context) {
 // SQLite "FOREIGN KEY constraint failed", so if no docker host can be found
 // we return 0, which the caller maps to omitting the field entirely (Kuma
 // treats a missing docker_host as NULL, which is FK-valid).
-func resolveDockerHost(client *kuma.Client) int {
-	hosts, err := client.QueryDockerHosts()
+func resolveDockerHost(ctx context.Context, api kuma.API) int {
+	hosts, err := api.DockerHosts(ctx)
 	if err != nil || len(hosts) == 0 {
 		return 0
 	}
@@ -917,12 +955,12 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 		return
 	}
 
-	client, err := app.kumaRegistry.Get(instanceID)
+	api, err := app.kumaAPIFor(c.Request.Context(), instanceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	monitors, err := client.QueryMonitorsViaSocketIO()
+	monitors, err := api.Monitors(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -939,26 +977,12 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 		return
 	}
 
-	// Build the full edit payload, overlaying the requested changes.
-	payload := map[string]any{
-		"name":          cur.Name,
-		"type":          cur.Type,
-		"interval":      cur.Interval,
-		"retryInterval": cur.RetryInterval,
-		"maxretries":    cur.MaxRetries,
-	}
-	if cur.Type == "http" {
-		payload["url"] = cur.URL
-	} else {
-		payload["docker_container"] = cur.DockerContainer
-		if cur.DockerHost > 0 {
-			payload["docker_host"] = cur.DockerHost
-		}
-	}
-
+	// Build a spec that carries only the requested changes; EditMonitor merges
+	// it into the full current object, so unchanged fields are preserved.
 	newType := cur.Type
+	spec := kuma.MonitorSpec{}
 	if input.Name != "" {
-		payload["name"] = input.Name
+		spec.Name = input.Name
 	}
 	if input.Type != "" {
 		newType = input.Type
@@ -968,48 +992,45 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "url is required when changing the monitor to http"})
 				return
 			}
-			payload["type"] = "http"
-			payload["url"] = input.URL
-			delete(payload, "docker_container")
-			delete(payload, "docker_host")
+			spec.Type = "http"
+			spec.URL = input.URL
 		case "docker":
 			if input.DockerContainer == "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "docker_container is required when changing the monitor to docker"})
 				return
 			}
-			payload["type"] = "docker"
-			payload["docker_container"] = input.DockerContainer
+			spec.Type = "docker"
+			spec.DockerContainer = input.DockerContainer
 			if input.DockerHost > 0 {
-				payload["docker_host"] = input.DockerHost
-			} else if dh := resolveDockerHost(client); dh > 0 {
-				payload["docker_host"] = dh
+				spec.DockerHostID = input.DockerHost
+			} else {
+				spec.DockerHostID = resolveDockerHost(c.Request.Context(), api)
 			}
-			delete(payload, "url")
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be \"http\" or \"docker\""})
 			return
 		}
 	} else if cur.Type == "http" && input.URL != "" {
-		payload["url"] = input.URL
+		spec.URL = input.URL
 	} else if cur.Type == "docker" && input.DockerContainer != "" {
-		payload["docker_container"] = input.DockerContainer
+		spec.DockerContainer = input.DockerContainer
 		if input.DockerHost > 0 {
-			payload["docker_host"] = input.DockerHost
-		} else if dh := resolveDockerHost(client); dh > 0 {
-			payload["docker_host"] = dh
+			spec.DockerHostID = input.DockerHost
+		} else {
+			spec.DockerHostID = resolveDockerHost(c.Request.Context(), api)
 		}
 	}
 	if input.Interval > 0 {
-		payload["interval"] = input.Interval
+		spec.Interval = input.Interval
 	}
 	if input.RetryInterval > 0 {
-		payload["retryInterval"] = input.RetryInterval
+		spec.RetryInterval = input.RetryInterval
 	}
 	if input.MaxRetries > 0 {
-		payload["maxretries"] = input.MaxRetries
+		spec.MaxRetries = input.MaxRetries
 	}
 
-	if err := client.EditMonitorViaSocketIO(kumaID, payload); err != nil {
+	if err := api.EditMonitor(c.Request.Context(), kumaID, spec); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -1033,7 +1054,7 @@ func (app *App) UpdateKumaMonitor(c *gin.Context) {
 		InstanceID:      instanceID,
 		InstanceName:    instName,
 	}
-	if fresh, err := client.QueryMonitorsViaSocketIO(); err == nil {
+	if fresh, err := api.Monitors(c.Request.Context()); err == nil {
 		for i := range fresh {
 			if fresh[i].ID == kumaID {
 				updated = KumaMonitorSummary{
@@ -1075,12 +1096,12 @@ func (app *App) DeleteKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	client, err := app.kumaRegistry.Get(instanceID)
+	api, err := app.kumaAPIFor(c.Request.Context(), instanceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := client.DeleteMonitorViaSocketIO(kumaID); err != nil {
+	if err := api.DeleteMonitor(c.Request.Context(), kumaID); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}

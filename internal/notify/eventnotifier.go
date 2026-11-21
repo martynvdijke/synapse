@@ -26,11 +26,15 @@ const (
 	// CatAlerts notifies about alert-rule incident transitions (open,
 	// resolve, reminder).
 	CatAlerts Category = "alerts"
+	// CatSync notifies when a sync run does not finish cleanly (failed or
+	// completed_with_errors), including per-instance failures that the old
+	// "skipped instance" path hid.
+	CatSync Category = "sync"
 )
 
 // AllCategories lists every known category (for settings UI / toggles).
 func AllCategories() []Category {
-	return []Category{CatDockerDie, CatDockerHealth, CatDockerImage, CatReconcile, CatAlerts}
+	return []Category{CatDockerDie, CatDockerHealth, CatDockerImage, CatReconcile, CatAlerts, CatSync}
 }
 
 // defaultCooldown bounds how often a given category may notify.

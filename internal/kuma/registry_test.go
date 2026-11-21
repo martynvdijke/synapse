@@ -25,9 +25,8 @@ func TestRegistryAllLazyLogin(t *testing.T) {
 
 	var loginCalls1, loginCalls2 int32
 
-	// Override verifySocketIOLoginFn to count calls and succeed
-	original := verifySocketIOLoginFn
-	verifySocketIOLoginFn = func(url, user, pass string) error {
+	// Override the login probe to count calls and succeed.
+	restoreHook := SetVerifySocketIOLoginTestHook(func(url, user, pass string) error {
 		if url == "http://srv1" {
 			atomic.AddInt32(&loginCalls1, 1)
 		}
@@ -35,8 +34,8 @@ func TestRegistryAllLazyLogin(t *testing.T) {
 			atomic.AddInt32(&loginCalls2, 1)
 		}
 		return nil
-	}
-	defer func() { verifySocketIOLoginFn = original }()
+	})
+	defer restoreHook()
 
 	inst1, err := d.CreateKumaInstance(&db.KumaInstance{Name: "a", URL: "http://srv1", Username: "u", Password: "p", Enabled: true})
 	if err != nil {
@@ -84,12 +83,11 @@ func TestRegistryAllSkipsDisabled(t *testing.T) {
 	d := setupTestDB(t)
 
 	var loginCalls int32
-	original := verifySocketIOLoginFn
-	verifySocketIOLoginFn = func(url, user, pass string) error {
+	restoreHook := SetVerifySocketIOLoginTestHook(func(url, user, pass string) error {
 		atomic.AddInt32(&loginCalls, 1)
 		return nil
-	}
-	defer func() { verifySocketIOLoginFn = original }()
+	})
+	defer restoreHook()
 
 	if _, err := d.CreateKumaInstance(&db.KumaInstance{Name: "en", URL: "http://srv1", Username: "u", Password: "p", Enabled: true}); err != nil {
 		t.Fatal(err)
@@ -115,15 +113,14 @@ func TestRegistryAllSkipsFailedLogin(t *testing.T) {
 	d := setupTestDB(t)
 
 	var loginCalls int32
-	original := verifySocketIOLoginFn
-	verifySocketIOLoginFn = func(url, user, pass string) error {
+	restoreHook := SetVerifySocketIOLoginTestHook(func(url, user, pass string) error {
 		atomic.AddInt32(&loginCalls, 1)
 		if url == "http://bad" {
 			return errors.New("login failed")
 		}
 		return nil
-	}
-	defer func() { verifySocketIOLoginFn = original }()
+	})
+	defer restoreHook()
 
 	if _, err := d.CreateKumaInstance(&db.KumaInstance{Name: "bad", URL: "http://bad", Username: "u", Password: "p", Enabled: true}); err != nil {
 		t.Fatal(err)
@@ -146,12 +143,11 @@ func TestRegistryGet(t *testing.T) {
 	d := setupTestDB(t)
 
 	var loginCalls int32
-	original := verifySocketIOLoginFn
-	verifySocketIOLoginFn = func(url, user, pass string) error {
+	restoreHook := SetVerifySocketIOLoginTestHook(func(url, user, pass string) error {
 		atomic.AddInt32(&loginCalls, 1)
 		return nil
-	}
-	defer func() { verifySocketIOLoginFn = original }()
+	})
+	defer restoreHook()
 
 	inst, err := d.CreateKumaInstance(&db.KumaInstance{Name: "a", URL: "http://srv", Username: "u", Password: "p", Enabled: true})
 	if err != nil {
@@ -192,12 +188,11 @@ func TestRegistryInvalidate(t *testing.T) {
 	d := setupTestDB(t)
 
 	var loginCalls int32
-	original := verifySocketIOLoginFn
-	verifySocketIOLoginFn = func(url, user, pass string) error {
+	restoreHook := SetVerifySocketIOLoginTestHook(func(url, user, pass string) error {
 		atomic.AddInt32(&loginCalls, 1)
 		return nil
-	}
-	defer func() { verifySocketIOLoginFn = original }()
+	})
+	defer restoreHook()
 
 	inst, err := d.CreateKumaInstance(&db.KumaInstance{Name: "a", URL: "http://srv", Username: "u", Password: "p", Enabled: true})
 	if err != nil {
@@ -226,12 +221,11 @@ func TestRegistryLoginRetryCooldown(t *testing.T) {
 	d := setupTestDB(t)
 
 	var loginCalls int32
-	original := verifySocketIOLoginFn
-	verifySocketIOLoginFn = func(url, user, pass string) error {
+	restoreHook := SetVerifySocketIOLoginTestHook(func(url, user, pass string) error {
 		atomic.AddInt32(&loginCalls, 1)
 		return errors.New("login failed")
-	}
-	defer func() { verifySocketIOLoginFn = original }()
+	})
+	defer restoreHook()
 
 	inst, err := d.CreateKumaInstance(&db.KumaInstance{Name: "bad", URL: "http://bad", Username: "u", Password: "p", Enabled: true})
 	if err != nil {

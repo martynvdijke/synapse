@@ -13,6 +13,7 @@ import (
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
 	"synapse/ent/predicate"
+	"synapse/ent/schema"
 	"synapse/ent/servicelink"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
@@ -2453,6 +2454,7 @@ type KumaInstanceMutation struct {
 	url           *string
 	username      *string
 	password      *string
+	session_token *string
 	enabled       *bool
 	created_at    *time.Time
 	clearedFields map[string]struct{}
@@ -2703,6 +2705,55 @@ func (m *KumaInstanceMutation) ResetPassword() {
 	m.password = nil
 }
 
+// SetSessionToken sets the "session_token" field.
+func (m *KumaInstanceMutation) SetSessionToken(s string) {
+	m.session_token = &s
+}
+
+// SessionToken returns the value of the "session_token" field in the mutation.
+func (m *KumaInstanceMutation) SessionToken() (r string, exists bool) {
+	v := m.session_token
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSessionToken returns the old "session_token" field's value of the KumaInstance entity.
+// If the KumaInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *KumaInstanceMutation) OldSessionToken(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSessionToken is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSessionToken requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSessionToken: %w", err)
+	}
+	return oldValue.SessionToken, nil
+}
+
+// ClearSessionToken clears the value of the "session_token" field.
+func (m *KumaInstanceMutation) ClearSessionToken() {
+	m.session_token = nil
+	m.clearedFields[kumainstance.FieldSessionToken] = struct{}{}
+}
+
+// SessionTokenCleared returns if the "session_token" field was cleared in this mutation.
+func (m *KumaInstanceMutation) SessionTokenCleared() bool {
+	_, ok := m.clearedFields[kumainstance.FieldSessionToken]
+	return ok
+}
+
+// ResetSessionToken resets all changes to the "session_token" field.
+func (m *KumaInstanceMutation) ResetSessionToken() {
+	m.session_token = nil
+	delete(m.clearedFields, kumainstance.FieldSessionToken)
+}
+
 // SetEnabled sets the "enabled" field.
 func (m *KumaInstanceMutation) SetEnabled(b bool) {
 	m.enabled = &b
@@ -2809,7 +2860,7 @@ func (m *KumaInstanceMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *KumaInstanceMutation) Fields() []string {
-	fields := make([]string, 0, 6)
+	fields := make([]string, 0, 7)
 	if m.name != nil {
 		fields = append(fields, kumainstance.FieldName)
 	}
@@ -2821,6 +2872,9 @@ func (m *KumaInstanceMutation) Fields() []string {
 	}
 	if m.password != nil {
 		fields = append(fields, kumainstance.FieldPassword)
+	}
+	if m.session_token != nil {
+		fields = append(fields, kumainstance.FieldSessionToken)
 	}
 	if m.enabled != nil {
 		fields = append(fields, kumainstance.FieldEnabled)
@@ -2844,6 +2898,8 @@ func (m *KumaInstanceMutation) Field(name string) (ent.Value, bool) {
 		return m.Username()
 	case kumainstance.FieldPassword:
 		return m.Password()
+	case kumainstance.FieldSessionToken:
+		return m.SessionToken()
 	case kumainstance.FieldEnabled:
 		return m.Enabled()
 	case kumainstance.FieldCreatedAt:
@@ -2865,6 +2921,8 @@ func (m *KumaInstanceMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldUsername(ctx)
 	case kumainstance.FieldPassword:
 		return m.OldPassword(ctx)
+	case kumainstance.FieldSessionToken:
+		return m.OldSessionToken(ctx)
 	case kumainstance.FieldEnabled:
 		return m.OldEnabled(ctx)
 	case kumainstance.FieldCreatedAt:
@@ -2905,6 +2963,13 @@ func (m *KumaInstanceMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPassword(v)
+		return nil
+	case kumainstance.FieldSessionToken:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSessionToken(v)
 		return nil
 	case kumainstance.FieldEnabled:
 		v, ok := value.(bool)
@@ -2949,7 +3014,11 @@ func (m *KumaInstanceMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *KumaInstanceMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(kumainstance.FieldSessionToken) {
+		fields = append(fields, kumainstance.FieldSessionToken)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -2962,6 +3031,11 @@ func (m *KumaInstanceMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *KumaInstanceMutation) ClearField(name string) error {
+	switch name {
+	case kumainstance.FieldSessionToken:
+		m.ClearSessionToken()
+		return nil
+	}
 	return fmt.Errorf("unknown KumaInstance nullable field %s", name)
 }
 
@@ -2980,6 +3054,9 @@ func (m *KumaInstanceMutation) ResetField(name string) error {
 		return nil
 	case kumainstance.FieldPassword:
 		m.ResetPassword()
+		return nil
+	case kumainstance.FieldSessionToken:
+		m.ResetSessionToken()
 		return nil
 	case kumainstance.FieldEnabled:
 		m.ResetEnabled()
@@ -5844,29 +5921,31 @@ func (m *SettingsMutation) ResetEdge(name string) error {
 // SyncRunMutation represents an operation that mutates the SyncRun nodes in the graph.
 type SyncRunMutation struct {
 	config
-	op                Op
-	typ               string
-	id                *int
-	source            *string
-	status            *string
-	started_at        *time.Time
-	finished_at       *time.Time
-	total_services    *int
-	addtotal_services *int
-	added             *int
-	addadded          *int
-	updated           *int
-	addupdated        *int
-	skipped           *int
-	addskipped        *int
-	failed            *int
-	addfailed         *int
-	error_message     *string
-	dry_run           *bool
-	clearedFields     map[string]struct{}
-	done              bool
-	oldValue          func(context.Context) (*SyncRun, error)
-	predicates        []predicate.SyncRun
+	op                    Op
+	typ                   string
+	id                    *int
+	source                *string
+	status                *string
+	started_at            *time.Time
+	finished_at           *time.Time
+	total_services        *int
+	addtotal_services     *int
+	added                 *int
+	addadded              *int
+	updated               *int
+	addupdated            *int
+	skipped               *int
+	addskipped            *int
+	failed                *int
+	addfailed             *int
+	error_message         *string
+	instance_errors       *[]schema.SyncInstanceError
+	appendinstance_errors []schema.SyncInstanceError
+	dry_run               *bool
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*SyncRun, error)
+	predicates            []predicate.SyncRun
 }
 
 var _ ent.Mutation = (*SyncRunMutation)(nil)
@@ -6453,6 +6532,71 @@ func (m *SyncRunMutation) ResetErrorMessage() {
 	delete(m.clearedFields, syncrun.FieldErrorMessage)
 }
 
+// SetInstanceErrors sets the "instance_errors" field.
+func (m *SyncRunMutation) SetInstanceErrors(sie []schema.SyncInstanceError) {
+	m.instance_errors = &sie
+	m.appendinstance_errors = nil
+}
+
+// InstanceErrors returns the value of the "instance_errors" field in the mutation.
+func (m *SyncRunMutation) InstanceErrors() (r []schema.SyncInstanceError, exists bool) {
+	v := m.instance_errors
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInstanceErrors returns the old "instance_errors" field's value of the SyncRun entity.
+// If the SyncRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SyncRunMutation) OldInstanceErrors(ctx context.Context) (v []schema.SyncInstanceError, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInstanceErrors is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInstanceErrors requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInstanceErrors: %w", err)
+	}
+	return oldValue.InstanceErrors, nil
+}
+
+// AppendInstanceErrors adds sie to the "instance_errors" field.
+func (m *SyncRunMutation) AppendInstanceErrors(sie []schema.SyncInstanceError) {
+	m.appendinstance_errors = append(m.appendinstance_errors, sie...)
+}
+
+// AppendedInstanceErrors returns the list of values that were appended to the "instance_errors" field in this mutation.
+func (m *SyncRunMutation) AppendedInstanceErrors() ([]schema.SyncInstanceError, bool) {
+	if len(m.appendinstance_errors) == 0 {
+		return nil, false
+	}
+	return m.appendinstance_errors, true
+}
+
+// ClearInstanceErrors clears the value of the "instance_errors" field.
+func (m *SyncRunMutation) ClearInstanceErrors() {
+	m.instance_errors = nil
+	m.appendinstance_errors = nil
+	m.clearedFields[syncrun.FieldInstanceErrors] = struct{}{}
+}
+
+// InstanceErrorsCleared returns if the "instance_errors" field was cleared in this mutation.
+func (m *SyncRunMutation) InstanceErrorsCleared() bool {
+	_, ok := m.clearedFields[syncrun.FieldInstanceErrors]
+	return ok
+}
+
+// ResetInstanceErrors resets all changes to the "instance_errors" field.
+func (m *SyncRunMutation) ResetInstanceErrors() {
+	m.instance_errors = nil
+	m.appendinstance_errors = nil
+	delete(m.clearedFields, syncrun.FieldInstanceErrors)
+}
+
 // SetDryRun sets the "dry_run" field.
 func (m *SyncRunMutation) SetDryRun(b bool) {
 	m.dry_run = &b
@@ -6536,7 +6680,7 @@ func (m *SyncRunMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SyncRunMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 12)
 	if m.source != nil {
 		fields = append(fields, syncrun.FieldSource)
 	}
@@ -6566,6 +6710,9 @@ func (m *SyncRunMutation) Fields() []string {
 	}
 	if m.error_message != nil {
 		fields = append(fields, syncrun.FieldErrorMessage)
+	}
+	if m.instance_errors != nil {
+		fields = append(fields, syncrun.FieldInstanceErrors)
 	}
 	if m.dry_run != nil {
 		fields = append(fields, syncrun.FieldDryRun)
@@ -6598,6 +6745,8 @@ func (m *SyncRunMutation) Field(name string) (ent.Value, bool) {
 		return m.Failed()
 	case syncrun.FieldErrorMessage:
 		return m.ErrorMessage()
+	case syncrun.FieldInstanceErrors:
+		return m.InstanceErrors()
 	case syncrun.FieldDryRun:
 		return m.DryRun()
 	}
@@ -6629,6 +6778,8 @@ func (m *SyncRunMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldFailed(ctx)
 	case syncrun.FieldErrorMessage:
 		return m.OldErrorMessage(ctx)
+	case syncrun.FieldInstanceErrors:
+		return m.OldInstanceErrors(ctx)
 	case syncrun.FieldDryRun:
 		return m.OldDryRun(ctx)
 	}
@@ -6709,6 +6860,13 @@ func (m *SyncRunMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetErrorMessage(v)
+		return nil
+	case syncrun.FieldInstanceErrors:
+		v, ok := value.([]schema.SyncInstanceError)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInstanceErrors(v)
 		return nil
 	case syncrun.FieldDryRun:
 		v, ok := value.(bool)
@@ -6816,6 +6974,9 @@ func (m *SyncRunMutation) ClearedFields() []string {
 	if m.FieldCleared(syncrun.FieldErrorMessage) {
 		fields = append(fields, syncrun.FieldErrorMessage)
 	}
+	if m.FieldCleared(syncrun.FieldInstanceErrors) {
+		fields = append(fields, syncrun.FieldInstanceErrors)
+	}
 	if m.FieldCleared(syncrun.FieldDryRun) {
 		fields = append(fields, syncrun.FieldDryRun)
 	}
@@ -6838,6 +6999,9 @@ func (m *SyncRunMutation) ClearField(name string) error {
 		return nil
 	case syncrun.FieldErrorMessage:
 		m.ClearErrorMessage()
+		return nil
+	case syncrun.FieldInstanceErrors:
+		m.ClearInstanceErrors()
 		return nil
 	case syncrun.FieldDryRun:
 		m.ClearDryRun()
@@ -6879,6 +7043,9 @@ func (m *SyncRunMutation) ResetField(name string) error {
 		return nil
 	case syncrun.FieldErrorMessage:
 		m.ResetErrorMessage()
+		return nil
+	case syncrun.FieldInstanceErrors:
+		m.ResetInstanceErrors()
 		return nil
 	case syncrun.FieldDryRun:
 		m.ResetDryRun()

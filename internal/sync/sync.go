@@ -407,7 +407,7 @@ func LoadServices(path string) (map[string]ServiceDef, error) {
 	return c.Services, nil
 }
 
-func GetDockerServicesWithStatus(ctx context.Context, composePath string, clients []kuma.InstanceClient) ([]ServiceInfo, error) {
+func GetDockerServicesWithStatus(ctx context.Context, composePath string, instances []kuma.InstanceResult) ([]ServiceInfo, error) {
 	_, span := tracer.Start(ctx, "GetDockerServicesWithStatus",
 		trace.WithAttributes(attribute.String("compose_path", composePath)),
 	)
@@ -416,7 +416,7 @@ func GetDockerServicesWithStatus(ctx context.Context, composePath string, client
 	start := time.Now()
 	logging.LogDebug("sync", "Getting Docker services with status",
 		slog.String("compose_path", composePath),
-		slog.Int("kuma_instances", len(clients)),
+		slog.Int("kuma_instances", len(instances)),
 	)
 
 	services, err := LoadServices(composePath)
@@ -424,32 +424,29 @@ func GetDockerServicesWithStatus(ctx context.Context, composePath string, client
 		return nil, err
 	}
 
-	// Merge monitors from all Kuma instances. A service is "InKuma" if it
-	// exists in ANY instance. Kuma linkage is best-effort: if the caller's
-	// context expires while an instance is slow, stop querying further
-	// instances but still return the compose-derived services so a single
-	// slow Kuma instance cannot blank out the whole services list.
-	kumaMap := make(map[string]kuma.KumaMonitor)
-	for _, ic := range clients {
+	// Read every instance's monitors once. A failed or timed-out read is
+	// skipped for linkage only; the compose-derived service list is still
+	// returned so a slow Kuma instance cannot blank out the dashboard.
+	var indexes []*MonitorIndex
+	for _, res := range instances {
 		if err := ctx.Err(); err != nil {
 			logging.LogWarn("sync", "Kuma query interrupted, returning services without full monitor linkage",
 				slog.String("error", err.Error()),
 			)
 			break
 		}
-		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
-		if err != nil {
+		if res.Err != nil || res.Client == nil {
+			continue
+		}
+		monitors, merr := res.Client.Monitors(ctx)
+		if merr != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping",
-				slog.Int("instance_id", ic.InstanceID),
-				slog.String("error", err.Error()),
+				slog.Int("instance_id", res.InstanceID),
+				slog.String("error", merr.Error()),
 			)
 			continue
 		}
-		for _, m := range monitors {
-			if _, exists := kumaMap[m.Name]; !exists {
-				kumaMap[m.Name] = m
-			}
-		}
+		indexes = append(indexes, BuildMonitorIndex(monitors))
 	}
 
 	var result []ServiceInfo
@@ -493,9 +490,14 @@ func GetDockerServicesWithStatus(ctx context.Context, composePath string, client
 			}
 		}
 
-		if km, ok := kumaMap[displayName]; ok {
-			info.InKuma = true
-			info.KumaID = km.ID
+		// External-id match first; the merged view is "present in ANY
+		// instance", with the earliest instance winning for display fields.
+		for _, ix := range indexes {
+			if km := ix.Find(ExternalID{Type: monitorType, Service: name}, displayName); km != nil {
+				info.InKuma = true
+				info.KumaID = km.ID
+				break
+			}
 		}
 
 		result = append(result, info)
@@ -540,7 +542,7 @@ func GetNPMProxyEntries(npmClients []npm.InstanceClient) ([]npm.ProxyEntry, erro
 	return result, errors.Join(errs...)
 }
 
-func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClient, clients []kuma.InstanceClient) ([]ProxyInfo, error) {
+func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClient, instances []kuma.InstanceResult) ([]ProxyInfo, error) {
 	_, span := tracer.Start(ctx, "GetNPMProxiesWithStatus",
 		trace.WithAttributes(attribute.Int("npm_instance_count", len(npmClients))),
 	)
@@ -549,7 +551,7 @@ func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClien
 	start := time.Now()
 	logging.LogDebug("sync", "Getting NPM proxies with Kuma status",
 		slog.Int("npm_instances", len(npmClients)),
-		slog.Int("kuma_instances", len(clients)),
+		slog.Int("kuma_instances", len(instances)),
 	)
 
 	// Fan out across all NPM instances, merge with dedup (first CNAME wins by instance ID order).
@@ -581,27 +583,26 @@ func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClien
 		}
 	}
 
-	// Merge monitors from all Kuma instances.
-	kumaMap := make(map[string]kuma.KumaMonitor)
-	for _, ic := range clients {
+	// Read each Kuma instance once; a failed read contributes no linkage.
+	var indexes []*MonitorIndex
+	for _, res := range instances {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
-		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
+		if res.Err != nil || res.Client == nil {
+			continue
+		}
+		monitors, err := res.Client.Monitors(ctx)
 		if err != nil {
 			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping",
-				slog.Int("instance_id", ic.InstanceID),
+				slog.Int("instance_id", res.InstanceID),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
-		for _, m := range monitors {
-			if _, exists := kumaMap[m.Name]; !exists {
-				kumaMap[m.Name] = m
-			}
-		}
+		indexes = append(indexes, BuildMonitorIndex(monitors))
 	}
 
 	result := make([]ProxyInfo, 0, len(npmEntries))
@@ -612,9 +613,12 @@ func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClien
 			SourceInstanceID: e.SourceInstanceID,
 		}
 
-		if km, ok := kumaMap[e.CNAME]; ok {
-			info.InKuma = true
-			info.KumaID = km.ID
+		for _, ix := range indexes {
+			if km := ix.Find(ExternalID{Type: "http", Service: e.CNAME}, e.CNAME); km != nil {
+				info.InKuma = true
+				info.KumaID = km.ID
+				break
+			}
 		}
 
 		result = append(result, info)
@@ -630,16 +634,22 @@ func GetNPMProxiesWithStatus(ctx context.Context, npmClients []npm.InstanceClien
 	return result, errors.Join(npmErrs...)
 }
 
-func RunDockerSync(ctx context.Context, composePath string, clients []kuma.InstanceClient, database *db.DB, onProgress ProgressFn) db.SyncRun {
+func RunDockerSync(ctx context.Context, composePath string, instances []kuma.InstanceResult, database *db.DB, onProgress ProgressFn) db.SyncRun {
 	_, span := tracer.Start(ctx, "RunDockerSync",
 		trace.WithAttributes(attribute.String("compose_path", composePath)),
 	)
 	defer span.End()
 
+	emit := func(p Progress) {
+		if onProgress != nil {
+			onProgress(p)
+		}
+	}
+
 	syncStart := time.Now()
 	logging.LogInfo("sync", "Starting Docker sync",
 		slog.String("compose_path", composePath),
-		slog.Int("kuma_instances", len(clients)),
+		slog.Int("kuma_instances", len(instances)),
 	)
 
 	run := db.SyncRun{
@@ -656,7 +666,7 @@ func RunDockerSync(ctx context.Context, composePath string, clients []kuma.Insta
 	}
 	run.ID = id
 
-	if len(clients) == 0 {
+	if len(instances) == 0 {
 		msg := "no Kuma instances configured"
 		database.FinishSyncRun(id, "error", 0, 0, 0, msg)
 		run.Status = "error"
@@ -676,43 +686,26 @@ func RunDockerSync(ctx context.Context, composePath string, clients []kuma.Insta
 		slog.Int("service_count", len(services)),
 	)
 
-	totalWork := len(services) * len(clients)
+	totalWork := len(services) * len(instances)
 
-	onProgress(Progress{RunID: id, Source: "docker", Total: totalWork, Status: "fetching_monitors", Message: "Fetching existing monitors and Docker hosts..."})
+	emit(Progress{RunID: id, Source: "docker", Total: totalWork, Status: "fetching_monitors", Message: "Fetching existing monitors and Docker hosts..."})
 
-	// Per-client setup: fetch docker hosts and existing monitors.
-	type clientState struct {
-		ic           kuma.InstanceClient
-		dockerHostID int
-		existing     map[string]bool
-		skip         bool
-	}
-
-	states := make([]clientState, len(clients))
-	for i, ic := range clients {
-		states[i] = clientState{ic: ic, existing: make(map[string]bool)}
-
-		existingMonitors, err := ic.Client.QueryMonitorsViaSocketIO()
-		if err != nil {
-			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping instance",
-				slog.Int("instance_id", ic.InstanceID),
-				slog.String("error", err.Error()),
-			)
-			states[i].skip = true
+	// Per-instance setup: read monitors once, build the external-id index and
+	// resolve a docker host. A read failure or a suspiciously empty list skips
+	// every write for that instance (W2) and is recorded as an instance error.
+	states := newInstanceStates(instances)
+	expected := monitorCountByInstance(database)
+	for _, st := range states {
+		st.loadMonitors(ctx, expected[st.ID])
+		if !st.live() {
 			continue
 		}
-		for _, m := range existingMonitors {
-			states[i].existing[m.Name] = true
-		}
-
 		// Resolve a valid docker_host FK id. Kuma's monitor.docker_host
 		// references docker_host(id); 0 would trip a SQLite FK violation, so
-		// pick the first configured host if any. Docker monitors created by
-		// sync must reference a real host id to succeed.
-		if hosts, derr := ic.Client.QueryDockerHosts(); derr == nil && len(hosts) > 0 {
-			states[i].dockerHostID = hosts[0].ID
-		} else {
-			states[i].dockerHostID = 0
+		// pick the first configured host if any. Failure is not fatal: the
+		// adapter omits a zero host.
+		if hosts, herr := st.API.DockerHosts(ctx); herr == nil && len(hosts) > 0 {
+			st.dockerHostID = hosts[0].ID
 		}
 	}
 
@@ -732,88 +725,116 @@ func RunDockerSync(ctx context.Context, composePath string, clients []kuma.Insta
 		if url == "" {
 			monitorType = "docker"
 		}
+		containerID := svc.ContainerName
+		if containerID == "" {
+			containerID = name
+		}
+		eid := ExternalID{Type: monitorType, Service: name}
 
-		for i := range states {
+		for _, st := range states {
 			current++
-			st := &states[i]
 
-			if st.skip {
+			if !st.live() {
 				continue
 			}
 
-			if st.existing[displayName] {
+			if found := st.idx.Find(eid, displayName); found != nil {
 				skipped++
-				onProgress(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
-					Status: "skipping", Message: fmt.Sprintf("Skipping %s on instance %d (already exists)", displayName, st.ic.InstanceID),
-					Added: added, Skipped: skipped, Failed: failed})
-				continue
-			}
-
-			onProgress(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
-				Status: "adding", Message: fmt.Sprintf("Adding %s to instance %d...", displayName, st.ic.InstanceID),
-				Added: added, Skipped: skipped, Failed: failed})
-
-			var kumaID int
-			var err error
-			if url != "" {
-				kumaID, err = st.ic.Client.AddMonitorViaSocketIO("http", displayName, url, "", st.dockerHostID)
-			} else {
-				containerID := svc.ContainerName
-				if containerID == "" {
-					containerID = name
-				}
-				kumaID, err = st.ic.Client.AddMonitorViaSocketIO("docker", displayName, "", containerID, st.dockerHostID)
-			}
-
-			if err != nil {
-				failed++
-				logging.LogError("sync", "Failed to add monitor for service",
-					slog.String("service", displayName),
-					slog.Int("instance_id", st.ic.InstanceID),
-					slog.String("error", err.Error()),
-				)
-				onProgress(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
-					Status: "error", Message: fmt.Sprintf("Failed: %s on instance %d - %v", displayName, st.ic.InstanceID, err),
-					Added: added, Skipped: skipped, Failed: failed})
-			} else {
-				added++
-				st.existing[displayName] = true
-				logging.LogInfo("sync", "Added monitor for service",
-					slog.String("service", displayName),
-					slog.String("monitor_type", monitorType),
-					slog.Int("instance_id", st.ic.InstanceID),
-					slog.Int("added", added),
-					slog.Int("skipped", skipped),
-					slog.Int("failed", failed),
-				)
-				database.AddMonitor(&db.Monitor{
+				// Key the matched monitor in the DB too, so a name/external-id
+				// adoption is never re-created later.
+				if uerr := database.UpsertMonitor(&db.Monitor{
 					Name:            displayName,
 					ServiceName:     name,
 					MonitorType:     monitorType,
 					URL:             url,
 					DockerContainer: svc.ContainerName,
-					KumaID:          kumaID,
-					KumaInstanceID:  st.ic.InstanceID,
+					KumaID:          found.ID,
+					KumaInstanceID:  st.ID,
 					CreatedAt:       time.Now(),
-				})
-				onProgress(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
-					Status: "added", Message: fmt.Sprintf("Added %s to instance %d", displayName, st.ic.InstanceID),
+				}); uerr != nil {
+					logging.LogWarn("sync", "Failed to record matched monitor",
+						slog.String("service", displayName),
+						slog.Int("instance_id", st.ID),
+						slog.String("error", uerr.Error()),
+					)
+				}
+				emit(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
+					Status: "skipping", Message: fmt.Sprintf("Skipping %s on instance %d (already exists)", displayName, st.ID),
 					Added: added, Skipped: skipped, Failed: failed})
+				continue
 			}
+
+			emit(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
+				Status: "adding", Message: fmt.Sprintf("Adding %s to instance %d...", displayName, st.ID),
+				Added: added, Skipped: skipped, Failed: failed})
+
+			spec := kuma.MonitorSpec{
+				Type:         monitorType,
+				Name:         displayName,
+				Description:  Marker(monitorType, name),
+				Tags:         []string{SynapseTagName},
+				DockerHostID: st.dockerHostID,
+			}
+			if monitorType == "http" {
+				spec.URL = url
+			} else {
+				spec.DockerContainer = containerID
+			}
+
+			kumaID, aerr := st.API.AddMonitor(ctx, spec)
+			if aerr != nil {
+				failed++
+				st.fail("add %s: %v", displayName, aerr)
+				logging.LogError("sync", "Failed to add monitor for service",
+					slog.String("service", displayName),
+					slog.Int("instance_id", st.ID),
+					slog.String("error", aerr.Error()),
+				)
+				emit(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
+					Status: "error", Message: fmt.Sprintf("Failed: %s on instance %d - %v", displayName, st.ID, aerr),
+					Added: added, Skipped: skipped, Failed: failed})
+				continue
+			}
+
+			added++
+			st.idx.Add(kuma.KumaMonitor{ID: kumaID, Name: displayName, Type: monitorType, URL: url, DockerContainer: containerID})
+			logging.LogInfo("sync", "Added monitor for service",
+				slog.String("service", displayName),
+				slog.String("monitor_type", monitorType),
+				slog.Int("instance_id", st.ID),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
+			if uerr := database.UpsertMonitor(&db.Monitor{
+				Name:            displayName,
+				ServiceName:     name,
+				MonitorType:     monitorType,
+				URL:             url,
+				DockerContainer: svc.ContainerName,
+				KumaID:          kumaID,
+				KumaInstanceID:  st.ID,
+				CreatedAt:       time.Now(),
+			}); uerr != nil {
+				st.fail("record monitor %s: %v", displayName, uerr)
+				logging.LogError("sync", "Failed to persist created monitor",
+					slog.String("service", displayName),
+					slog.Int("instance_id", st.ID),
+					slog.String("error", uerr.Error()),
+				)
+			}
+			emit(Progress{RunID: id, Source: "docker", Total: totalWork, Current: current,
+				Status: "added", Message: fmt.Sprintf("Added %s to instance %d", displayName, st.ID),
+				Added: added, Skipped: skipped, Failed: failed})
 		}
 	}
 
-	status := "completed"
-	if failed > 0 {
-		status = "completed_with_errors"
-	}
+	status, instanceErrors := summariseOutcome(states)
+	errMsg := outcomeMessage(states, instanceErrors, failed)
 
-	errMsg := ""
-	if failed > 0 {
-		errMsg = fmt.Sprintf("%d monitor(s) failed to add", failed)
+	if ferr := database.FinishSyncRunWithErrors(id, status, added, skipped, failed, errMsg, instanceErrors); ferr != nil {
+		logging.LogWarn("sync", "Failed to finish Docker sync run", slog.String("error", ferr.Error()))
 	}
-
-	database.FinishSyncRun(id, status, added, skipped, failed, errMsg)
 
 	run.Status = status
 	run.FinishedAt = new(time.Now())
@@ -821,31 +842,40 @@ func RunDockerSync(ctx context.Context, composePath string, clients []kuma.Insta
 	run.Skipped = skipped
 	run.Failed = failed
 	run.ErrorMessage = errMsg
+	run.InstanceErrors = instanceErrors
 
 	logging.LogInfo("sync", "Docker sync complete",
+		slog.String("status", status),
 		slog.Int("added", added),
 		slog.Int("skipped", skipped),
 		slog.Int("failed", failed),
+		slog.Int("instance_errors", len(instanceErrors)),
 		slog.Duration("duration", time.Since(syncStart)),
 	)
 
-	onProgress(Progress{RunID: id, Source: "docker", Total: totalWork, Current: totalWork,
+	emit(Progress{RunID: id, Source: "docker", Total: totalWork, Current: totalWork,
 		Status: status, Message: "Docker sync complete",
 		Added: added, Skipped: skipped, Failed: failed})
 
 	return run
 }
 
-func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []kuma.InstanceClient, database *db.DB, onProgress ProgressFn) db.SyncRun {
+func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, instances []kuma.InstanceResult, database *db.DB, onProgress ProgressFn) db.SyncRun {
 	_, span := tracer.Start(ctx, "RunNPMSync",
 		trace.WithAttributes(attribute.Int("npm_instance_count", len(npmClients))),
 	)
 	defer span.End()
 
+	emit := func(p Progress) {
+		if onProgress != nil {
+			onProgress(p)
+		}
+	}
+
 	syncStart := time.Now()
 	logging.LogInfo("sync", "Starting NPM sync",
 		slog.Int("npm_instances", len(npmClients)),
-		slog.Int("kuma_instances", len(clients)),
+		slog.Int("kuma_instances", len(instances)),
 	)
 
 	run := db.SyncRun{
@@ -862,7 +892,7 @@ func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []
 	}
 	run.ID = id
 
-	if len(clients) == 0 {
+	if len(instances) == 0 {
 		msg := "no Kuma instances configured"
 		database.FinishSyncRun(id, "error", 0, 0, 0, msg)
 		run.Status = "error"
@@ -873,6 +903,7 @@ func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []
 	// Fan out across all NPM instances, merge with dedup.
 	seen := make(map[string]bool)
 	var entries []npm.ProxyEntry
+	var npmErrs []error
 	for _, nc := range npmClients {
 		ncEntries, err := nc.Client.GetProxyHosts(ctx)
 		if err != nil {
@@ -880,6 +911,7 @@ func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []
 				slog.Int("instance_id", nc.InstanceID),
 				slog.String("error", err.Error()),
 			)
+			npmErrs = append(npmErrs, fmt.Errorf("npm instance %d: %w", nc.InstanceID, err))
 			continue
 		}
 		for _, e := range ncEntries {
@@ -894,42 +926,37 @@ func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []
 	run.TotalServices = len(entries)
 	logging.LogInfo("sync", "NPM sync loaded proxy entries",
 		slog.Int("entry_count", len(entries)),
+		slog.Int("npm_errors", len(npmErrs)),
 	)
 
 	if len(entries) == 0 {
-		database.FinishSyncRun(id, "completed", 0, 0, 0, "")
-		run.Status = "completed"
+		status := "completed"
+		msg := ""
+		if len(npmErrs) > 0 {
+			// Every NPM read failed: this is not a clean "nothing to do" run.
+			status = "failed"
+			msg = errors.Join(npmErrs...).Error()
+		}
+		if ferr := database.FinishSyncRunWithErrors(id, status, 0, 0, 0, msg, nil); ferr != nil {
+			logging.LogWarn("sync", "Failed to finish NPM sync run", slog.String("error", ferr.Error()))
+		}
+		run.Status = status
 		run.FinishedAt = new(time.Now())
-		onProgress(Progress{RunID: id, Source: "npm", Total: 0, Status: "completed", Message: "No NPM proxy hosts found"})
+		run.ErrorMessage = msg
+		emit(Progress{RunID: id, Source: "npm", Total: 0, Status: status, Message: "No NPM proxy hosts found"})
 		return run
 	}
 
-	totalWork := len(entries) * len(clients)
+	totalWork := len(entries) * len(instances)
 
-	onProgress(Progress{RunID: id, Source: "npm", Total: totalWork, Status: "fetching_monitors", Message: "Fetching existing monitors..."})
+	emit(Progress{RunID: id, Source: "npm", Total: totalWork, Status: "fetching_monitors", Message: "Fetching existing monitors..."})
 
-	// Per-client existing monitor maps.
-	type clientState struct {
-		ic       kuma.InstanceClient
-		existing map[string]bool
-		skip     bool
-	}
-
-	states := make([]clientState, len(clients))
-	for i, ic := range clients {
-		states[i] = clientState{ic: ic, existing: make(map[string]bool)}
-		existingMonitors, err := ic.Client.QueryMonitorsViaSocketIO()
-		if err != nil {
-			logging.LogWarn("sync", "Failed to fetch monitors from Kuma instance, skipping instance",
-				slog.Int("instance_id", ic.InstanceID),
-				slog.String("error", err.Error()),
-			)
-			states[i].skip = true
-			continue
-		}
-		for _, m := range existingMonitors {
-			states[i].existing[m.Name] = true
-		}
+	// Read each instance's monitors once and build the external-id index. A
+	// failed or suspiciously empty read skips all writes for that instance.
+	states := newInstanceStates(instances)
+	expected := monitorCountByInstance(database)
+	for _, st := range states {
+		st.loadMonitors(ctx, expected[st.ID])
 	}
 
 	added := 0
@@ -944,76 +971,111 @@ func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []
 			// NPM's API does not expose a container name; fall back to the CNAME.
 			serviceName = cname
 		}
+		eid := ExternalID{Type: "http", Service: cname}
 
-		for i := range states {
+		for _, st := range states {
 			current++
-			st := &states[i]
-
-			if st.skip {
+			if !st.live() {
 				continue
 			}
 
-			if st.existing[cname] {
+			if found := st.idx.Find(eid, cname); found != nil {
 				skipped++
-				onProgress(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
-					Status: "skipping", Message: fmt.Sprintf("Skipping %s on instance %d (already exists)", cname, st.ic.InstanceID),
-					Added: added, Skipped: skipped, Failed: failed})
-				continue
-			}
-
-			onProgress(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
-				Status: "adding", Message: fmt.Sprintf("Adding %s to instance %d...", cname, st.ic.InstanceID),
-				Added: added, Skipped: skipped, Failed: failed})
-
-			kumaID, err := st.ic.Client.AddMonitorViaSocketIO("http", cname, fmt.Sprintf("http://%s", cname), "", 0)
-
-			if err != nil {
-				failed++
-				logging.LogError("sync", "Failed to add monitor for NPM entry",
-					slog.String("cname", cname),
-					slog.Int("instance_id", st.ic.InstanceID),
-					slog.String("error", err.Error()),
-				)
-				onProgress(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
-					Status: "error", Message: fmt.Sprintf("Failed: %s on instance %d - %v", cname, st.ic.InstanceID, err),
-					Added: added, Skipped: skipped, Failed: failed})
-			} else {
-				added++
-				st.existing[cname] = true
-				logging.LogInfo("sync", "Added monitor for NPM entry",
-					slog.String("cname", cname),
-					slog.Int("instance_id", st.ic.InstanceID),
-					slog.Int("added", added),
-					slog.Int("skipped", skipped),
-					slog.Int("failed", failed),
-				)
-				database.AddMonitor(&db.Monitor{
+				if uerr := database.UpsertMonitor(&db.Monitor{
 					Name:           cname,
 					ServiceName:    serviceName,
 					MonitorType:    "http",
 					URL:            fmt.Sprintf("http://%s", cname),
-					KumaID:         kumaID,
-					KumaInstanceID: st.ic.InstanceID,
+					KumaID:         found.ID,
+					KumaInstanceID: st.ID,
 					CreatedAt:      time.Now(),
-				})
-				onProgress(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
-					Status: "added", Message: fmt.Sprintf("Added %s to instance %d", cname, st.ic.InstanceID),
+				}); uerr != nil {
+					logging.LogWarn("sync", "Failed to record matched monitor",
+						slog.String("cname", cname),
+						slog.Int("instance_id", st.ID),
+						slog.String("error", uerr.Error()),
+					)
+				}
+				emit(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
+					Status: "skipping", Message: fmt.Sprintf("Skipping %s on instance %d (already exists)", cname, st.ID),
 					Added: added, Skipped: skipped, Failed: failed})
+				continue
 			}
+
+			emit(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
+				Status: "adding", Message: fmt.Sprintf("Adding %s to instance %d...", cname, st.ID),
+				Added: added, Skipped: skipped, Failed: failed})
+
+			kumaID, aerr := st.API.AddMonitor(ctx, kuma.MonitorSpec{
+				Type:        "http",
+				Name:        cname,
+				URL:         fmt.Sprintf("http://%s", cname),
+				Description: Marker("http", cname),
+				Tags:        []string{SynapseTagName},
+			})
+			if aerr != nil {
+				failed++
+				st.fail("add %s: %v", cname, aerr)
+				logging.LogError("sync", "Failed to add monitor for NPM entry",
+					slog.String("cname", cname),
+					slog.Int("instance_id", st.ID),
+					slog.String("error", aerr.Error()),
+				)
+				emit(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
+					Status: "error", Message: fmt.Sprintf("Failed: %s on instance %d - %v", cname, st.ID, aerr),
+					Added: added, Skipped: skipped, Failed: failed})
+				continue
+			}
+
+			added++
+			st.idx.Add(kuma.KumaMonitor{ID: kumaID, Name: cname, Type: "http", URL: fmt.Sprintf("http://%s", cname)})
+			logging.LogInfo("sync", "Added monitor for NPM entry",
+				slog.String("cname", cname),
+				slog.Int("instance_id", st.ID),
+				slog.Int("added", added),
+				slog.Int("skipped", skipped),
+				slog.Int("failed", failed),
+			)
+			if uerr := database.UpsertMonitor(&db.Monitor{
+				Name:           cname,
+				ServiceName:    serviceName,
+				MonitorType:    "http",
+				URL:            fmt.Sprintf("http://%s", cname),
+				KumaID:         kumaID,
+				KumaInstanceID: st.ID,
+				CreatedAt:      time.Now(),
+			}); uerr != nil {
+				st.fail("record monitor %s: %v", cname, uerr)
+				logging.LogError("sync", "Failed to persist created monitor",
+					slog.String("cname", cname),
+					slog.Int("instance_id", st.ID),
+					slog.String("error", uerr.Error()),
+				)
+			}
+			emit(Progress{RunID: id, Source: "npm", Total: totalWork, Current: current,
+				Status: "added", Message: fmt.Sprintf("Added %s to instance %d", cname, st.ID),
+				Added: added, Skipped: skipped, Failed: failed})
 		}
 	}
 
-	status := "completed"
-	if failed > 0 {
+	status, instanceErrors := summariseOutcome(states)
+	if len(npmErrs) > 0 && status == "completed" {
+		// Some NPM instances failed to read: the run did not fully succeed.
 		status = "completed_with_errors"
 	}
-
-	errMsg := ""
-	if failed > 0 {
-		errMsg = fmt.Sprintf("%d monitor(s) failed to add", failed)
+	errMsg := outcomeMessage(states, instanceErrors, failed)
+	if len(npmErrs) > 0 {
+		npmMsg := errors.Join(npmErrs...).Error()
+		if errMsg == "" {
+			errMsg = npmMsg
+		} else {
+			errMsg += "; " + npmMsg
+		}
 	}
 
-	database.FinishSyncRun(id, status, added, skipped, failed, errMsg)
+	if ferr := database.FinishSyncRunWithErrors(id, status, added, skipped, failed, errMsg, instanceErrors); ferr != nil {
+		logging.LogWarn("sync", "Failed to finish NPM sync run", slog.String("error", ferr.Error()))
+	}
 
 	run.Status = status
 	run.FinishedAt = new(time.Now())
@@ -1021,19 +1083,39 @@ func RunNPMSync(ctx context.Context, npmClients []npm.InstanceClient, clients []
 	run.Skipped = skipped
 	run.Failed = failed
 	run.ErrorMessage = errMsg
+	run.InstanceErrors = instanceErrors
 
 	logging.LogInfo("sync", "NPM sync complete",
+		slog.String("status", status),
 		slog.Int("added", added),
 		slog.Int("skipped", skipped),
 		slog.Int("failed", failed),
+		slog.Int("instance_errors", len(instanceErrors)),
 		slog.Duration("duration", time.Since(syncStart)),
 	)
 
-	onProgress(Progress{RunID: id, Source: "npm", Total: totalWork, Current: totalWork,
+	emit(Progress{RunID: id, Source: "npm", Total: totalWork, Current: totalWork,
 		Status: status, Message: "NPM sync complete",
 		Added: added, Skipped: skipped, Failed: failed})
 
 	return run
+}
+
+// monitorCountByInstance returns how many monitors the database currently
+// records per Kuma instance. Used to tell a genuine empty instance (first
+// sync) from a partial/failed read that must not be treated as a clean slate.
+func monitorCountByInstance(database *db.DB) map[int]int {
+	out := map[int]int{}
+	monitors, err := database.GetMonitors()
+	if err != nil {
+		return out
+	}
+	for _, m := range monitors {
+		if m.KumaInstanceID > 0 {
+			out[m.KumaInstanceID]++
+		}
+	}
+	return out
 }
 
 //go:fix inline

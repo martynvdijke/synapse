@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -27,25 +28,67 @@ func (app *App) statusPayload(snap *DashboardSnapshot) gin.H {
 	if n, err := app.database.CountOpenIncidents(); err == nil {
 		openIncidents = n
 	}
+	// kuma_error reflects the worst recent truth: a per-instance sync failure
+	// (completed_with_errors/failed) is more actionable than connection health,
+	// which only says "the last login worked".
+	kumaErr := snap.KumaErr
+	if syncErr := app.latestKumaSyncError(); syncErr != "" {
+		kumaErr = syncErr
+	}
 	connectionHealth := gin.H{
 		"docker": gin.H{"ok": snap.DockerErr == "", "last_error": snap.DockerErr},
 		"npm":    gin.H{"ok": snap.NPMErr == "", "last_error": snap.NPMErr, "instances": snap.NPMHealthList},
 		"kuma":   gin.H{"ok": snap.KumaErr == "", "last_error": snap.KumaErr, "instances": snap.KumaHealthList},
 	}
 	return gin.H{
-		"docker_count":      snap.DockerCount,
-		"npm_count":         snap.NPMCount,
-		"npm_error":         snap.NPMErr,
-		"kuma_error":        snap.KumaErr,
-		"docker_error":      snap.DockerErr,
-		"monitor_count":     snap.MonitorCount,
-		"last_docker":       lastDocker,
-		"last_npm":          lastNPM,
-		"running":           app.running,
-		"open_incidents":    openIncidents,
-		"connection_health": connectionHealth,
-		"snapshot":          snapshotMeta(snap),
+		"docker_count":         snap.DockerCount,
+		"npm_count":            snap.NPMCount,
+		"npm_error":            snap.NPMErr,
+		"kuma_error":           kumaErr,
+		"kuma_instance_errors": snap.KumaInstanceErrors,
+		"docker_error":         snap.DockerErr,
+		"monitor_count":        snap.MonitorCount,
+		"last_docker":          lastDocker,
+		"last_npm":             lastNPM,
+		"running":              app.running,
+		"open_incidents":       openIncidents,
+		"connection_health":    connectionHealth,
+		"snapshot":             snapshotMeta(snap),
 	}
+}
+
+// latestKumaSyncError summarises the newest docker/npm sync run that did not
+// finish cleanly. Empty means every recent run completed and connection health
+// is the only source of kuma_error.
+func (app *App) latestKumaSyncError() string {
+	runs, err := app.database.GetSyncRuns(20)
+	if err != nil {
+		return ""
+	}
+	seen := map[string]bool{}
+	for _, r := range runs {
+		if r.Source != "docker" && r.Source != "npm" {
+			continue
+		}
+		if seen[r.Source] {
+			continue
+		}
+		seen[r.Source] = true
+		switch r.Status {
+		case "completed", "running":
+			continue
+		}
+		if len(r.InstanceErrors) == 0 {
+			// Not a Kuma-instance failure (e.g. compose parse error).
+			continue
+		}
+		msg := fmt.Sprintf("%s sync %s", r.Source, r.Status)
+		if r.ErrorMessage != "" {
+			msg += ": " + r.ErrorMessage
+		}
+		return msg
+	}
+	return ""
 }
 
 func (app *App) serviceLinkViews() ([]ServiceLinkView, error) {

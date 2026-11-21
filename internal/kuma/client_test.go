@@ -53,7 +53,10 @@ func TestClient_QueryMonitorsViaSocketIO_UsesFnVar(t *testing.T) {
 	queryMonitorsCtxFn = func(ctx context.Context, url, user, pass string) ([]KumaMonitor, error) {
 		return queryMonitorsFn(url, user, pass)
 	}
-	defer func() { queryMonitorsFn = QueryMonitorsViaSocketIO; queryMonitorsCtxFn = QueryMonitorsViaSocketIOContext }()
+	defer func() {
+		queryMonitorsFn = QueryMonitorsViaSocketIO
+		queryMonitorsCtxFn = QueryMonitorsViaSocketIOContext
+	}()
 
 	c := NewClient("http://kuma:3000")
 	c.username = "u"
@@ -185,7 +188,7 @@ func TestClientPauseMonitorSuccess(t *testing.T) {
 	defer restoreQ()
 	c.QueryMonitorsViaSocketIO()
 	// compat
-	hasCache :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	hasCache := func() bool { _, has, _ := c.monitors.Peek(); return has }()
 	// compat
 	if !hasCache {
 		t.Fatal("cache should be set")
@@ -194,7 +197,7 @@ func TestClientPauseMonitorSuccess(t *testing.T) {
 		t.Fatalf("pause: %v", err)
 	}
 	// compat
-	hasCache =  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	hasCache = func() bool { _, has, _ := c.monitors.Peek(); return has }()
 	// compat
 	if hasCache {
 		t.Fatal("cache should be invalidated after pause success")
@@ -230,7 +233,7 @@ func TestClientResumeMonitorSuccess(t *testing.T) {
 		t.Fatalf("resume: %v", err)
 	}
 	// compat
-	hasCache :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	hasCache := func() bool { _, has, _ := c.monitors.Peek(); return has }()
 	// compat
 	if hasCache {
 		t.Fatal("cache should be invalidated after resume")
@@ -319,7 +322,7 @@ func TestClientPauseResumeTagCacheInvalidationOnFailure(t *testing.T) {
 	defer restore()
 	_ = c.PauseMonitorViaSocketIO(1)
 	// compat
-	hasCache :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	hasCache := func() bool { _, has, _ := c.monitors.Peek(); return has }()
 	// compat
 	if !hasCache {
 		t.Fatal("cache should remain on failure")

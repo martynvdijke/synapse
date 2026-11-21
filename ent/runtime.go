@@ -87,8 +87,12 @@ func init() {
 	dockerevent.DefaultPayload = dockereventDescPayload.Default.(string)
 	kumainstanceFields := schema.KumaInstance{}.Fields()
 	_ = kumainstanceFields
+	// kumainstanceDescSessionToken is the schema descriptor for session_token field.
+	kumainstanceDescSessionToken := kumainstanceFields[4].Descriptor()
+	// kumainstance.DefaultSessionToken holds the default value on creation for the session_token field.
+	kumainstance.DefaultSessionToken = kumainstanceDescSessionToken.Default.(string)
 	// kumainstanceDescEnabled is the schema descriptor for enabled field.
-	kumainstanceDescEnabled := kumainstanceFields[4].Descriptor()
+	kumainstanceDescEnabled := kumainstanceFields[5].Descriptor()
 	// kumainstance.DefaultEnabled holds the default value on creation for the enabled field.
 	kumainstance.DefaultEnabled = kumainstanceDescEnabled.Default.(bool)
 	monitorFields := schema.Monitor{}.Fields()
@@ -180,7 +184,7 @@ func init() {
 	// syncrun.DefaultErrorMessage holds the default value on creation for the error_message field.
 	syncrun.DefaultErrorMessage = syncrunDescErrorMessage.Default.(string)
 	// syncrunDescDryRun is the schema descriptor for dry_run field.
-	syncrunDescDryRun := syncrunFields[10].Descriptor()
+	syncrunDescDryRun := syncrunFields[11].Descriptor()
 	// syncrun.DefaultDryRun holds the default value on creation for the dry_run field.
 	syncrun.DefaultDryRun = syncrunDescDryRun.Default.(bool)
 	tempaccessFields := schema.TempAccess{}.Fields()

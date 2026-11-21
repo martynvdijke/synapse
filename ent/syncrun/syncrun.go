@@ -31,6 +31,8 @@ const (
 	FieldFailed = "failed"
 	// FieldErrorMessage holds the string denoting the error_message field in the database.
 	FieldErrorMessage = "error_message"
+	// FieldInstanceErrors holds the string denoting the instance_errors field in the database.
+	FieldInstanceErrors = "instance_errors"
 	// FieldDryRun holds the string denoting the dry_run field in the database.
 	FieldDryRun = "dry_run"
 	// Table holds the table name of the syncrun in the database.
@@ -50,6 +52,7 @@ var Columns = []string{
 	FieldSkipped,
 	FieldFailed,
 	FieldErrorMessage,
+	FieldInstanceErrors,
 	FieldDryRun,
 }
 

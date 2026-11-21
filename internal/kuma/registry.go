@@ -1,12 +1,15 @@
 package kuma
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"synapse/internal/db"
 	"synapse/internal/logging"
@@ -16,6 +19,9 @@ import (
 // it belongs to. Callers (sync, handlers) use this to fan out operations
 // across all configured instances and to record which instance a monitor
 // was created in.
+//
+// Deprecated: use Registry.Snapshot, which returns API handles and never
+// silently drops a failed instance. Kept so existing callers keep compiling.
 type InstanceClient struct {
 	InstanceID int
 	Client     *Client
@@ -23,8 +29,10 @@ type InstanceClient struct {
 
 type cachedClient struct {
 	client *Client
+	api    *APIClient
 	user   string
 	pass   string
+	url    string
 	ready  bool // Socket.IO login verified at least once
 	// failedAt records when the last login attempt failed. While a failure is
 	// within loginRetryCooldown the registry skips the instance instead of
@@ -32,10 +40,10 @@ type cachedClient struct {
 	failedAt time.Time
 }
 
-// loginRetryCooldown bounds how often a failed Socket.IO login is retried.
-// Without it a broken instance (bad handshake, auth wall, unreachable) makes
-// every All/Get caller pay the ~10s login timeout, which can exhaust the
-// snapshot build budget and stall API handlers.
+// loginRetryCooldown bounds how often a failed login is retried. Without it a
+// broken instance (bad handshake, auth wall, unreachable) makes every
+// Snapshot/All caller pay the login timeout, and password login also has a
+// global 20-per-minute rate limit, so reconnect storms self-DoS.
 var loginRetryCooldown = 60 * time.Second
 
 // ErrLoginCooldown is wrapped by getOrLogin when an instance is skipped
@@ -44,15 +52,17 @@ var ErrLoginCooldown = errors.New("login retry cooldown active")
 
 // Registry manages connected Kuma clients for all configured instances.
 // Clients are constructed lazily on first use and cached for the process
-// lifetime. Socket.IO login is verified on first access.
+// lifetime. Socket.IO login is verified on first access and de-duplicated per
+// instance so concurrent callers share one login attempt.
 type Registry struct {
 	mu      sync.Mutex
 	db      *db.DB
 	clients map[int]*cachedClient
+	sf      singleflight.Group
 }
 
 // NewRegistry creates an empty registry. The database is read on each
-// All/Get call so newly-added instances are picked up without a restart.
+// Snapshot/All call so newly-added instances are picked up without a restart.
 func NewRegistry(database *db.DB) *Registry {
 	return &Registry{
 		db:      database,
@@ -60,34 +70,80 @@ func NewRegistry(database *db.DB) *Registry {
 	}
 }
 
-// All returns connected clients for every enabled instance, verifying
-// Socket.IO login as needed. Instances that fail to connect are skipped
-// (with a logged warning) so one unreachable instance does not block a sync.
-func (r *Registry) All() ([]InstanceClient, error) {
+// Snapshot returns one row per ENABLED instance: the API handle, or the error
+// that prevented obtaining it. Failed instances are never skipped. A database
+// read failure is surfaced as a single row with Err set.
+func (r *Registry) Snapshot(ctx context.Context) []InstanceResult {
+	results, err := r.snapshot(ctx)
+	if err != nil {
+		return []InstanceResult{{Err: err}}
+	}
+	return results
+}
+
+func (r *Registry) snapshot(ctx context.Context) ([]InstanceResult, error) {
 	instances, err := r.db.GetEnabledKumaInstances()
 	if err != nil {
 		return nil, fmt.Errorf("read kuma instances: %w", err)
 	}
-	result := make([]InstanceClient, 0, len(instances))
-	for _, inst := range instances {
-		c, err := r.getOrLogin(int(inst.ID), inst.Username, inst.Password, inst.URL)
-		if err != nil {
-			if errors.Is(err, ErrLoginCooldown) {
+	results := make([]InstanceResult, 0, len(instances))
+	for i := range instances {
+		inst := &instances[i]
+		cc, loginErr := r.getOrLogin(ctx, inst)
+		if loginErr != nil {
+			results = append(results, InstanceResult{
+				InstanceID: int(inst.ID),
+				Name:       inst.Name,
+				Err:        loginErr,
+			})
+			continue
+		}
+		results = append(results, InstanceResult{
+			InstanceID: int(inst.ID),
+			Name:       inst.Name,
+			Client:     cc.api,
+		})
+	}
+	return results, nil
+}
+
+// All returns connected clients for every enabled instance, skipping
+// instances that fail to log in.
+//
+// Deprecated: use Snapshot (lane B migrates callers). It delegates to the
+// same snapshot path but keeps the legacy []InstanceClient shape.
+func (r *Registry) All() ([]InstanceClient, error) {
+	results, err := r.snapshot(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]InstanceClient, 0, len(results))
+	for _, res := range results {
+		if res.Err != nil {
+			if errors.Is(res.Err, ErrLoginCooldown) {
 				logging.LogDebug("kuma", "Skipping Kuma instance during login retry cooldown",
-					slog.String("instance", inst.Name),
-					slog.String("error", err.Error()),
+					slog.Int("instance_id", res.InstanceID),
+					slog.String("error", res.Err.Error()),
 				)
 			} else {
 				logging.LogWarn("kuma", "Failed to connect to Kuma instance, skipping",
-					slog.String("instance", inst.Name),
-					slog.String("error", err.Error()),
+					slog.Int("instance_id", res.InstanceID),
+					slog.String("instance", res.Name),
+					slog.String("error", res.Err.Error()),
 				)
 			}
 			continue
 		}
-		result = append(result, InstanceClient{InstanceID: int(inst.ID), Client: c})
+		r.mu.Lock()
+		cc := r.clients[res.InstanceID]
+		r.mu.Unlock()
+		if cc == nil || cc.client == nil {
+			// A successful snapshot always caches a client; guard anyway.
+			continue
+		}
+		out = append(out, InstanceClient{InstanceID: res.InstanceID, Client: cc.client})
 	}
-	return result, nil
+	return out, nil
 }
 
 // Get returns a connected client for a single instance by id.
@@ -99,115 +155,146 @@ func (r *Registry) Get(id int) (*Client, error) {
 	if inst == nil {
 		return nil, fmt.Errorf("kuma instance %d not found", id)
 	}
-	return r.getOrLogin(int(inst.ID), inst.Username, inst.Password, inst.URL)
+	cc, err := r.getOrLogin(context.Background(), inst)
+	if err != nil {
+		return nil, err
+	}
+	return cc.client, nil
 }
 
 // Invalidate drops the cached client for an instance. Call after settings
-// changes (url/user/pass) or a persistent connection failure so the next
-// use re-creates and re-verifies.
+// changes (url/user/pass) or a persistent connection failure so the next use
+// re-creates and re-verifies.
 func (r *Registry) Invalidate(id int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.clients, id)
 }
 
-// getOrLogin returns a cached, verified client for the instance, creating
-// and verifying Socket.IO login on first use.
-func (r *Registry) getOrLogin(id int, user, pass, url string) (*Client, error) {
+// matches reports whether the cached client still belongs to this config.
+func (c *cachedClient) matches(inst *db.KumaInstance) bool {
+	return c.user == inst.Username && c.pass == inst.Password && c.url == inst.URL
+}
+
+// getOrLogin returns a cached, verified client for the instance, creating and
+// verifying Socket.IO login on first use. Concurrent callers for the same
+// instance are coalesced into one login attempt.
+func (r *Registry) getOrLogin(ctx context.Context, inst *db.KumaInstance) (*cachedClient, error) {
+	id := int(inst.ID)
 	now := time.Now()
+
 	r.mu.Lock()
 	cc, exists := r.clients[id]
-	r.mu.Unlock()
-
-	if exists {
+	if exists && cc.matches(inst) {
 		if cc.ready {
-			return cc.client, nil
+			r.mu.Unlock()
+			return cc, nil
 		}
 		if remaining := loginRetryCooldown - now.Sub(cc.failedAt); remaining > 0 {
+			failedAgo := now.Sub(cc.failedAt).Round(time.Second)
+			r.mu.Unlock()
 			return nil, fmt.Errorf("socket.io login to kuma instance %d failed %s ago: retrying in %s: %w",
-				id, now.Sub(cc.failedAt).Round(time.Second), remaining.Round(time.Second), ErrLoginCooldown)
+				id, failedAgo, remaining.Round(time.Second), ErrLoginCooldown)
 		}
 	}
+	r.mu.Unlock()
 
-	c := NewClient(url)
-	c.username = user
-	c.password = pass
+	value, err, _ := r.sf.Do(strconv.Itoa(id), func() (any, error) {
+		return r.login(ctx, inst)
+	})
+	if err != nil {
+		return nil, err
+	}
+	cc, ok := value.(*cachedClient)
+	if !ok || cc == nil {
+		return nil, fmt.Errorf("kuma instance %d: login produced no client", id)
+	}
+	return cc, nil
+}
 
-	if err := verifySocketIOLoginFn(url, user, pass); err != nil {
+// login performs one verified login and installs the cache entry.
+func (r *Registry) login(ctx context.Context, inst *db.KumaInstance) (*cachedClient, error) {
+	id := int(inst.ID)
+
+	// Another goroutine may have completed the login while we waited for the
+	// single-flight slot.
+	r.mu.Lock()
+	if cc, ok := r.clients[id]; ok && cc.matches(inst) && cc.ready {
+		r.mu.Unlock()
+		return cc, nil
+	}
+	r.mu.Unlock()
+
+	cli := NewClient(inst.URL)
+	cli.username = inst.Username
+	cli.password = inst.Password
+	cli.setSessionToken(inst.SessionToken)
+
+	latestToken := inst.SessionToken
+	cfg := connConfig{
+		URL:      inst.URL,
+		Username: inst.Username,
+		Password: inst.Password,
+		Token:    inst.SessionToken,
+		PersistToken: func(token string) error {
+			cli.setSessionToken(token)
+			if err := r.db.UpdateKumaInstanceToken(inst.ID, token); err != nil {
+				logging.LogWarn("kuma", "Failed to persist Kuma session token",
+					slog.Int("instance_id", id),
+					slog.String("error", err.Error()),
+				)
+				return err
+			}
+			return nil
+		},
+	}
+
+	if err := verifyLoginFn(ctx, cfg); err != nil {
 		r.mu.Lock()
-		r.clients[id] = &cachedClient{user: user, pass: pass, failedAt: time.Now()}
+		r.clients[id] = &cachedClient{
+			user:     inst.Username,
+			pass:     inst.Password,
+			url:      inst.URL,
+			failedAt: time.Now(),
+		}
 		r.mu.Unlock()
 		return nil, fmt.Errorf("socket.io login to kuma instance %d: %w", id, err)
 	}
 
+	// Pick up a token minted during verification so the API client can use
+	// loginByToken from its first call.
+	if fresh, err := r.db.GetKumaInstance(inst.ID); err == nil && fresh != nil && fresh.SessionToken != "" {
+		latestToken = fresh.SessionToken
+	}
+
+	api := NewAPIClient(APIConfig{
+		URL:          inst.URL,
+		Username:     inst.Username,
+		Password:     inst.Password,
+		Token:        latestToken,
+		PersistToken: cfg.PersistToken,
+	})
+
+	cc := &cachedClient{
+		client: cli,
+		api:    api,
+		user:   inst.Username,
+		pass:   inst.Password,
+		url:    inst.URL,
+		ready:  true,
+	}
 	r.mu.Lock()
-	r.clients[id] = &cachedClient{client: c, user: user, pass: pass, ready: true}
+	r.clients[id] = cc
 	r.mu.Unlock()
-	return c, nil
+	return cc, nil
 }
 
-// verifySocketIOLoginFn is overridden in tests to avoid needing a live Socket.IO server.
-var verifySocketIOLoginFn = verifySocketIOLogin
-
-// SetVerifySocketIOLoginTestHook overrides verifySocketIOLoginFn for testing.
-// Returns a restore function. Use with defer or t.Cleanup.
+// SetVerifySocketIOLoginTestHook overrides the registry's login probe for
+// testing. Returns a restore function. Use with defer or t.Cleanup.
 func SetVerifySocketIOLoginTestHook(fn func(url, user, pass string) error) func() {
-	orig := verifySocketIOLoginFn
-	verifySocketIOLoginFn = fn
-	return func() { verifySocketIOLoginFn = orig }
-}
-
-// verifySocketIOLogin performs a lightweight Socket.IO login check against a
-// Kuma instance. It connects, waits for loginRequired, emits login
-// credentials, verifies the success response, and disconnects.
-func verifySocketIOLogin(kumaURL, user, pass string) error {
-	var (
-		loginErr  = make(chan error, 1)
-		loginSent bool
-	)
-
-	events := make(chan rawEvent, 256)
-	cli, err := dialSIO(kumaURL)
-	if err != nil {
-		return fmt.Errorf("socket.io dial: %w", err)
+	orig := verifyLoginFn
+	verifyLoginFn = func(ctx context.Context, cfg connConfig) error {
+		return fn(cfg.URL, cfg.Username, cfg.Password)
 	}
-	defer cli.close()
-
-	cli.onEvent = func(ev rawEvent) {
-		events <- ev
-	}
-
-	loginTimer := time.After(10 * time.Second)
-
-	for {
-		select {
-		case ev := <-events:
-			if ev.Name == "loginRequired" && !loginSent {
-				loginSent = true
-				ackCh := cli.emitWithAck("login", map[string]string{
-					"username": user,
-					"password": pass,
-				})
-				go func() {
-					select {
-					case resp := <-ackCh:
-						if len(resp) > 0 {
-							var r struct{ Ok bool `json:"ok"` }
-							if json.Unmarshal(resp[0], &r) == nil && r.Ok {
-								loginErr <- nil
-								return
-							}
-						}
-						loginErr <- fmt.Errorf("login rejected")
-					case <-time.After(10 * time.Second):
-						loginErr <- fmt.Errorf("login timeout")
-					}
-				}()
-			}
-		case err := <-loginErr:
-			return err
-		case <-loginTimer:
-			return fmt.Errorf("login timeout")
-		}
-	}
+	return func() { verifyLoginFn = orig }
 }

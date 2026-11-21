@@ -336,6 +336,7 @@ type App struct {
 
 	mu            sync.Mutex
 	running       bool
+	reconciling   bool
 	progressChans []chan synclib.Progress
 
 	snapshot          atomic.Pointer[DashboardSnapshot]
@@ -390,6 +391,7 @@ func (app *App) settings() db.Settings {
 		NotifyDockerImage:         getEnv("NOTIFY_DOCKER_IMAGE", "") == "true",
 		NotifyReconcile:           getEnv("NOTIFY_RECONCILE", "") == "true",
 		NotifyAlerts:              getEnv("NOTIFY_ALERTS", "") == "true",
+		NotifySync:                getEnv("NOTIFY_SYNC", "") == "true",
 		NotifyCooldownMinutes:     getEnvInt("NOTIFY_COOLDOWN_MINUTES", 5),
 		NotifyPersistent:          getEnv("NOTIFY_PERSISTENT", "") == "true",
 		AlertsEnabled:             getEnv("ALERTS_ENABLED", "") == "true",
@@ -1172,6 +1174,7 @@ func (app *App) GetSettings(c *gin.Context) {
 		"notify_docker_image":            s.NotifyDockerImage,
 		"notify_reconcile":               s.NotifyReconcile,
 		"notify_alerts":                  s.NotifyAlerts,
+		"notify_sync":                    s.NotifySync,
 		"notify_cooldown_minutes":        s.NotifyCooldownMinutes,
 		"notify_persistent":              s.NotifyPersistent,
 		"alerts_enabled":                 s.AlertsEnabled,
@@ -1394,6 +1397,11 @@ func (app *App) SaveSettings(c *gin.Context) {
 		json.Unmarshal(v, &val)
 		pairs["notify_alerts"] = strconv.FormatBool(val)
 	}
+	if v, ok := raw["notify_sync"]; ok {
+		var val bool
+		json.Unmarshal(v, &val)
+		pairs["notify_sync"] = strconv.FormatBool(val)
+	}
 	if v, ok := raw["alerts_enabled"]; ok {
 		var val bool
 		json.Unmarshal(v, &val)
@@ -1528,9 +1536,9 @@ func (app *App) TestNPM(c *gin.Context) {
 			s.NPMPass = input.NPMPass
 		}
 	}
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(c.Request.Context())
 	npmClients, _ := app.npmRegistry.All()
-	proxies, err := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, clients)
+	proxies, err := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, instances)
 	if err != nil && len(proxies) == 0 {
 		logging.LogError("app", "NPM connection test failed",
 			slog.String("npm_host", s.NPMHost),
@@ -1719,8 +1727,21 @@ func (app *App) TestKumaInstance(c *gin.Context) {
 		slog.String("instance", inst.Name),
 		slog.String("kuma_url", inst.URL),
 	)
-	monitors, err := kuma.QueryMonitorsViaSocketIO(inst.URL, inst.Username, inst.Password)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	api, err := app.kumaAPIFor(ctx, int(id))
 	if err != nil {
+		logging.LogError("app", "Kuma instance connection test failed",
+			slog.String("instance", inst.Name),
+			slog.String("kuma_url", inst.URL),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		c.JSON(http.StatusOK, gin.H{"ok": false, "message": err.Error()})
+		return
+	}
+	if err := api.Ping(ctx); err != nil {
 		logging.LogError("app", "Kuma instance connection test failed",
 			slog.String("instance", inst.Name),
 			slog.String("kuma_url", inst.URL),
@@ -1733,10 +1754,9 @@ func (app *App) TestKumaInstance(c *gin.Context) {
 	logging.LogInfo("app", "Kuma instance connection test successful",
 		slog.String("instance", inst.Name),
 		slog.String("kuma_url", inst.URL),
-		slog.Int("monitor_count", len(monitors)),
 		slog.Duration("duration", time.Since(start)),
 	)
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": fmt.Sprintf("Connected, %d monitors found", len(monitors))})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Connected (login verified)"})
 }
 
 // --- NPM instance handlers ---
@@ -2096,8 +2116,8 @@ func (app *App) Status(c *gin.Context) {
 		dockerErr = err.Error()
 	}
 
-	// Kuma clients (used for NPM status + kuma health)
-	clients, _ := app.kumaRegistry.All()
+	// Kuma instances (used for NPM status + kuma health + monitor count).
+	instances := app.kumaSnapshot(ctx)
 	npmClients, _ := app.npmRegistry.All()
 
 	kumaInstances, _ := app.database.GetEnabledKumaInstances()
@@ -2124,7 +2144,7 @@ func (app *App) Status(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(ctx, npmClients, clients)
+		npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(ctx, npmClients, instances)
 		mu.Lock()
 		npmCount = len(npmProxies)
 		if npmFetchErr != nil {
@@ -2138,12 +2158,22 @@ func (app *App) Status(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		byID := make(map[int]kuma.InstanceResult, len(instances))
+		for _, res := range instances {
+			byID[res.InstanceID] = res
+		}
 		list := make([]gin.H, 0, len(kumaInstances))
 		errStr := ""
 		for _, inst := range kumaInstances {
 			instErr := ""
-			if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
-				instErr = err.Error()
+			if res, ok := byID[int(inst.ID)]; ok {
+				if res.Err != nil {
+					instErr = res.Err.Error()
+				} else if res.Client == nil {
+					instErr = "no API handle"
+				}
+			} else {
+				instErr = "not connected"
 			}
 			list = append(list, gin.H{
 				"id":         inst.ID,
@@ -2172,7 +2202,7 @@ func (app *App) Status(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		total, _ := app.kumaMonitorCountWithContext(ctx, clients)
+		total, _ := app.kumaMonitorCountWithContext(ctx, instances)
 		mu.Lock()
 		monitorCount = total
 		mu.Unlock()
@@ -2253,21 +2283,24 @@ func (app *App) Status(c *gin.Context) {
 // using it here would show 0 even when Kuma has dozens of monitors.
 // When no instance can be reached it falls back to the sync table count
 // so the dashboard never shows a bogus 0.
-func (app *App) kumaMonitorCount(clients []kuma.InstanceClient) (total, up int) {
-	return app.kumaMonitorCountWithContext(context.Background(), clients)
+func (app *App) kumaMonitorCount(instances []kuma.InstanceResult) (total, up int) {
+	return app.kumaMonitorCountWithContext(context.Background(), instances)
 }
 
-func (app *App) kumaMonitorCountWithContext(ctx context.Context, clients []kuma.InstanceClient) (total, up int) {
+func (app *App) kumaMonitorCountWithContext(ctx context.Context, instances []kuma.InstanceResult) (total, up int) {
 	live := false
-	for _, ic := range clients {
-		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
+	for _, res := range instances {
+		if res.Err != nil || res.Client == nil {
+			continue
+		}
+		monitors, err := res.Client.Monitors(ctx)
 		if err != nil {
 			continue
 		}
 		live = true
 		total += len(monitors)
 		for _, m := range monitors {
-			if m.Status == 1 {
+			if m.StatusKnown && m.Status == 1 {
 				up++
 			}
 		}
@@ -2297,11 +2330,11 @@ func (app *App) TrmnlStats(c *gin.Context) {
 	}
 
 	// NPM health
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(c.Request.Context())
 	npmClients, _ := app.npmRegistry.All()
 	npmCount := 0
 	npmErr := ""
-	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, clients)
+	npmProxies, npmFetchErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, instances)
 	// Partial results are still served when only some instances fail.
 	npmCount = len(npmProxies)
 	if npmFetchErr != nil {
@@ -2310,22 +2343,32 @@ func (app *App) TrmnlStats(c *gin.Context) {
 
 	// Kuma health — ok only if ALL enabled instances are reachable.
 	kumaErr := ""
+	byID := make(map[int]kuma.InstanceResult, len(instances))
+	for _, res := range instances {
+		byID[res.InstanceID] = res
+	}
 	kumaInstances, _ := app.database.GetEnabledKumaInstances()
 	if len(kumaInstances) == 0 {
 		kumaErr = "no Kuma instances configured"
 	} else {
 		for _, inst := range kumaInstances {
-			if _, err := app.kumaRegistry.Get(int(inst.ID)); err != nil {
+			res, ok := byID[int(inst.ID)]
+			switch {
+			case !ok:
 				if kumaErr == "" {
-					kumaErr = err.Error()
+					kumaErr = "not connected"
+				}
+			case res.Err != nil:
+				if kumaErr == "" {
+					kumaErr = res.Err.Error()
 				} else {
-					kumaErr = inst.Name + ": " + err.Error()
+					kumaErr = inst.Name + ": " + res.Err.Error()
 				}
 			}
 		}
 	}
 
-	monitorCount, up := app.kumaMonitorCount(clients)
+	monitorCount, up := app.kumaMonitorCount(instances)
 
 	lastDocker, _ := app.database.GetLatestSyncRun("docker")
 	lastNPM, _ := app.database.GetLatestSyncRun("npm")
@@ -2359,11 +2402,11 @@ func (app *App) Services(c *gin.Context) {
 		return
 	}
 	s := app.settings()
-	clients, _ := app.kumaRegistry.All()
 	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
 	defer cancel()
-	result, err := synclib.GetDockerServicesWithStatus(ctx, s.ComposePath, clients)
+	instances := app.kumaSnapshot(ctx)
+	result, err := synclib.GetDockerServicesWithStatus(ctx, s.ComposePath, instances)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -2416,12 +2459,12 @@ func (app *App) Proxies(c *gin.Context) {
 		c.JSON(http.StatusOK, snap.Proxies)
 		return
 	}
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(c.Request.Context())
 	npmClients, _ := app.npmRegistry.All()
 	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
 	defer cancel()
-	result, err := synclib.GetNPMProxiesWithStatus(ctx, npmClients, clients)
+	result, err := synclib.GetNPMProxiesWithStatus(ctx, npmClients, instances)
 	if err != nil && len(result) == 0 {
 		// All instances failed — no partial results to serve.
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2475,37 +2518,36 @@ func (app *App) KumaMonitors(c *gin.Context) {
 			return
 		}
 	}
-	clients, err := app.kumaRegistry.All()
-	if err != nil {
-		logging.LogWarn("app", "KumaRegistry returned partial results",
-			slog.String("error", err.Error()),
-		)
-	}
+	instances := app.kumaSnapshot(c.Request.Context())
 	readDeadline := getEnvDuration("UPSTREAM_READ_DEADLINE", 2*time.Second)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), readDeadline)
 	defer cancel()
 
 	// Build instance name map from DB (lightweight — ent caches internally).
-	instances, _ := app.database.GetKumaInstances()
+	instancesDB, _ := app.database.GetKumaInstances()
 	nameMap := make(map[int]string)
-	for _, inst := range instances {
+	for _, inst := range instancesDB {
 		nameMap[int(inst.ID)] = inst.Name
 	}
 
-	result := make([]KumaMonitorSummary, 0, len(clients)*10)
-	for _, ic := range clients {
-		// GetMonitors() is deprecated and always returns ErrRESTNotSupported
-		// (Uptime Kuma has no REST list endpoint); the Socket.IO query is the
-		// real path and also carries status/uptime/ping. Cached per client.
-		monitors, err := ic.Client.QueryMonitorsViaSocketIOContext(ctx)
+	result := make([]KumaMonitorSummary, 0, len(instances)*10)
+	for _, res := range instances {
+		if res.Err != nil || res.Client == nil {
+			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
+				slog.Int("instance_id", res.InstanceID),
+				slog.Any("error", res.Err),
+			)
+			continue
+		}
+		monitors, err := res.Client.Monitors(ctx)
 		if err != nil {
 			logging.LogWarn("app", "Failed to fetch monitors from Kuma instance",
-				slog.Int("instance_id", ic.InstanceID),
+				slog.Int("instance_id", res.InstanceID),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
-		instanceName, _ := nameMap[ic.InstanceID]
+		instanceName, _ := nameMap[res.InstanceID]
 		for _, m := range monitors {
 			result = append(result, KumaMonitorSummary{
 				ID:              m.ID,
@@ -2524,7 +2566,7 @@ func (app *App) KumaMonitors(c *gin.Context) {
 				MaxRetries:      m.MaxRetries,
 				Active:          m.Active,
 				Tags:            m.Tags,
-				InstanceID:      ic.InstanceID,
+				InstanceID:      res.InstanceID,
 				InstanceName:    instanceName,
 			})
 		}
@@ -2580,13 +2622,13 @@ func (app *App) PauseKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
 		return
 	}
-	client, err := app.kumaRegistry.Get(instanceID)
+	api, err := app.kumaAPIFor(c.Request.Context(), instanceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
 		return
 	}
-	if err := client.PauseMonitorViaSocketIO(kumaID); err != nil {
-		logging.LogWarn("app", "Socket.IO pause monitor failed", slog.Int("monitor_id", kumaID), slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
+	if err := api.PauseMonitor(c.Request.Context(), kumaID); err != nil {
+		logging.LogWarn("app", "Pause monitor failed", slog.Int("monitor_id", kumaID), slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -2605,13 +2647,13 @@ func (app *App) ResumeKumaMonitor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
 		return
 	}
-	client, err := app.kumaRegistry.Get(instanceID)
+	api, err := app.kumaAPIFor(c.Request.Context(), instanceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
 		return
 	}
-	if err := client.ResumeMonitorViaSocketIO(kumaID); err != nil {
-		logging.LogWarn("app", "Socket.IO resume monitor failed", slog.Int("monitor_id", kumaID), slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
+	if err := api.ResumeMonitor(c.Request.Context(), kumaID); err != nil {
+		logging.LogWarn("app", "Resume monitor failed", slog.Int("monitor_id", kumaID), slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -2630,12 +2672,13 @@ func (app *App) SetMonitorTags(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or missing instance query param"})
 		return
 	}
+	// The legacy client remains the only path for tag-id commands; monitor
+	// reads go through the registry's API seam below.
 	client, err := app.kumaRegistry.Get(instanceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("instance %d not found or unreachable", instanceID)})
 		return
 	}
-	// Parse desired tags: support {tags:[...]} or raw array.
 	var rawBody json.RawMessage
 	if err := c.ShouldBindJSON(&rawBody); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -2668,7 +2711,12 @@ func (app *App) SetMonitorTags(c *gin.Context) {
 			return
 		}
 	}
-	monitors, err := client.QueryMonitorsViaSocketIO()
+	api, aerr := app.kumaAPIFor(c.Request.Context(), instanceID)
+	if aerr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": aerr.Error()})
+		return
+	}
+	monitors, err := api.Monitors(c.Request.Context())
 	if err != nil {
 		logging.LogWarn("app", "Failed to fetch monitors for tag diff", slog.Int("instance_id", instanceID), slog.String("error", err.Error()))
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -2771,16 +2819,23 @@ func (app *App) Reconcile(c *gin.Context) {
 		return
 	}
 
+	if !app.beginExclusiveRun(true) {
+		c.JSON(http.StatusConflict, gin.H{"error": "sync or reconcile already running"})
+		return
+	}
+	defer app.endExclusiveRun(true, false)
+
 	s := app.settings()
 	dryRun := s.ReconcileDryRunDefault
 	if input.DryRun != nil {
 		dryRun = *input.DryRun
 	}
 
+	ctx := context.WithoutCancel(c.Request.Context())
 	npmClients, _ := app.npmRegistry.All()
-	kumaClients, _ := app.kumaRegistry.All()
-	result := synclib.RunReconcile(c.Request.Context(),
-		s.ComposePath, npmClients, kumaClients, app.database,
+	instances := app.kumaSnapshot(ctx)
+	result := synclib.RunReconcile(ctx,
+		s.ComposePath, npmClients, instances, app.database,
 		synclib.ReconcileOptions{DryRun: dryRun, OnlyService: input.Service},
 		nil,
 	)
@@ -2909,26 +2964,20 @@ func (app *App) EventsFeed(c *gin.Context) {
 
 func (app *App) DockerSync(c *gin.Context) {
 	s := app.settings()
+	// The sync outlives the HTTP request; keep its values (tracing, deadlines)
+	// but do not cancel it when the client disconnects.
+	ctx := context.WithoutCancel(c.Request.Context())
 
-	app.mu.Lock()
-	if app.running {
-		app.mu.Unlock()
+	if !app.beginExclusiveRun(false) {
 		c.JSON(http.StatusConflict, gin.H{"error": "sync already running"})
 		return
 	}
-	app.running = true
-	app.mu.Unlock()
 
 	go func() {
-		defer func() {
-			app.mu.Lock()
-			app.running = false
-			app.progressChans = nil
-			app.mu.Unlock()
-		}()
+		defer app.endExclusiveRun(false, true)
 
-		clients, _ := app.kumaRegistry.All()
-		synclib.RunDockerSync(context.Background(), s.ComposePath, clients, app.database, func(p synclib.Progress) {
+		instances := app.kumaSnapshot(ctx)
+		run := synclib.RunDockerSync(ctx, s.ComposePath, instances, app.database, func(p synclib.Progress) {
 			app.mu.Lock()
 			for _, ch := range app.progressChans {
 				select {
@@ -2937,36 +2986,30 @@ func (app *App) DockerSync(c *gin.Context) {
 				}
 			}
 			app.mu.Unlock()
-			if strings.Contains(p.Status, "completed") {
+			if isTerminalSyncStatus(p.Status) {
 				app.requestSnapshotRefresh()
 			}
 		})
+		app.notifySyncOutcome(ctx, run)
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "started", "source": "docker"})
 }
 
 func (app *App) NPMSync(c *gin.Context) {
-	app.mu.Lock()
-	if app.running {
-		app.mu.Unlock()
+	ctx := context.WithoutCancel(c.Request.Context())
+
+	if !app.beginExclusiveRun(false) {
 		c.JSON(http.StatusConflict, gin.H{"error": "sync already running"})
 		return
 	}
-	app.running = true
-	app.mu.Unlock()
 
 	go func() {
-		defer func() {
-			app.mu.Lock()
-			app.running = false
-			app.progressChans = nil
-			app.mu.Unlock()
-		}()
+		defer app.endExclusiveRun(false, true)
 
-		clients, _ := app.kumaRegistry.All()
+		instances := app.kumaSnapshot(ctx)
 		npmClients, _ := app.npmRegistry.All()
-		synclib.RunNPMSync(context.Background(), npmClients, clients, app.database, func(p synclib.Progress) {
+		run := synclib.RunNPMSync(ctx, npmClients, instances, app.database, func(p synclib.Progress) {
 			app.mu.Lock()
 			for _, ch := range app.progressChans {
 				select {
@@ -2975,13 +3018,25 @@ func (app *App) NPMSync(c *gin.Context) {
 				}
 			}
 			app.mu.Unlock()
-			if strings.Contains(p.Status, "completed") {
+			if isTerminalSyncStatus(p.Status) {
 				app.requestSnapshotRefresh()
 			}
 		})
+		app.notifySyncOutcome(ctx, run)
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "started", "source": "npm"})
+}
+
+// isTerminalSyncStatus reports whether a progress status ends a run, so the
+// dashboard snapshot is refreshed even for a failed run.
+func isTerminalSyncStatus(status string) bool {
+	switch status {
+	case "completed", "completed_with_errors", "failed":
+		return true
+	default:
+		return false
+	}
 }
 
 // startSyncScheduler runs periodic docker and NPM syncs on a configurable interval.
@@ -3002,56 +3057,50 @@ func (app *App) startSyncScheduler(ctx context.Context, intervalMinutes int) {
 			logging.LogDebug("app", "Scheduler tick",
 				slog.Int("interval_minutes", intervalMinutes),
 			)
-			app.runScheduledSync()
+			app.runScheduledSync(ctx)
 		}
 	}
 }
 
-// runScheduledSync executes both docker and NPM syncs sequentially with proper locking.
-func (app *App) runScheduledSync() {
-	app.mu.Lock()
-	if app.running {
-		app.mu.Unlock()
+// runScheduledSync executes both docker and NPM syncs sequentially under the
+// shared sync/reconcile lane.
+func (app *App) runScheduledSync(ctx context.Context) {
+	if !app.beginExclusiveRun(false) {
 		logging.LogDebug("app", "Scheduled sync skipped — already running")
 		return
 	}
-	app.running = true
-	app.mu.Unlock()
-
-	defer func() {
-		app.mu.Lock()
-		app.running = false
-		app.mu.Unlock()
-	}()
+	defer app.endExclusiveRun(false, false)
 
 	s := app.settings()
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(ctx)
 	logging.LogInfo("app", "Starting scheduled Docker sync",
 		slog.String("compose_path", s.ComposePath),
-		slog.Int("kuma_instances", len(clients)),
+		slog.Int("kuma_instances", len(instances)),
 	)
 
-	synclib.RunDockerSync(context.Background(), s.ComposePath, clients, app.database, func(p synclib.Progress) {
+	run := synclib.RunDockerSync(ctx, s.ComposePath, instances, app.database, func(p synclib.Progress) {
 		logging.LogDebug("app", "Docker sync progress",
 			slog.Int("current", p.Current),
 			slog.Int("total", p.Total),
 			slog.String("status", p.Status),
 			slog.String("message", p.Message),
 		)
-		if strings.Contains(p.Status, "completed") {
+		if isTerminalSyncStatus(p.Status) {
 			app.requestSnapshotRefresh()
 		}
 	})
+	app.notifySyncOutcome(ctx, run)
 
 	log.Println("scheduler: starting periodic npm sync")
 
 	npmClients, _ := app.npmRegistry.All()
-	synclib.RunNPMSync(context.Background(), npmClients, clients, app.database, func(p synclib.Progress) {
+	run = synclib.RunNPMSync(ctx, npmClients, instances, app.database, func(p synclib.Progress) {
 		log.Printf("[scheduler] npm sync: [%d/%d] %s - %s", p.Current, p.Total, p.Status, p.Message)
-		if strings.Contains(p.Status, "completed") {
+		if isTerminalSyncStatus(p.Status) {
 			app.requestSnapshotRefresh()
 		}
 	})
+	app.notifySyncOutcome(ctx, run)
 
 	log.Println("scheduler: periodic sync complete")
 }
@@ -3094,16 +3143,22 @@ func (app *App) runNotifyCheck(ctx context.Context) {
 	s := app.settings()
 	start := time.Now()
 
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(ctx)
 	npmClients, _ := app.npmRegistry.All()
 
 	degraded := false
 	var reasons []string
 
-	// If instances are configured but none produced clients, the Kuma picture
-	// is untrustworthy — do not report "everything missing".
+	// If instances are configured but none produced a usable handle, the Kuma
+	// picture is untrustworthy — do not report "everything missing".
+	kumaReady := false
+	for _, res := range instances {
+		if res.Err == nil && res.Client != nil {
+			kumaReady = true
+		}
+	}
 	enabledKuma, _ := app.database.GetEnabledKumaInstances()
-	if len(enabledKuma) > 0 && len(clients) == 0 {
+	if len(enabledKuma) > 0 && !kumaReady {
 		degraded = true
 		reasons = append(reasons, "no Kuma instances reachable")
 	}
@@ -3121,12 +3176,12 @@ func (app *App) runNotifyCheck(ctx context.Context) {
 
 	var dockerItems, npmItems []notify.Item
 	if !degraded {
-		services, sErr := synclib.GetDockerServicesWithStatus(ctx, s.ComposePath, clients)
+		services, sErr := synclib.GetDockerServicesWithStatus(ctx, s.ComposePath, instances)
 		if sErr != nil {
 			degraded = true
 			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", sErr))
 		}
-		proxies, pErr := synclib.GetNPMProxiesWithStatus(ctx, npmClients, clients)
+		proxies, pErr := synclib.GetNPMProxiesWithStatus(ctx, npmClients, instances)
 		if pErr != nil {
 			degraded = true
 			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", pErr))
@@ -3268,9 +3323,112 @@ func (app *App) eventNotifierFor(s db.Settings) *notify.EventNotifier {
 				notify.CatDockerImage:  s.NotifyDockerImage,
 				notify.CatReconcile:    s.NotifyReconcile,
 				notify.CatAlerts:       s.NotifyAlerts,
+				notify.CatSync:         s.NotifySync,
 			},
 		},
 	)
+}
+
+// beginExclusiveRun reserves the single sync/reconcile lane. Syncs and
+// reconciles write the same monitors, so they must never overlap: a reconcile
+// during a sync (or two reconciles) would race on create/update decisions.
+func (app *App) beginExclusiveRun(reconcile bool) bool {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.running || app.reconciling {
+		return false
+	}
+	if reconcile {
+		app.reconciling = true
+	} else {
+		app.running = true
+	}
+	return true
+}
+
+// endExclusiveRun releases the lane. clearProgress is set by the HTTP sync
+// handlers, whose progress fan-out ends with the run.
+func (app *App) endExclusiveRun(reconcile, clearProgress bool) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if reconcile {
+		app.reconciling = false
+		return
+	}
+	app.running = false
+	if clearProgress {
+		app.progressChans = nil
+	}
+}
+
+// kumaSnapshotTestHook overrides kumaSnapshot in tests. Nil in production.
+var kumaSnapshotTestHook func(ctx context.Context) []kuma.InstanceResult
+
+// kumaSnapshot returns the per-instance API snapshot used by every read path.
+func (app *App) kumaSnapshot(ctx context.Context) []kuma.InstanceResult {
+	if kumaSnapshotTestHook != nil {
+		return kumaSnapshotTestHook(ctx)
+	}
+	return app.kumaRegistry.Snapshot(ctx)
+}
+
+// kumaAPIForTestHook overrides kumaAPIFor in tests. Nil in production.
+var kumaAPIForTestHook func(ctx context.Context, instanceID int) (kuma.API, error)
+
+// kumaAPIFor returns the registry's shared API handle for one instance. When
+// the instance is not in the enabled snapshot (e.g. the legacy "test" handler
+// probing a disabled instance), a non-cached client is built from the stored
+// credentials; it persists a minted token exactly like the registry does.
+func (app *App) kumaAPIFor(ctx context.Context, instanceID int) (kuma.API, error) {
+	if kumaAPIForTestHook != nil {
+		return kumaAPIForTestHook(ctx, instanceID)
+	}
+	for _, res := range app.kumaSnapshot(ctx) {
+		if res.InstanceID != instanceID {
+			continue
+		}
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		if res.Client == nil {
+			return nil, fmt.Errorf("kuma instance %d: no API handle", instanceID)
+		}
+		return res.Client, nil
+	}
+	inst, err := app.database.GetKumaInstance(int64(instanceID))
+	if err != nil {
+		return nil, err
+	}
+	if inst == nil {
+		return nil, fmt.Errorf("kuma instance %d not found", instanceID)
+	}
+	return kuma.NewAPIClient(kuma.APIConfig{
+		URL:      inst.URL,
+		Username: inst.Username,
+		Password: inst.Password,
+		Token:    inst.SessionToken,
+		PersistToken: func(token string) error {
+			return app.database.UpdateKumaInstanceToken(inst.ID, token)
+		},
+	}), nil
+}
+
+// notifySyncOutcome fires the sync-failure notification for any run that did
+// not finish completely cleanly. The per-instance detail is what makes a
+// partial failure actionable instead of a silent "completed".
+func (app *App) notifySyncOutcome(ctx context.Context, run db.SyncRun) {
+	if run.Status == "completed" || run.Status == "running" {
+		return
+	}
+	msg := fmt.Sprintf("%s sync finished with status %q", run.Source, run.Status)
+	if run.ErrorMessage != "" {
+		msg += ": " + run.ErrorMessage
+	}
+	for _, ie := range run.InstanceErrors {
+		msg += fmt.Sprintf("\n- %s (instance %d): %s", ie.Name, ie.InstanceID, ie.Error)
+	}
+	app.eventNotifierFor(app.settings()).Notify(ctx, notify.CatSync,
+		fmt.Sprintf("Sync %s: %s", run.Source, run.Status), msg)
 }
 
 // startDockerWatcher streams docker events while DockerEventsEnabled is set.
@@ -3419,9 +3577,13 @@ type appAlertState struct {
 }
 
 // Snapshot gathers one evaluation tick's view of live state: Kuma monitor
-// status across all enabled instances (later instances win on name
-// conflicts), Docker container states, last completed sync runs, and the
-// most recent reconcile outcome.
+// status across all enabled instances, Docker container states, last completed
+// sync runs, and the most recent reconcile outcome.
+//
+// A monitor whose status is unknown (no heartbeat in the collection window)
+// contributes nothing, and an unreachable instance contributes nothing: the
+// old "skip and treat as up" path could both hide an outage and silently
+// auto-resolve an incident.
 func (a appAlertState) Snapshot() (*alerts.Snapshot, error) {
 	ctx := context.Background()
 	snap := &alerts.Snapshot{
@@ -3430,20 +3592,26 @@ func (a appAlertState) Snapshot() (*alerts.Snapshot, error) {
 		LastSyncSuccess:  map[string]time.Time{},
 	}
 
-	instances, err := a.app.database.GetEnabledKumaInstances()
-	if err != nil {
-		return nil, err
-	}
-	for _, inst := range instances {
-		monitors, qerr := kuma.QueryMonitorsViaSocketIO(inst.URL, inst.Username, inst.Password)
+	for _, res := range a.app.kumaSnapshot(ctx) {
+		if res.Err != nil || res.Client == nil {
+			logging.LogWarn("alerts", "Skipping unreachable Kuma instance",
+				slog.String("instance", res.Name),
+				slog.Any("error", res.Err),
+			)
+			continue
+		}
+		monitors, qerr := res.Client.Monitors(ctx)
 		if qerr != nil {
 			logging.LogWarn("alerts", "Skipping unreachable Kuma instance",
-				slog.String("instance", inst.Name),
+				slog.String("instance", res.Name),
 				slog.String("error", qerr.Error()),
 			)
 			continue
 		}
 		for _, m := range monitors {
+			if !m.StatusKnown {
+				continue
+			}
 			snap.MonitorDown[m.Name] = m.Status == 0 // 0 = down in Kuma
 		}
 	}
@@ -3564,11 +3732,17 @@ func (app *App) startReconcileScheduler(ctx context.Context) {
 // runScheduledReconcile executes one reconcile pass and notifies when changes
 // were found or the run hit errors.
 func (app *App) runScheduledReconcile(ctx context.Context) {
+	if !app.beginExclusiveRun(true) {
+		logging.LogDebug("app", "Scheduled reconcile skipped — sync or reconcile already running")
+		return
+	}
+	defer app.endExclusiveRun(true, false)
+
 	s := app.settings()
 	npmClients, _ := app.npmRegistry.All()
-	kumaClients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(ctx)
 	result := synclib.RunReconcile(ctx,
-		s.ComposePath, npmClients, kumaClients, app.database,
+		s.ComposePath, npmClients, instances, app.database,
 		synclib.ReconcileOptions{DryRun: s.ReconcileDryRunDefault},
 		nil,
 	)
@@ -3671,14 +3845,20 @@ func (app *App) NotifyTest(c *gin.Context) {
 func (app *App) NotifyMissing(c *gin.Context) {
 	s := app.settings()
 
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(c.Request.Context())
 	npmClients, _ := app.npmRegistry.All()
 
 	degraded := false
 	var reasons []string
 
+	kumaReady := false
+	for _, res := range instances {
+		if res.Err == nil && res.Client != nil {
+			kumaReady = true
+		}
+	}
 	enabledKuma, _ := app.database.GetEnabledKumaInstances()
-	if len(enabledKuma) > 0 && len(clients) == 0 {
+	if len(enabledKuma) > 0 && !kumaReady {
 		degraded = true
 		reasons = append(reasons, "no Kuma instances reachable")
 	}
@@ -3695,12 +3875,12 @@ func (app *App) NotifyMissing(c *gin.Context) {
 
 	var dockerItems, npmItems []notify.Item
 	if !degraded {
-		services, sErr := synclib.GetDockerServicesWithStatus(c.Request.Context(), s.ComposePath, clients)
+		services, sErr := synclib.GetDockerServicesWithStatus(c.Request.Context(), s.ComposePath, instances)
 		if sErr != nil {
 			degraded = true
 			reasons = append(reasons, fmt.Sprintf("compose load failed: %v", sErr))
 		}
-		proxies, pErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, clients)
+		proxies, pErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, instances)
 		if pErr != nil {
 			degraded = true
 			reasons = append(reasons, fmt.Sprintf("NPM proxy fetch failed: %v", pErr))
@@ -3979,9 +4159,9 @@ func (app *App) AutheliaStatus(c *gin.Context) {
 	autheliaDomains := authelia.GetDomains(ac)
 
 	var npmCNAMEs []string
-	clients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(c.Request.Context())
 	npmClients, _ := app.npmRegistry.All()
-	proxies, npmErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, clients)
+	proxies, npmErr := synclib.GetNPMProxiesWithStatus(c.Request.Context(), npmClients, instances)
 	if npmErr != nil {
 		// Partial failure: use whatever was fetched, log the aggregate error.
 		logging.LogError("app", "Partial NPM proxy fetch failure in Authelia status",

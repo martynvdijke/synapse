@@ -3,6 +3,8 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,7 @@ import (
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/kuma/kumatest"
 	"synapse/internal/npm"
 )
 
@@ -1094,28 +1097,27 @@ func setupTestDB(t *testing.T) *db.DB {
 	return d
 }
 
-// mockKumaClient sets up per-client hooks for Kuma Socket.IO methods
-// to return canned data instead of connecting to a real Kuma instance.
-// addCalls counts AddMonitorViaSocketIO invocations. existingMonitors is
-// the list returned by QueryMonitorsViaSocketIO (simulating pre-existing
-// monitors). Each client gets its own hooks so multiple clients can have
-// independent behavior in the same test.
-func mockKumaClient(t *testing.T, instanceID int, addCalls *int32, existingMonitors []kuma.KumaMonitor) kuma.InstanceClient {
+// mockKumaClient builds a kumatest.Fake per instance and returns the
+// Registry.Snapshot row the sync path consumes. addCalls counts AddMonitor
+// invocations; existingMonitors is the scripted Monitors() result.
+func mockKumaClient(t *testing.T, instanceID int, addCalls *int32, existingMonitors []kuma.KumaMonitor) kuma.InstanceResult {
 	t.Helper()
 
-	c := kuma.NewClient("http://kuma-mock.invalid")
-	c.SetTestHooks(&kuma.ClientTestHooks{
-		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
-			return existingMonitors, nil
-		},
-		AddMonitor: func(monitorType, name, url, dockerContainer string, dockerHostID int) (int, error) {
-			if addCalls != nil {
-				atomic.AddInt32(addCalls, 1)
-			}
-			return 1, nil
-		},
-	})
-	return kuma.InstanceClient{InstanceID: instanceID, Client: c}
+	fake := kumatest.New()
+	fake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		return existingMonitors, nil
+	}
+	fake.AddMonitorFn = func(context.Context, kuma.MonitorSpec) (int, error) {
+		if addCalls != nil {
+			atomic.AddInt32(addCalls, 1)
+		}
+		return 1, nil
+	}
+	return kuma.InstanceResult{
+		InstanceID: instanceID,
+		Name:       fmt.Sprintf("kuma-%d", instanceID),
+		Client:     fake,
+	}
 }
 
 func TestRunDockerSyncFanOut(t *testing.T) {
@@ -1125,7 +1127,7 @@ func TestRunDockerSyncFanOut(t *testing.T) {
 	c1 := mockKumaClient(t, 1, &add1, nil)
 	c2 := mockKumaClient(t, 2, &add2, nil)
 
-	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceClient{c1, c2}, d, func(p Progress) {})
+	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceResult{c1, c2}, d, func(p Progress) {})
 
 	if run.Status != "completed" {
 		t.Errorf("expected status completed, got %q (err=%q)", run.Status, run.ErrorMessage)
@@ -1185,7 +1187,7 @@ func TestRunDockerSyncSkipsExisting(t *testing.T) {
 	var addCalls int32
 	c := mockKumaClient(t, 1, &addCalls, existing)
 
-	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceClient{c}, d, func(p Progress) {})
+	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceResult{c}, d, func(p Progress) {})
 
 	if run.Status != "completed" {
 		t.Errorf("expected completed, got %q (err=%q)", run.Status, run.ErrorMessage)
@@ -1204,7 +1206,7 @@ func TestGetDockerServicesWithStatusMultiInstance(t *testing.T) {
 	c1 := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 100, Name: "nginx-web", Type: "http"}})
 	c2 := mockKumaClient(t, 2, nil, nil)
 
-	services, err := GetDockerServicesWithStatus(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceClient{c1, c2})
+	services, err := GetDockerServicesWithStatus(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceResult{c1, c2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1253,32 +1255,27 @@ func TestGetDockerServicesWithStatusContextExpiry(t *testing.T) {
 	// was discarded, blanking the services list.
 	fast := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 100, Name: "nginx-web", Type: "http"}})
 
-	slow := kuma.NewClient("http://kuma-slow.invalid")
-	slow.SetTestHooks(&kuma.ClientTestHooks{
-		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
-			time.Sleep(80 * time.Millisecond)
-			return nil, context.DeadlineExceeded
-		},
-	})
-
-	never := kuma.NewClient("http://kuma-never.invalid")
-	never.SetTestHooks(&kuma.ClientTestHooks{
-		QueryMonitors: func() ([]kuma.KumaMonitor, error) {
-			t.Error("instances after the expired context must not be queried")
-			return nil, nil
-		},
-	})
+	slowFake := kumatest.New()
+	slowFake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		time.Sleep(80 * time.Millisecond)
+		return nil, context.DeadlineExceeded
+	}
+	neverFake := kumatest.New()
+	neverFake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		t.Error("instances after the expired context must not be queried")
+		return nil, nil
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
 
-	clients := []kuma.InstanceClient{
+	instances := []kuma.InstanceResult{
 		fast,
-		{InstanceID: 2, Client: slow},
-		{InstanceID: 3, Client: never},
+		{InstanceID: 2, Name: "slow", Client: slowFake},
+		{InstanceID: 3, Name: "never", Client: neverFake},
 	}
 
-	services, err := GetDockerServicesWithStatus(ctx, "../../testdata/docker-compose.yml", clients)
+	services, err := GetDockerServicesWithStatus(ctx, "../../testdata/docker-compose.yml", instances)
 	if err != nil {
 		t.Fatalf("services must survive an expired context, got error: %v", err)
 	}
@@ -1463,7 +1460,7 @@ func TestGetNPMProxiesWithStatus(t *testing.T) {
 	// One Kuma client with "api.example.com" monitor.
 	kumaClient := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 42, Name: "api.example.com", Type: "http"}})
 
-	proxies, err := GetNPMProxiesWithStatus(context.Background(), []npm.InstanceClient{c1, c2}, []kuma.InstanceClient{kumaClient})
+	proxies, err := GetNPMProxiesWithStatus(context.Background(), []npm.InstanceClient{c1, c2}, []kuma.InstanceResult{kumaClient})
 	if err != nil {
 		t.Fatalf("GetNPMProxiesWithStatus: %v", err)
 	}
@@ -1508,7 +1505,7 @@ func TestGetNPMProxiesWithStatusPartialFailure(t *testing.T) {
 	})
 	kumaClient := mockKumaClient(t, 1, nil, []kuma.KumaMonitor{{ID: 42, Name: "api.example.com", Type: "http"}})
 
-	proxies, err := GetNPMProxiesWithStatus(context.Background(), []npm.InstanceClient{c1, c2}, []kuma.InstanceClient{kumaClient})
+	proxies, err := GetNPMProxiesWithStatus(context.Background(), []npm.InstanceClient{c1, c2}, []kuma.InstanceResult{kumaClient})
 	if err == nil {
 		t.Fatal("expected aggregate error for failing instance 1")
 	}
@@ -1530,7 +1527,7 @@ func TestRunNPMSync(t *testing.T) {
 	var kumaAddCalls int32
 	kumaClient := mockKumaClient(t, 1, &kumaAddCalls, nil)
 
-	run := RunNPMSync(context.Background(), []npm.InstanceClient{npmClient}, []kuma.InstanceClient{kumaClient}, d, func(p Progress) {})
+	run := RunNPMSync(context.Background(), []npm.InstanceClient{npmClient}, []kuma.InstanceResult{kumaClient}, d, func(p Progress) {})
 
 	if run.Status != "completed" {
 		t.Errorf("expected status completed, got %q (err=%q)", run.Status, run.ErrorMessage)
@@ -1566,7 +1563,7 @@ func TestRunNPMSyncSkipsExisting(t *testing.T) {
 	// Kuma already has a monitor for "existing.example.com"
 	kumaClient := mockKumaClient(t, 1, &kumaAddCalls, []kuma.KumaMonitor{{ID: 100, Name: "existing.example.com", Type: "http"}})
 
-	run := RunNPMSync(context.Background(), []npm.InstanceClient{npmClient}, []kuma.InstanceClient{kumaClient}, d, func(p Progress) {})
+	run := RunNPMSync(context.Background(), []npm.InstanceClient{npmClient}, []kuma.InstanceResult{kumaClient}, d, func(p Progress) {})
 
 	if run.Status != "completed" {
 		t.Errorf("expected completed, got %q (err=%q)", run.Status, run.ErrorMessage)
@@ -1576,5 +1573,116 @@ func TestRunNPMSyncSkipsExisting(t *testing.T) {
 	}
 	if atomic.LoadInt32(&kumaAddCalls) != 0 {
 		t.Errorf("expected 0 AddMonitor calls (all existing), got %d", kumaAddCalls)
+	}
+}
+
+// --- truthful run outcomes (W1/W2) ---
+
+func TestRunDockerSyncAllInstancesFailIsFailed(t *testing.T) {
+	d := setupTestDB(t)
+
+	instances := []kuma.InstanceResult{
+		{InstanceID: 1, Name: "kuma-a", Err: errors.New("login failed")},
+		{InstanceID: 2, Name: "kuma-b", Err: errors.New("login failed")},
+	}
+	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", instances, d, func(p Progress) {})
+
+	if run.Status != "failed" {
+		t.Errorf("zero successful instances must be failed, got %q", run.Status)
+	}
+	if len(run.InstanceErrors) != 2 {
+		t.Errorf("expected 2 instance errors, got %d (%+v)", len(run.InstanceErrors), run.InstanceErrors)
+	}
+	if run.ErrorMessage == "" {
+		t.Error("expected a summary error message")
+	}
+}
+
+func TestRunDockerSyncMixedOutcome(t *testing.T) {
+	d := setupTestDB(t)
+
+	var adds int32
+	ok := mockKumaClient(t, 1, &adds, nil)
+	failed := kuma.InstanceResult{InstanceID: 2, Name: "kuma-b", Err: errors.New("login failed")}
+
+	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceResult{ok, failed}, d, func(p Progress) {})
+
+	if run.Status != "completed_with_errors" {
+		t.Errorf("mixed outcome must be completed_with_errors, got %q", run.Status)
+	}
+	if len(run.InstanceErrors) != 1 || run.InstanceErrors[0].InstanceID != 2 {
+		t.Errorf("expected the failed instance recorded, got %+v", run.InstanceErrors)
+	}
+	if atomic.LoadInt32(&adds) == 0 {
+		t.Error("the healthy instance should still have been written")
+	}
+}
+
+func TestRunDockerSyncEmptyReadSkipsAllWrites(t *testing.T) {
+	d := setupTestDB(t)
+
+	// The DB says a monitor exists on instance 1, but the read comes back
+	// empty: that is a partial/failed read, never a clean slate.
+	if err := d.AddMonitor(&db.Monitor{
+		Name: "nginx-web", ServiceName: "web", MonitorType: "http",
+		KumaInstanceID: 1, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed monitor: %v", err)
+	}
+
+	var adds int32
+	empty := mockKumaClient(t, 1, &adds, nil)
+
+	run := RunDockerSync(context.Background(), "../../testdata/docker-compose.yml", []kuma.InstanceResult{empty}, d, func(p Progress) {})
+
+	if atomic.LoadInt32(&adds) != 0 {
+		t.Errorf("empty read must not trigger AddMonitor, got %d calls", adds)
+	}
+	if run.Status != "failed" {
+		t.Errorf("expected failed (only instance unavailable), got %q", run.Status)
+	}
+	if len(run.InstanceErrors) != 1 || !strings.Contains(run.InstanceErrors[0].Error, "empty") {
+		t.Errorf("expected an empty-read instance error, got %+v", run.InstanceErrors)
+	}
+}
+
+// --- external-id helpers (W3) ---
+
+func TestMarkerRoundTrip(t *testing.T) {
+	marker := Marker("http", "web")
+	if marker != "synapse:http:web" {
+		t.Fatalf("unexpected marker %q", marker)
+	}
+	id, ok := ParseMarker("provenance\n" + marker + "\nmore text")
+	if !ok || id != (ExternalID{Type: "http", Service: "web"}) {
+		t.Fatalf("expected parsed external id, got %+v ok=%v", id, ok)
+	}
+	if _, ok := ParseMarker("no marker here"); ok {
+		t.Fatal("expected no marker")
+	}
+}
+
+func TestMonitorIndexExternalIDBeatsName(t *testing.T) {
+	other := kuma.KumaMonitor{
+		ID: 1, Name: "web", Type: "http",
+		Tags: []kuma.MonitorTag{{Name: SynapseTagName, Value: Marker("http", "api")}},
+	}
+	want := kuma.KumaMonitor{
+		ID: 2, Name: "web-renamed", Type: "http",
+		Tags: []kuma.MonitorTag{{Name: SynapseTagName, Value: Marker("http", "web")}},
+	}
+	ix := BuildMonitorIndex([]kuma.KumaMonitor{other, want})
+
+	got := ix.Find(ExternalID{Type: "http", Service: "web"}, "web")
+	if got == nil || got.ID != 2 {
+		t.Fatalf("expected external-id match by service, got %+v", got)
+	}
+}
+
+func TestMonitorIndexAdoptsUnmanagedByName(t *testing.T) {
+	legacy := kuma.KumaMonitor{ID: 7, Name: "nginx-web", Type: "http"}
+	ix := BuildMonitorIndex([]kuma.KumaMonitor{legacy})
+	if got := ix.Find(ExternalID{Type: "http", Service: "web"}, "nginx-web"); got == nil || got.ID != 7 {
+		t.Fatalf("expected legacy monitor adopted by name, got %+v", got)
 	}
 }

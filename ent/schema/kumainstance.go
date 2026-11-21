@@ -18,6 +18,11 @@ func (KumaInstance) Fields() []ent.Field {
 		field.String("url"),
 		field.String("username"),
 		field.String("password").Sensitive(),
+		// session_token persists the JWT returned by Kuma's login so
+		// later connections can use loginByToken (no rate limit) instead
+		// of a fresh password login on every dial. Cleared whenever the
+		// credential identity (url/username/password) changes.
+		field.String("session_token").Optional().Sensitive().Default(""),
 		field.Bool("enabled").Default(true),
 		field.Time("created_at"),
 	}

@@ -121,7 +121,26 @@ func TestAddMonitorViaSocketIO_PayloadAndMonitorID(t *testing.T) {
 		}
 		addPacket <- raw
 		c.WriteMessage(websocket.TextMessage, []byte(`432[{"ok":true,"msg":"successAdded","monitorID":42}]`))
-		time.Sleep(200 * time.Millisecond)
+
+		// Verify-after-create: answer the follow-up getMonitor read.
+		for {
+			_, msg, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			req := string(msg)
+			if !strings.HasPrefix(req, "42") || !strings.Contains(req, "getMonitor") {
+				continue
+			}
+			ackID := strings.TrimPrefix(req, "42")
+			for i, r := range ackID {
+				if r < '0' || r > '9' {
+					ackID = ackID[:i]
+					break
+				}
+			}
+			c.WriteMessage(websocket.TextMessage, []byte("43"+ackID+`[{"ok":true,"monitor":{"id":42,"name":"svc-a"}}]`))
+		}
 	}))
 	defer srv.Close()
 
@@ -210,7 +229,10 @@ func TestEmitWithAckUsesProtocolV5WireFormat(t *testing.T) {
 
 	cli.onEvent = func(ev rawEvent) {}
 
-	ackCh := cli.emitWithAck("login", map[string]string{"username": "admin", "password": "secret"})
+	ackCh, err := cli.emitWithAck("login", map[string]string{"username": "admin", "password": "secret"})
+	if err != nil {
+		t.Fatalf("emit login: %v", err)
+	}
 
 	raw := <-loginPacket
 	// Protocol v5: id in header, event name first in JSON array.
@@ -316,9 +338,11 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 
 		// Stream monitorList (map keyed by id string) with docker info
 		c.WriteMessage(websocket.TextMessage, []byte(`42["monitorList",{"1":{"id":1,"name":"vandijke.xyz","url":"http://vandijke.xyz","type":"docker","docker_container":"vandijke","docker_host":1,"active":true},"2":{"id":2,"name":"heat","url":"http://heat.local","type":"http","active":true}}]`))
+		// heartbeatList carries the authoritative status: last row wins.
+		c.WriteMessage(websocket.TextMessage, []byte(`42["heartbeatList","1",[{"status":0},{"status":1,"msg":"OK"}]]`))
+		c.WriteMessage(websocket.TextMessage, []byte(`42["heartbeatList","2",[{"status":0,"msg":"connect ECONNREFUSED"}]]`))
 		// uptime events use the real Kuma wire format: id as string,
 		// duration as JSON number, value as number.
-		// "24" => up for monitor 1
 		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","1",24,0.98]`))
 		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","1",720,0.95]`))
 		c.WriteMessage(websocket.TextMessage, []byte(`42["uptime","1",8760,0.93]`))
@@ -360,7 +384,10 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 		t.Errorf("expected docker_host 1, got %d", m1.DockerHost)
 	}
 	if m1.Status != 1 {
-		t.Errorf("expected status up (1) from uptime 24h, got %d", m1.Status)
+		t.Errorf("expected status up (1) from heartbeatList, got %d", m1.Status)
+	}
+	if !m1.StatusKnown {
+		t.Errorf("expected StatusKnown=true when heartbeatList is present")
 	}
 	if m1.Uptime24h != 0.98 {
 		t.Errorf("expected uptime24h 0.98, got %f", m1.Uptime24h)
@@ -375,13 +402,16 @@ func TestQueryMonitorsViaSocketIO_ParsesMonitorList(t *testing.T) {
 		t.Errorf("expected ping 1.5, got %f", m1.Ping)
 	}
 
-	// Monitor 2: name from monitorList, status down (uptime 24h == 0)
+	// Monitor 2: name from monitorList, status down (last heartbeat row)
 	m2 := monitors[1]
 	if m2.Name != "heat" {
 		t.Errorf("expected name heat, got %q", m2.Name)
 	}
 	if m2.Status != 0 {
-		t.Errorf("expected status down (0) from uptime 24h, got %d", m2.Status)
+		t.Errorf("expected status down (0) from heartbeatList, got %d", m2.Status)
+	}
+	if !m2.StatusKnown {
+		t.Errorf("expected StatusKnown=true when heartbeatList is present")
 	}
 }
 
@@ -452,7 +482,7 @@ func TestClient_AddMonitorViaSocketIO_InvalidatesCache(t *testing.T) {
 		t.Fatalf("initial query: %v", err)
 	}
 	// compat
-	cached :=  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	cached := func() bool { _, has, _ := c.monitors.Peek(); return has }()
 	// compat
 	if !cached {
 		t.Fatal("expected cache to be populated after query")
@@ -462,7 +492,7 @@ func TestClient_AddMonitorViaSocketIO_InvalidatesCache(t *testing.T) {
 		t.Fatalf("add monitor: %v", err)
 	}
 	// compat
-	cached =  func() bool { _, has, _ := c.monitors.Peek(); return has }()
+	cached = func() bool { _, has, _ := c.monitors.Peek(); return has }()
 	// compat
 	if cached {
 		t.Fatal("expected cache to be invalidated after successful add")
@@ -550,6 +580,7 @@ func mockPollingKumaServer(t *testing.T, loginResponse string) (url string, logi
 					// stream monitor data like the real server
 					outbox = append(outbox,
 						`42["monitorList",{"1":{"id":1,"name":"vandijke.xyz","url":"http://vandijke.xyz","type":"http","active":true}}]`,
+						`42["heartbeatList","1",[{"status":1,"msg":"OK"}]]`,
 						`42["uptime","1",24,0.98]`,
 						`42["uptime","1",720,0.95]`,
 						`42["uptime","1",8760,0.93]`,

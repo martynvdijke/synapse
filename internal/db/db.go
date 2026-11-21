@@ -15,6 +15,7 @@ import (
 	"synapse/ent/migrate"
 	"synapse/ent/monitor"
 	"synapse/ent/npminstance"
+	"synapse/ent/schema"
 	"synapse/ent/servicelink"
 	"synapse/ent/settings"
 	"synapse/ent/syncrun"
@@ -49,6 +50,10 @@ type SyncRun struct {
 	Failed        int        `json:"failed"`
 	DryRun        bool       `json:"dry_run"`
 	ErrorMessage  string     `json:"error_message,omitempty"`
+	// InstanceErrors lists every enabled instance that could not be read or
+	// written during this run. Non-empty with status "completed" is impossible:
+	// the sync marks such runs completed_with_errors or failed.
+	InstanceErrors []schema.SyncInstanceError `json:"instance_errors,omitempty"`
 }
 
 type Monitor struct {
@@ -110,13 +115,14 @@ type DockerEventFilter struct {
 // instance. Multiple instances may be configured; syncs fan out to all
 // enabled instances.
 type KumaInstance struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	URL       string    `json:"url"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password,omitempty"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	URL          string    `json:"url"`
+	Username     string    `json:"username"`
+	Password     string    `json:"password,omitempty"`
+	SessionToken string    `json:"-"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // NPMInstance holds the connection details for a single Nginx Proxy Manager
@@ -221,6 +227,7 @@ type Settings struct {
 	NotifyDockerImage         bool   `json:"notify_docker_image"`
 	NotifyReconcile           bool   `json:"notify_reconcile"`
 	NotifyAlerts              bool   `json:"notify_alerts"`
+	NotifySync                bool   `json:"notify_sync"`
 	NotifyCooldownMinutes     int    `json:"notify_cooldown_minutes"`
 	NotifyPersistent          bool   `json:"notify_persistent"`
 	AlertsEnabled             bool   `json:"alerts_enabled"`
@@ -667,6 +674,9 @@ func toSyncRun(e *ent.SyncRun) SyncRun {
 		DryRun:        e.DryRun,
 		ErrorMessage:  e.ErrorMessage,
 	}
+	if len(e.InstanceErrors) > 0 {
+		r.InstanceErrors = e.InstanceErrors
+	}
 	if e.FinishedAt != nil {
 		r.FinishedAt = e.FinishedAt
 	}
@@ -689,13 +699,14 @@ func toMonitor(e *ent.Monitor) Monitor {
 
 func (db *DB) toKumaInstance(e *ent.KumaInstance) KumaInstance {
 	return KumaInstance{
-		ID:        int64(e.ID),
-		Name:      e.Name,
-		URL:       e.URL,
-		Username:  e.Username,
-		Password:  db.decryptSecret(e.Password),
-		Enabled:   e.Enabled,
-		CreatedAt: e.CreatedAt,
+		ID:           int64(e.ID),
+		Name:         e.Name,
+		URL:          e.URL,
+		Username:     e.Username,
+		Password:     db.decryptSecret(e.Password),
+		SessionToken: db.decryptSecret(e.SessionToken),
+		Enabled:      e.Enabled,
+		CreatedAt:    e.CreatedAt,
 	}
 }
 
@@ -754,6 +765,9 @@ func (db *DB) CreateSyncRun(run *SyncRun) (int64, error) {
 	if run.ErrorMessage != "" {
 		q.SetErrorMessage(run.ErrorMessage)
 	}
+	if len(run.InstanceErrors) > 0 {
+		q.SetInstanceErrors(run.InstanceErrors)
+	}
 	e, err := q.Save(context.Background())
 	if err != nil {
 		return 0, err
@@ -762,29 +776,51 @@ func (db *DB) CreateSyncRun(run *SyncRun) (int64, error) {
 }
 
 func (db *DB) FinishSyncRun(id int64, status string, added, skipped, failed int, errMsg string) error {
-	_, err := db.client.SyncRun.UpdateOneID(int(id)).
+	return db.FinishSyncRunWithErrors(id, status, added, skipped, failed, errMsg, nil)
+}
+
+// FinishSyncRunWithErrors completes a sync run and records the per-instance
+// failures that the counters alone cannot express.
+func (db *DB) FinishSyncRunWithErrors(id int64, status string, added, skipped, failed int, errMsg string, instanceErrors []schema.SyncInstanceError) error {
+	q := db.client.SyncRun.UpdateOneID(int(id)).
 		SetStatus(status).
 		SetFinishedAt(time.Now()).
 		SetAdded(added).
 		SetSkipped(skipped).
 		SetFailed(failed).
-		SetErrorMessage(errMsg).
-		Save(context.Background())
+		SetErrorMessage(errMsg)
+	if len(instanceErrors) > 0 {
+		q.SetInstanceErrors(instanceErrors)
+	} else {
+		q.ClearInstanceErrors()
+	}
+	_, err := q.Save(context.Background())
 	return err
 }
 
 // FinishReconcileRun completes a reconcile run, including the updated counter
 // that only reconcile produces.
 func (db *DB) FinishReconcileRun(id int64, status string, added, updated, skipped, failed int, errMsg string) error {
-	_, err := db.client.SyncRun.UpdateOneID(int(id)).
+	return db.FinishReconcileRunWithErrors(id, status, added, updated, skipped, failed, errMsg, nil)
+}
+
+// FinishReconcileRunWithErrors completes a reconcile run and records the
+// per-instance read/write failures alongside it.
+func (db *DB) FinishReconcileRunWithErrors(id int64, status string, added, updated, skipped, failed int, errMsg string, instanceErrors []schema.SyncInstanceError) error {
+	q := db.client.SyncRun.UpdateOneID(int(id)).
 		SetStatus(status).
 		SetFinishedAt(time.Now()).
 		SetAdded(added).
 		SetUpdated(updated).
 		SetSkipped(skipped).
 		SetFailed(failed).
-		SetErrorMessage(errMsg).
-		Save(context.Background())
+		SetErrorMessage(errMsg)
+	if len(instanceErrors) > 0 {
+		q.SetInstanceErrors(instanceErrors)
+	} else {
+		q.ClearInstanceErrors()
+	}
+	_, err := q.Save(context.Background())
 	return err
 }
 
@@ -854,6 +890,31 @@ func (db *DB) AddMonitor(m *Monitor) error {
 		return err
 	}
 	return nil
+}
+
+// UpsertMonitor records a monitor that exists in Kuma. It creates the row when
+// absent and, when present, updates the Kuma id (and target fields) so a
+// monitor adopted after a name/external-id match is keyed for future runs.
+func (db *DB) UpsertMonitor(m *Monitor) error {
+	e, err := db.client.Monitor.Query().
+		Where(
+			monitor.Name(m.Name),
+			monitor.MonitorType(m.MonitorType),
+			monitor.KumaInstanceID(m.KumaInstanceID),
+		).
+		Only(context.Background())
+	if err == nil {
+		_, uerr := db.client.Monitor.UpdateOneID(e.ID).
+			SetKumaID(m.KumaID).
+			SetURL(m.URL).
+			SetDockerContainer(m.DockerContainer).
+			Save(context.Background())
+		return uerr
+	}
+	if !ent.IsNotFound(err) {
+		return err
+	}
+	return db.AddMonitor(m)
 }
 
 func (db *DB) GetMonitors() ([]Monitor, error) {
@@ -1147,7 +1208,10 @@ func (db *DB) GetEnabledKumaInstances() ([]KumaInstance, error) {
 }
 
 // UpdateKumaInstance updates an existing instance. If password is empty the
-// existing password is preserved.
+// existing password is preserved. The persisted session token is cleared when
+// the credential identity changes (URL, username, or a replaced password) so a
+// stale JWT can never be reused against a different account or server; purely
+// cosmetic changes (name, enabled) keep the token.
 func (db *DB) UpdateKumaInstance(id int64, k *KumaInstance) error {
 	q := db.client.KumaInstance.UpdateOneID(int(id)).
 		SetName(k.Name).
@@ -1160,6 +1224,35 @@ func (db *DB) UpdateKumaInstance(id int64, k *KumaInstance) error {
 			return err
 		}
 		q.SetPassword(encPass)
+	}
+	existing, err := db.client.KumaInstance.Query().
+		Where(kumainstance.IDEQ(int(id))).
+		Only(context.Background())
+	if err == nil {
+		if k.URL != existing.URL || k.Username != existing.Username || k.Password != "" {
+			q.SetSessionToken("")
+		}
+	} else if !ent.IsNotFound(err) {
+		return err
+	}
+	_, err = q.Save(context.Background())
+	return err
+}
+
+// UpdateKumaInstanceToken persists (or clears, when token is empty) the
+// session token for an instance. It is deliberately separate from
+// UpdateKumaInstance so ordinary settings saves can never clobber a token
+// minted by the sync client.
+func (db *DB) UpdateKumaInstanceToken(id int64, token string) error {
+	q := db.client.KumaInstance.UpdateOneID(int(id))
+	if token == "" {
+		q.SetSessionToken("")
+	} else {
+		encTok, err := db.enc.Encrypt(token)
+		if err != nil {
+			return err
+		}
+		q.SetSessionToken(encTok)
 	}
 	_, err := q.Save(context.Background())
 	return err
@@ -1574,6 +1667,8 @@ func (db *DB) GetSettings(defaults Settings) Settings {
 			}
 		case "notify_alerts":
 			s.NotifyAlerts = row.Value == "true"
+		case "notify_sync":
+			s.NotifySync = row.Value == "true"
 		case "alerts_enabled":
 			s.AlertsEnabled = row.Value == "true"
 		case "alert_eval_interval_seconds":
@@ -1756,6 +1851,7 @@ func (db *DB) SaveSettings(s Settings) error {
 		"notify_cooldown_minutes":      strconv.Itoa(s.NotifyCooldownMinutes),
 		"notify_persistent":            strconv.FormatBool(s.NotifyPersistent),
 		"notify_alerts":                strconv.FormatBool(s.NotifyAlerts),
+		"notify_sync":                  strconv.FormatBool(s.NotifySync),
 		"alerts_enabled":               strconv.FormatBool(s.AlertsEnabled),
 		"alert_eval_interval_seconds":  strconv.Itoa(s.AlertEvalIntervalSeconds),
 		"alert_reminder_minutes":       strconv.Itoa(s.AlertReminderMinutes),

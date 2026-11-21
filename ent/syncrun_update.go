@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"synapse/ent/predicate"
+	"synapse/ent/schema"
 	"synapse/ent/syncrun"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 )
 
@@ -215,6 +217,24 @@ func (_u *SyncRunUpdate) ClearErrorMessage() *SyncRunUpdate {
 	return _u
 }
 
+// SetInstanceErrors sets the "instance_errors" field.
+func (_u *SyncRunUpdate) SetInstanceErrors(v []schema.SyncInstanceError) *SyncRunUpdate {
+	_u.mutation.SetInstanceErrors(v)
+	return _u
+}
+
+// AppendInstanceErrors appends value to the "instance_errors" field.
+func (_u *SyncRunUpdate) AppendInstanceErrors(v []schema.SyncInstanceError) *SyncRunUpdate {
+	_u.mutation.AppendInstanceErrors(v)
+	return _u
+}
+
+// ClearInstanceErrors clears the value of the "instance_errors" field.
+func (_u *SyncRunUpdate) ClearInstanceErrors() *SyncRunUpdate {
+	_u.mutation.ClearInstanceErrors()
+	return _u
+}
+
 // SetDryRun sets the "dry_run" field.
 func (_u *SyncRunUpdate) SetDryRun(v bool) *SyncRunUpdate {
 	_u.mutation.SetDryRun(v)
@@ -326,6 +346,17 @@ func (_u *SyncRunUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ErrorMessageCleared() {
 		_spec.ClearField(syncrun.FieldErrorMessage, field.TypeString)
+	}
+	if value, ok := _u.mutation.InstanceErrors(); ok {
+		_spec.SetField(syncrun.FieldInstanceErrors, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedInstanceErrors(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, syncrun.FieldInstanceErrors, value)
+		})
+	}
+	if _u.mutation.InstanceErrorsCleared() {
+		_spec.ClearField(syncrun.FieldInstanceErrors, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.DryRun(); ok {
 		_spec.SetField(syncrun.FieldDryRun, field.TypeBool, value)
@@ -540,6 +571,24 @@ func (_u *SyncRunUpdateOne) ClearErrorMessage() *SyncRunUpdateOne {
 	return _u
 }
 
+// SetInstanceErrors sets the "instance_errors" field.
+func (_u *SyncRunUpdateOne) SetInstanceErrors(v []schema.SyncInstanceError) *SyncRunUpdateOne {
+	_u.mutation.SetInstanceErrors(v)
+	return _u
+}
+
+// AppendInstanceErrors appends value to the "instance_errors" field.
+func (_u *SyncRunUpdateOne) AppendInstanceErrors(v []schema.SyncInstanceError) *SyncRunUpdateOne {
+	_u.mutation.AppendInstanceErrors(v)
+	return _u
+}
+
+// ClearInstanceErrors clears the value of the "instance_errors" field.
+func (_u *SyncRunUpdateOne) ClearInstanceErrors() *SyncRunUpdateOne {
+	_u.mutation.ClearInstanceErrors()
+	return _u
+}
+
 // SetDryRun sets the "dry_run" field.
 func (_u *SyncRunUpdateOne) SetDryRun(v bool) *SyncRunUpdateOne {
 	_u.mutation.SetDryRun(v)
@@ -681,6 +730,17 @@ func (_u *SyncRunUpdateOne) sqlSave(ctx context.Context) (_node *SyncRun, err er
 	}
 	if _u.mutation.ErrorMessageCleared() {
 		_spec.ClearField(syncrun.FieldErrorMessage, field.TypeString)
+	}
+	if value, ok := _u.mutation.InstanceErrors(); ok {
+		_spec.SetField(syncrun.FieldInstanceErrors, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedInstanceErrors(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, syncrun.FieldInstanceErrors, value)
+		})
+	}
+	if _u.mutation.InstanceErrorsCleared() {
+		_spec.ClearField(syncrun.FieldInstanceErrors, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.DryRun(); ok {
 		_spec.SetField(syncrun.FieldDryRun, field.TypeBool, value)

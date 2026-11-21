@@ -84,6 +84,26 @@ func (_u *KumaInstanceUpdate) SetNillablePassword(v *string) *KumaInstanceUpdate
 	return _u
 }
 
+// SetSessionToken sets the "session_token" field.
+func (_u *KumaInstanceUpdate) SetSessionToken(v string) *KumaInstanceUpdate {
+	_u.mutation.SetSessionToken(v)
+	return _u
+}
+
+// SetNillableSessionToken sets the "session_token" field if the given value is not nil.
+func (_u *KumaInstanceUpdate) SetNillableSessionToken(v *string) *KumaInstanceUpdate {
+	if v != nil {
+		_u.SetSessionToken(*v)
+	}
+	return _u
+}
+
+// ClearSessionToken clears the value of the "session_token" field.
+func (_u *KumaInstanceUpdate) ClearSessionToken() *KumaInstanceUpdate {
+	_u.mutation.ClearSessionToken()
+	return _u
+}
+
 // SetEnabled sets the "enabled" field.
 func (_u *KumaInstanceUpdate) SetEnabled(v bool) *KumaInstanceUpdate {
 	_u.mutation.SetEnabled(v)
@@ -165,6 +185,12 @@ func (_u *KumaInstanceUpdate) sqlSave(ctx context.Context) (_node int, err error
 	if value, ok := _u.mutation.Password(); ok {
 		_spec.SetField(kumainstance.FieldPassword, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.SessionToken(); ok {
+		_spec.SetField(kumainstance.FieldSessionToken, field.TypeString, value)
+	}
+	if _u.mutation.SessionTokenCleared() {
+		_spec.ClearField(kumainstance.FieldSessionToken, field.TypeString)
+	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(kumainstance.FieldEnabled, field.TypeBool, value)
 	}
@@ -244,6 +270,26 @@ func (_u *KumaInstanceUpdateOne) SetNillablePassword(v *string) *KumaInstanceUpd
 	if v != nil {
 		_u.SetPassword(*v)
 	}
+	return _u
+}
+
+// SetSessionToken sets the "session_token" field.
+func (_u *KumaInstanceUpdateOne) SetSessionToken(v string) *KumaInstanceUpdateOne {
+	_u.mutation.SetSessionToken(v)
+	return _u
+}
+
+// SetNillableSessionToken sets the "session_token" field if the given value is not nil.
+func (_u *KumaInstanceUpdateOne) SetNillableSessionToken(v *string) *KumaInstanceUpdateOne {
+	if v != nil {
+		_u.SetSessionToken(*v)
+	}
+	return _u
+}
+
+// ClearSessionToken clears the value of the "session_token" field.
+func (_u *KumaInstanceUpdateOne) ClearSessionToken() *KumaInstanceUpdateOne {
+	_u.mutation.ClearSessionToken()
 	return _u
 }
 
@@ -357,6 +403,12 @@ func (_u *KumaInstanceUpdateOne) sqlSave(ctx context.Context) (_node *KumaInstan
 	}
 	if value, ok := _u.mutation.Password(); ok {
 		_spec.SetField(kumainstance.FieldPassword, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SessionToken(); ok {
+		_spec.SetField(kumainstance.FieldSessionToken, field.TypeString, value)
+	}
+	if _u.mutation.SessionTokenCleared() {
+		_spec.ClearField(kumainstance.FieldSessionToken, field.TypeString)
 	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(kumainstance.FieldEnabled, field.TypeBool, value)

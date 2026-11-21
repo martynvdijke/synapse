@@ -77,6 +77,7 @@ var (
 		{Name: "url", Type: field.TypeString},
 		{Name: "username", Type: field.TypeString},
 		{Name: "password", Type: field.TypeString},
+		{Name: "session_token", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "enabled", Type: field.TypeBool, Default: true},
 		{Name: "created_at", Type: field.TypeTime},
 	}
@@ -186,6 +187,7 @@ var (
 		{Name: "skipped", Type: field.TypeInt, Default: 0},
 		{Name: "failed", Type: field.TypeInt, Default: 0},
 		{Name: "error_message", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "instance_errors", Type: field.TypeJSON, Nullable: true},
 		{Name: "dry_run", Type: field.TypeBool, Nullable: true, Default: false},
 	}
 	// SyncRunsTable holds the schema information for the "sync_runs" table.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"synapse/ent/schema"
 	"synapse/ent/syncrun"
 	"time"
 
@@ -149,6 +150,12 @@ func (_c *SyncRunCreate) SetNillableErrorMessage(v *string) *SyncRunCreate {
 	if v != nil {
 		_c.SetErrorMessage(*v)
 	}
+	return _c
+}
+
+// SetInstanceErrors sets the "instance_errors" field.
+func (_c *SyncRunCreate) SetInstanceErrors(v []schema.SyncInstanceError) *SyncRunCreate {
+	_c.mutation.SetInstanceErrors(v)
 	return _c
 }
 
@@ -330,6 +337,10 @@ func (_c *SyncRunCreate) createSpec() (*SyncRun, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ErrorMessage(); ok {
 		_spec.SetField(syncrun.FieldErrorMessage, field.TypeString, value)
 		_node.ErrorMessage = value
+	}
+	if value, ok := _c.mutation.InstanceErrors(); ok {
+		_spec.SetField(syncrun.FieldInstanceErrors, field.TypeJSON, value)
+		_node.InstanceErrors = value
 	}
 	if value, ok := _c.mutation.DryRun(); ok {
 		_spec.SetField(syncrun.FieldDryRun, field.TypeBool, value)

@@ -604,6 +604,16 @@ func ErrorMessageContainsFold(v string) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldContainsFold(FieldErrorMessage, v))
 }
 
+// InstanceErrorsIsNil applies the IsNil predicate on the "instance_errors" field.
+func InstanceErrorsIsNil() predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldIsNull(FieldInstanceErrors))
+}
+
+// InstanceErrorsNotNil applies the NotNil predicate on the "instance_errors" field.
+func InstanceErrorsNotNil() predicate.SyncRun {
+	return predicate.SyncRun(sql.FieldNotNull(FieldInstanceErrors))
+}
+
 // DryRunEQ applies the EQ predicate on the "dry_run" field.
 func DryRunEQ(v bool) predicate.SyncRun {
 	return predicate.SyncRun(sql.FieldEQ(FieldDryRun, v))

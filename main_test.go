@@ -20,10 +20,20 @@ import (
 	"synapse/internal/db"
 	"synapse/internal/docker"
 	"synapse/internal/kuma"
+	"synapse/internal/kuma/kumatest"
 	"synapse/internal/npm"
 	synclib "synapse/internal/sync"
 )
 
+// installKumaAPIFake makes kumaAPIFor return f for every instance. Handlers
+// that write through the API seam are tested without a live Socket.IO server;
+// the transport itself is covered by internal/kuma.
+func installKumaAPIFake(t *testing.T, f *kumatest.Fake) {
+	t.Helper()
+	prev := kumaAPIForTestHook
+	kumaAPIForTestHook = func(context.Context, int) (kuma.API, error) { return f, nil }
+	t.Cleanup(func() { kumaAPIForTestHook = prev })
+}
 func setupTest(t *testing.T) (*App, *gin.Engine) {
 	t.Setenv("COMPOSE_PATH", "testdata/docker-compose.yml")
 	t.Setenv("NPM_HOST", "http://localhost:81")
@@ -2316,13 +2326,14 @@ func TestPauseKumaMonitor_Success(t *testing.T) {
 	}
 	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
 	defer restoreVerify()
-	restore := kuma.SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
+	fake := kumatest.New()
+	fake.PauseMonitorFn = func(_ context.Context, monitorID int) error {
 		if monitorID != 5 {
 			t.Errorf("unexpected monitorID %d", monitorID)
 		}
 		return nil
-	})
-	defer restore()
+	}
+	installKumaAPIFake(t, fake)
 	req := authRequest(t, "POST", fmt.Sprintf("/api/monitors/5/pause?instance=%d", inst.ID), "", sid)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -2340,10 +2351,9 @@ func TestPauseKumaMonitor_AckFailure(t *testing.T) {
 	}
 	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
 	defer restoreVerify()
-	restore := kuma.SetPauseMonitorTestHook(func(url, user, pass string, monitorID int) error {
-		return fmt.Errorf("pause monitor rejected: boom")
-	})
-	defer restore()
+	fake := kumatest.New()
+	fake.PauseMonitorErr = fmt.Errorf("pause monitor rejected: boom")
+	installKumaAPIFake(t, fake)
 	req := authRequest(t, "POST", fmt.Sprintf("/api/monitors/1/pause?instance=%d", inst.ID), "", sid)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -2386,19 +2396,17 @@ func TestResumeKumaMonitor_SuccessAndFailure(t *testing.T) {
 	inst, _ := app.database.CreateKumaInstance(&db.KumaInstance{Name: "k1", URL: "http://kuma:3001", Username: "u", Password: "p", Enabled: true})
 	restoreVerify := kuma.SetVerifySocketIOLoginTestHook(func(url, user, pass string) error { return nil })
 	defer restoreVerify()
-	restore := kuma.SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error { return nil })
-	defer restore()
+	fake := kumatest.New()
+	fake.ResumeMonitorFn = func(_ context.Context, monitorID int) error { return nil }
+	installKumaAPIFake(t, fake)
 	req := authRequest(t, "POST", fmt.Sprintf("/api/monitors/7/resume?instance=%d", inst.ID), "", sid)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	restore2 := kuma.SetResumeMonitorTestHook(func(url, user, pass string, monitorID int) error {
-		return fmt.Errorf("resume monitor rejected: fail")
-	})
-	defer restore2()
-	// need fresh restore after first defer? Use second hook overwrite
+	fake.ResumeMonitorErr = fmt.Errorf("resume monitor rejected: fail")
+	fake.ResumeMonitorFn = nil
 	req2 := authRequest(t, "POST", fmt.Sprintf("/api/monitors/7/resume?instance=%d", inst.ID), "", sid)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
@@ -2420,6 +2428,11 @@ func TestSetMonitorTags_Diff(t *testing.T) {
 		return []kuma.KumaMonitor{{ID: 10, Name: "m", Tags: []kuma.MonitorTag{{ID: 1}, {ID: 2}}}}, nil
 	})
 	defer restoreQ()
+	fake := kumatest.New()
+	fake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		return []kuma.KumaMonitor{{ID: 10, Name: "m", Tags: []kuma.MonitorTag{{ID: 1}, {ID: 2}}}}, nil
+	}
+	installKumaAPIFake(t, fake)
 	var added, deleted []int
 	restoreAdd := kuma.SetAddMonitorTagTestHook(func(url, user, pass string, monitorID, tagID int) error {
 		added = append(added, tagID)
@@ -2569,5 +2582,41 @@ func TestSetMonitorTags_InvalidPayload(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid tags, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAppAlertStateUsesStatusKnown verifies the alert snapshot only reports a
+// monitor down when Kuma actually knows its status: an unknown (no heartbeat)
+// monitor must not open an incident, and an unreachable instance must not
+// silently resolve one.
+func TestAppAlertStateUsesStatusKnown(t *testing.T) {
+	app, _ := setupTest(t)
+
+	fake := kumatest.New()
+	fake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		return []kuma.KumaMonitor{
+			{ID: 1, Name: "unknown", Status: 0, StatusKnown: false},
+			{ID: 2, Name: "down", Status: 0, StatusKnown: true},
+			{ID: 3, Name: "up", Status: 1, StatusKnown: true},
+		}, nil
+	}
+	prev := kumaSnapshotTestHook
+	kumaSnapshotTestHook = func(context.Context) []kuma.InstanceResult {
+		return []kuma.InstanceResult{{InstanceID: 1, Name: "k", Client: fake}}
+	}
+	t.Cleanup(func() { kumaSnapshotTestHook = prev })
+
+	snap, err := (appAlertState{app: app}).Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if _, ok := snap.MonitorDown["unknown"]; ok {
+		t.Error("a monitor with unknown status must not be reported down")
+	}
+	if !snap.MonitorDown["down"] {
+		t.Error("a known down monitor must be reported down")
+	}
+	if snap.MonitorDown["up"] {
+		t.Error("an up monitor must not be reported down")
 	}
 }

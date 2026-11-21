@@ -98,16 +98,19 @@ func (app *App) PublicOverview(c *gin.Context) {
 	}
 
 	// Fetch Kuma monitors (for status + in_kuma)
-	kumaClients, _ := app.kumaRegistry.All()
+	instances := app.kumaSnapshot(c.Request.Context())
 	kumaMonitors := []KumaMonitorSummary{}
 	monitorByName := map[string]KumaMonitorSummary{}
-	for _, ic := range kumaClients {
-		monitors, err := ic.Client.QueryMonitorsViaSocketIO()
+	for _, res := range instances {
+		if res.Err != nil || res.Client == nil {
+			continue
+		}
+		monitors, err := res.Client.Monitors(c.Request.Context())
 		if err != nil {
 			continue
 		}
 		instName := ""
-		if inst, _ := app.database.GetKumaInstance(int64(ic.InstanceID)); inst != nil {
+		if inst, _ := app.database.GetKumaInstance(int64(res.InstanceID)); inst != nil {
 			instName = inst.Name
 		}
 		for _, m := range monitors {
@@ -117,7 +120,7 @@ func (app *App) PublicOverview(c *gin.Context) {
 				Uptime24h: m.Uptime24h, Uptime7d: m.Uptime7d, Uptime1y: m.Uptime1y,
 				AvgPing: m.Ping, LastMsg: m.LastMsg,
 				Interval: m.Interval, RetryInterval: m.RetryInterval, MaxRetries: m.MaxRetries,
-				Active: m.Active, InstanceID: ic.InstanceID, InstanceName: instName,
+				Active: m.Active, InstanceID: res.InstanceID, InstanceName: instName,
 			}
 			kumaMonitors = append(kumaMonitors, summ)
 			if _, ok := monitorByName[m.Name]; !ok {

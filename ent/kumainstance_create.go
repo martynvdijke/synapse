@@ -44,6 +44,20 @@ func (_c *KumaInstanceCreate) SetPassword(v string) *KumaInstanceCreate {
 	return _c
 }
 
+// SetSessionToken sets the "session_token" field.
+func (_c *KumaInstanceCreate) SetSessionToken(v string) *KumaInstanceCreate {
+	_c.mutation.SetSessionToken(v)
+	return _c
+}
+
+// SetNillableSessionToken sets the "session_token" field if the given value is not nil.
+func (_c *KumaInstanceCreate) SetNillableSessionToken(v *string) *KumaInstanceCreate {
+	if v != nil {
+		_c.SetSessionToken(*v)
+	}
+	return _c
+}
+
 // SetEnabled sets the "enabled" field.
 func (_c *KumaInstanceCreate) SetEnabled(v bool) *KumaInstanceCreate {
 	_c.mutation.SetEnabled(v)
@@ -99,6 +113,10 @@ func (_c *KumaInstanceCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *KumaInstanceCreate) defaults() {
+	if _, ok := _c.mutation.SessionToken(); !ok {
+		v := kumainstance.DefaultSessionToken
+		_c.mutation.SetSessionToken(v)
+	}
 	if _, ok := _c.mutation.Enabled(); !ok {
 		v := kumainstance.DefaultEnabled
 		_c.mutation.SetEnabled(v)
@@ -166,6 +184,10 @@ func (_c *KumaInstanceCreate) createSpec() (*KumaInstance, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.Password(); ok {
 		_spec.SetField(kumainstance.FieldPassword, field.TypeString, value)
 		_node.Password = value
+	}
+	if value, ok := _c.mutation.SessionToken(); ok {
+		_spec.SetField(kumainstance.FieldSessionToken, field.TypeString, value)
+		_node.SessionToken = value
 	}
 	if value, ok := _c.mutation.Enabled(); ok {
 		_spec.SetField(kumainstance.FieldEnabled, field.TypeBool, value)

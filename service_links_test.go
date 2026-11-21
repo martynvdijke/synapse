@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"synapse/internal/db"
 	"synapse/internal/kuma"
+	"synapse/internal/kuma/kumatest"
 )
 
 // ---------------------------------------------------------------------------
@@ -124,6 +126,74 @@ func installKumaHooks(t *testing.T, monitors *[]kuma.KumaMonitor) (added *[]stru
 		return nil
 	})
 	t.Cleanup(restoreDel)
+
+	// The handlers read/write through the kuma.API seam; back it with a
+	// kumatest.Fake over the same mutable monitor slice so these tests keep
+	// exercising handler behavior without a live Socket.IO server.
+	fake := kumatest.New()
+	fake.MonitorsFn = func(context.Context) ([]kuma.KumaMonitor, error) {
+		return append([]kuma.KumaMonitor(nil), (*monitors)...), nil
+	}
+	fake.DockerHostsFn = func(context.Context) ([]kuma.DockerHost, error) {
+		return []kuma.DockerHost{{ID: 1, Name: "local"}}, nil
+	}
+	fake.AddMonitorFn = func(_ context.Context, spec kuma.MonitorSpec) (int, error) {
+		*added = append(*added, struct {
+			Type, Name, URL, Container string
+			HostID                     int
+		}{spec.Type, spec.Name, spec.URL, spec.DockerContainer, spec.DockerHostID})
+		*monitors = append(*monitors, kuma.KumaMonitor{ID: 9, Name: spec.Name, Type: spec.Type, URL: spec.URL, DockerContainer: spec.DockerContainer})
+		return 9, nil
+	}
+	fake.EditMonitorFn = func(_ context.Context, monitorID int, spec kuma.MonitorSpec) error {
+		for i := range *monitors {
+			if (*monitors)[i].ID != monitorID {
+				continue
+			}
+			if spec.Name != "" {
+				(*monitors)[i].Name = spec.Name
+			}
+			if spec.Type != "" {
+				(*monitors)[i].Type = spec.Type
+			}
+			if spec.URL != "" {
+				(*monitors)[i].URL = spec.URL
+			}
+			if spec.DockerContainer != "" {
+				(*monitors)[i].DockerContainer = spec.DockerContainer
+			}
+			if spec.Interval > 0 {
+				(*monitors)[i].Interval = spec.Interval
+			}
+			if spec.RetryInterval > 0 {
+				(*monitors)[i].RetryInterval = spec.RetryInterval
+			}
+			if spec.MaxRetries > 0 {
+				(*monitors)[i].MaxRetries = spec.MaxRetries
+			}
+		}
+		return nil
+	}
+	fake.DeleteMonitorFn = func(_ context.Context, monitorID int) error {
+		for i := range *monitors {
+			if (*monitors)[i].ID == monitorID {
+				*monitors = append((*monitors)[:i], (*monitors)[i+1:]...)
+				break
+			}
+		}
+		return nil
+	}
+	prevHook := kumaAPIForTestHook
+	kumaAPIForTestHook = func(context.Context, int) (kuma.API, error) { return fake, nil }
+	prevSnap := kumaSnapshotTestHook
+	kumaSnapshotTestHook = func(context.Context) []kuma.InstanceResult {
+		return []kuma.InstanceResult{{InstanceID: 1, Client: fake}}
+	}
+	t.Cleanup(func() {
+		kumaAPIForTestHook = prevHook
+		kumaSnapshotTestHook = prevSnap
+	})
+
 	return added
 }
 

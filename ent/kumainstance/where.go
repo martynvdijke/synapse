@@ -74,6 +74,11 @@ func Password(v string) predicate.KumaInstance {
 	return predicate.KumaInstance(sql.FieldEQ(FieldPassword, v))
 }
 
+// SessionToken applies equality check predicate on the "session_token" field. It's identical to SessionTokenEQ.
+func SessionToken(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldEQ(FieldSessionToken, v))
+}
+
 // Enabled applies equality check predicate on the "enabled" field. It's identical to EnabledEQ.
 func Enabled(v bool) predicate.KumaInstance {
 	return predicate.KumaInstance(sql.FieldEQ(FieldEnabled, v))
@@ -342,6 +347,81 @@ func PasswordEqualFold(v string) predicate.KumaInstance {
 // PasswordContainsFold applies the ContainsFold predicate on the "password" field.
 func PasswordContainsFold(v string) predicate.KumaInstance {
 	return predicate.KumaInstance(sql.FieldContainsFold(FieldPassword, v))
+}
+
+// SessionTokenEQ applies the EQ predicate on the "session_token" field.
+func SessionTokenEQ(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldEQ(FieldSessionToken, v))
+}
+
+// SessionTokenNEQ applies the NEQ predicate on the "session_token" field.
+func SessionTokenNEQ(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldNEQ(FieldSessionToken, v))
+}
+
+// SessionTokenIn applies the In predicate on the "session_token" field.
+func SessionTokenIn(vs ...string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldIn(FieldSessionToken, vs...))
+}
+
+// SessionTokenNotIn applies the NotIn predicate on the "session_token" field.
+func SessionTokenNotIn(vs ...string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldNotIn(FieldSessionToken, vs...))
+}
+
+// SessionTokenGT applies the GT predicate on the "session_token" field.
+func SessionTokenGT(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldGT(FieldSessionToken, v))
+}
+
+// SessionTokenGTE applies the GTE predicate on the "session_token" field.
+func SessionTokenGTE(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldGTE(FieldSessionToken, v))
+}
+
+// SessionTokenLT applies the LT predicate on the "session_token" field.
+func SessionTokenLT(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldLT(FieldSessionToken, v))
+}
+
+// SessionTokenLTE applies the LTE predicate on the "session_token" field.
+func SessionTokenLTE(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldLTE(FieldSessionToken, v))
+}
+
+// SessionTokenContains applies the Contains predicate on the "session_token" field.
+func SessionTokenContains(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldContains(FieldSessionToken, v))
+}
+
+// SessionTokenHasPrefix applies the HasPrefix predicate on the "session_token" field.
+func SessionTokenHasPrefix(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldHasPrefix(FieldSessionToken, v))
+}
+
+// SessionTokenHasSuffix applies the HasSuffix predicate on the "session_token" field.
+func SessionTokenHasSuffix(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldHasSuffix(FieldSessionToken, v))
+}
+
+// SessionTokenIsNil applies the IsNil predicate on the "session_token" field.
+func SessionTokenIsNil() predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldIsNull(FieldSessionToken))
+}
+
+// SessionTokenNotNil applies the NotNil predicate on the "session_token" field.
+func SessionTokenNotNil() predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldNotNull(FieldSessionToken))
+}
+
+// SessionTokenEqualFold applies the EqualFold predicate on the "session_token" field.
+func SessionTokenEqualFold(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldEqualFold(FieldSessionToken, v))
+}
+
+// SessionTokenContainsFold applies the ContainsFold predicate on the "session_token" field.
+func SessionTokenContainsFold(v string) predicate.KumaInstance {
+	return predicate.KumaInstance(sql.FieldContainsFold(FieldSessionToken, v))
 }
 
 // EnabledEQ applies the EQ predicate on the "enabled" field.

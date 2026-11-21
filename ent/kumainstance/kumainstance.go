@@ -19,6 +19,8 @@ const (
 	FieldUsername = "username"
 	// FieldPassword holds the string denoting the password field in the database.
 	FieldPassword = "password"
+	// FieldSessionToken holds the string denoting the session_token field in the database.
+	FieldSessionToken = "session_token"
 	// FieldEnabled holds the string denoting the enabled field in the database.
 	FieldEnabled = "enabled"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -34,6 +36,7 @@ var Columns = []string{
 	FieldURL,
 	FieldUsername,
 	FieldPassword,
+	FieldSessionToken,
 	FieldEnabled,
 	FieldCreatedAt,
 }
@@ -49,6 +52,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultSessionToken holds the default value on creation for the "session_token" field.
+	DefaultSessionToken string
 	// DefaultEnabled holds the default value on creation for the "enabled" field.
 	DefaultEnabled bool
 )
@@ -79,6 +84,11 @@ func ByUsername(opts ...sql.OrderTermOption) OrderOption {
 // ByPassword orders the results by the password field.
 func ByPassword(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPassword, opts...).ToFunc()
+}
+
+// BySessionToken orders the results by the session_token field.
+func BySessionToken(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSessionToken, opts...).ToFunc()
 }
 
 // ByEnabled orders the results by the enabled field.

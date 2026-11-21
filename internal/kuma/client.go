@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -41,7 +42,22 @@ type Client struct {
 	tracer    trace.Tracer
 	testHooks *ClientTestHooks // only set in tests
 
+	tokenMu  sync.RWMutex
 	monitors *ttlcache.Store[[]KumaMonitor]
+}
+
+// setSessionToken records the JWT used by the legacy query path so repeated
+// reads do not pay for a password login (which is globally rate limited).
+func (c *Client) setSessionToken(token string) {
+	c.tokenMu.Lock()
+	c.token = token
+	c.tokenMu.Unlock()
+}
+
+func (c *Client) sessionToken() string {
+	c.tokenMu.RLock()
+	defer c.tokenMu.RUnlock()
+	return c.token
 }
 
 type Monitor struct {
@@ -99,6 +115,7 @@ func (c *Client) AddMonitor(monitorType, name, url, dockerContainer string, dock
 // Function variables used by wrapper methods below. Overridden in tests to
 // avoid needing a live Socket.IO server.
 var queryMonitorsFn = QueryMonitorsViaSocketIO
+var queryMonitorsCfgFn = queryMonitorsWithConfig
 var queryDockerHostsFn = QueryDockerHostsViaSocketIO
 var addMonitorFn = AddMonitorViaSocketIO
 
@@ -204,6 +221,14 @@ func (c *Client) QueryMonitorsViaSocketIOContext(ctx context.Context) ([]KumaMon
 	monitors, stale, err := c.monitors.Fetch(func() ([]KumaMonitor, error) {
 		if queryMonitorsCtxFn != nil {
 			return queryMonitorsCtxFn(ctx, c.url, c.username, c.password)
+		}
+		if queryMonitorsCfgFn != nil {
+			return queryMonitorsCfgFn(ctx, connConfig{
+				URL:      c.url,
+				Username: c.username,
+				Password: c.password,
+				Token:    c.sessionToken(),
+			})
 		}
 		return queryMonitorsFn(c.url, c.username, c.password)
 	})

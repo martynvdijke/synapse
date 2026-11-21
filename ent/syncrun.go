@@ -3,8 +3,10 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"synapse/ent/schema"
 	"synapse/ent/syncrun"
 	"time"
 
@@ -37,6 +39,8 @@ type SyncRun struct {
 	Failed int `json:"failed,omitempty"`
 	// ErrorMessage holds the value of the "error_message" field.
 	ErrorMessage string `json:"error_message,omitempty"`
+	// InstanceErrors holds the value of the "instance_errors" field.
+	InstanceErrors []schema.SyncInstanceError `json:"instance_errors,omitempty"`
 	// DryRun holds the value of the "dry_run" field.
 	DryRun       bool `json:"dry_run,omitempty"`
 	selectValues sql.SelectValues
@@ -47,6 +51,8 @@ func (*SyncRun) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case syncrun.FieldInstanceErrors:
+			values[i] = new([]byte)
 		case syncrun.FieldDryRun:
 			values[i] = new(sql.NullBool)
 		case syncrun.FieldID, syncrun.FieldTotalServices, syncrun.FieldAdded, syncrun.FieldUpdated, syncrun.FieldSkipped, syncrun.FieldFailed:
@@ -137,6 +143,14 @@ func (_m *SyncRun) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ErrorMessage = value.String
 			}
+		case syncrun.FieldInstanceErrors:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field instance_errors", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.InstanceErrors); err != nil {
+					return fmt.Errorf("unmarshal field instance_errors: %w", err)
+				}
+			}
 		case syncrun.FieldDryRun:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field dry_run", values[i])
@@ -210,6 +224,9 @@ func (_m *SyncRun) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("error_message=")
 	builder.WriteString(_m.ErrorMessage)
+	builder.WriteString(", ")
+	builder.WriteString("instance_errors=")
+	builder.WriteString(fmt.Sprintf("%v", _m.InstanceErrors))
 	builder.WriteString(", ")
 	builder.WriteString("dry_run=")
 	builder.WriteString(fmt.Sprintf("%v", _m.DryRun))
